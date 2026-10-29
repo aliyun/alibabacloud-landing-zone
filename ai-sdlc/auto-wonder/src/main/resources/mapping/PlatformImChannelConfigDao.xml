@@ -5,41 +5,80 @@
     <select id="selectedProvider" resultType="string">
         SELECT provider FROM platform_im_selection WHERE id = 1
     </select>
-    <select id="lockSelection" resultType="string">
-        SELECT provider FROM platform_im_selection WHERE id = 1 FOR UPDATE
+
+    <select id="selection" resultType="com.aliyun.autowonder.im.ImSelectionDO">
+        SELECT id, provider, generation, activated_at
+        FROM platform_im_selection
+        WHERE id = 1
     </select>
+
+    <select id="lockSelection" resultType="com.aliyun.autowonder.im.ImSelectionDO">
+        SELECT id, provider, generation, activated_at
+        FROM platform_im_selection
+        WHERE id = 1
+        FOR UPDATE
+    </select>
+
     <update id="selectProvider">
         UPDATE platform_im_selection SET provider = #{provider} WHERE id = 1
     </update>
-    <update id="disableOthers">
-        UPDATE platform_im_channel_config SET enabled = 0, modifier_id = #{userId}, version = version + 1
-        WHERE provider != #{provider} AND enabled = 1 AND is_deleted = 0
+
+    <update id="switchProvider">
+        UPDATE platform_im_selection
+        SET provider = #{provider},
+            generation = generation + 1,
+            activated_at = NOW(3)
+        WHERE id = 1
     </update>
-    <select id="listActive" resultType="com.aliyun.autowonder.im.PlatformImChannelConfigDO">
+
+    <update id="disableOthers">
+        UPDATE platform_im_channel_config SET enabled = 0, route_version = route_version + 1,
+            modifier_id = #{userId}, version = version + 1
+        WHERE provider != #{provider} AND purpose = #{purpose}
+          AND enabled = 1 AND is_deleted = 0
+    </update>
+
+    <select id="listByPurpose" resultType="com.aliyun.autowonder.im.PlatformImChannelConfigDO">
         SELECT *
         FROM platform_im_channel_config
-        WHERE is_deleted = 0
+        WHERE purpose = #{purpose} AND is_deleted = 0
         ORDER BY provider
     </select>
 
-    <select id="findByProvider" resultType="com.aliyun.autowonder.im.PlatformImChannelConfigDO">
+    <select id="findByProviderAndPurpose" resultType="com.aliyun.autowonder.im.PlatformImChannelConfigDO">
         SELECT *
         FROM platform_im_channel_config
-        WHERE provider = #{provider} AND is_deleted = 0
+        WHERE provider = #{provider} AND purpose = #{purpose} AND is_deleted = 0
         LIMIT 1
+    </select>
+
+    <select id="findById" resultType="com.aliyun.autowonder.im.PlatformImChannelConfigDO">
+        SELECT *
+        FROM platform_im_channel_config
+        WHERE id = #{id} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="lockGroupChatConfig" resultType="com.aliyun.autowonder.im.PlatformImChannelConfigDO">
+        SELECT *
+        FROM platform_im_channel_config
+        WHERE provider = #{provider} AND purpose = #{purpose} AND is_deleted = 0
+        LIMIT 1
+        FOR UPDATE
     </select>
 
     <insert id="upsert" parameterType="com.aliyun.autowonder.im.PlatformImChannelConfigDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO platform_im_channel_config
-            (provider, enabled, app_key, credential_ref, robot_code, base_url,
+            (provider, purpose, enabled, route_version, app_key, credential_ref, robot_code, base_url,
              creator_id, modifier_id, is_deleted)
         VALUES
-            (#{provider}, #{enabled}, #{appKey}, #{credentialRef}, #{robotCode}, #{baseUrl},
-             #{creatorId}, #{modifierId}, 0)
+            (#{provider}, #{purpose}, #{enabled}, #{routeVersion}, #{appKey}, #{credentialRef},
+             #{robotCode}, #{baseUrl}, #{creatorId}, #{modifierId}, 0)
         ON DUPLICATE KEY UPDATE
             id = LAST_INSERT_ID(id),
             enabled = VALUES(enabled),
+            route_version = VALUES(route_version),
             app_key = VALUES(app_key),
             credential_ref = COALESCE(NULLIF(VALUES(credential_ref), ''), credential_ref),
             robot_code = VALUES(robot_code),

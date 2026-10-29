@@ -2,7 +2,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import { i18n } from '@/shared/i18n';
 import { formatDateTime } from '@/shared/i18n/format';
 import { Suspense, type ReactNode } from 'react';
-import { DatePicker, Segmented, Spin, Empty, Card, Statistic, Tag, Button, Modal, Tooltip, message } from 'antd';
+import { DatePicker, Spin, Empty, Card, Statistic, Tag, Button, Modal, Tooltip, message, Select } from 'antd';
 import { ReloadOutlined, InfoCircleOutlined, ExclamationCircleFilled } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
@@ -11,11 +11,16 @@ import { lazyWithChunkReload } from '@/shared/lib/chunkLoadRecovery';
 import { formatDuration } from '@/shared/lib/duration';
 const ParticipationChart = lazyWithChunkReload(() => import('./ParticipationChart'));
 import { SlowTailTable } from './SlowTailTable';
-import type { Granularity } from '../types';
-
-import { useInsightPreference, useInsightDateRange } from '../useInsightPreference';
+import { useInsightDateRange, useInsightWorkType, type InsightWorkType } from '../useInsightPreference';
+import { ErrorCodes } from '@/shared/types/common';
 
 const { RangePicker } = DatePicker;
+
+function errorCode(err: unknown): string | undefined {
+  return typeof err === 'object' && err !== null && 'code' in err
+    ? String((err as { code: unknown }).code)
+    : undefined;
+}
 
 function defaultDateRange(): [Dayjs, Dayjs] {
   const end = dayjs().subtract(1, 'day');
@@ -25,28 +30,26 @@ function defaultDateRange(): [Dayjs, Dayjs] {
 
 export function ParticipationTab() {
   const { t } = useTranslation('insights');
-  const granularityOptions = [
-    { label: t('participation.daily'), value: 'DAY' },
-    { label: t('participation.weekly'), value: 'WEEK' },
-    { label: t('participation.monthly'), value: 'MONTH' },
-  ];
-  const [dateRange, setDateRange] = useInsightDateRange('participation.dates', defaultDateRange, 181, dayjs().subtract(1, 'day'));
-  const [granularity, setGranularity] = useInsightPreference<Granularity>('participation.granularity', 'DAY', v => typeof v === 'string' && ['DAY', 'WEEK', 'MONTH'].includes(v));
+  const [dateRange, setDateRange] = useInsightDateRange('participation.dates', defaultDateRange, 181, dayjs(), dayjs().subtract(180, 'day'));
+  const [workType, setWorkType] = useInsightWorkType();
 
   const startDate = dateRange[0].format('YYYY-MM-DD');
   const endDate = dateRange[1].format('YYYY-MM-DD');
-  const { data, isLoading, isError, isFetching, refetch } = useHumanAgentParticipation(startDate, endDate, granularity);
+  const { data, isLoading, isError, isFetching, refetch } = useHumanAgentParticipation(startDate, endDate, workType);
+  const workTypeOptions: { value: InsightWorkType; label: string }[] = [
+    { value: 'ALL', label: t('participation.workTypeAll') },
+    { value: 'REQ', label: t('participation.workTypeReq') },
+    { value: 'BUG', label: t('participation.workTypeBug') },
+    { value: 'TASK', label: t('participation.workTypeTask') },
+  ];
   const forceRefresh = useForceRefreshParticipation();
   const hasSamples = !!data?.sampleSize;
-  const exclusionKeys = { MISSING_CREATE: 'participation.exclusions.MISSING_CREATE', UNKNOWN_ASSIGNEE: 'participation.exclusions.UNKNOWN_ASSIGNEE', INVALID_TIMELINE: 'participation.exclusions.INVALID_TIMELINE' } as const;
   const scopeTip = <>
     <p>{t('participation.scopeLifecycle')}</p>
     <p>{t('participation.scopeWeight')}</p>
-    <p>{data?.sampleSize != null ? t('participation.scopeRecords', { identified: data.identifiedCompletedCount ?? '—', count: data.sampleSize }) : t('participation.scopeRecordsUnavailable', { identified: data?.identifiedCompletedCount ?? '—' })}
-      {Object.entries(data?.exclusions ?? {}).map(([reason, count]) => <span key={reason}> {t('participation.exclusionCount', { count, reason: Object.prototype.hasOwnProperty.call(exclusionKeys, reason) ? t(exclusionKeys[reason as keyof typeof exclusionKeys]) : reason })}</span>)}
-      <span> {t('participation.inferred', { count: data?.inferredAssignmentCount ?? 0 })} {t('participation.scopeMissing')}</span></p>
+    <p>{t('participation.scopeSharedSource')}</p>
+    <p>{data?.sampleSize != null ? t('participation.scopeRecords', { identified: data.identifiedCompletedCount ?? '—', count: data.sampleSize }) : t('participation.scopeRecordsUnavailable', { identified: data?.identifiedCompletedCount ?? '—' })}</p>
   </>;
-  const executionTip = t('participation.executionTip', { missing: data?.executionMissingCount ?? 0, incomplete: data?.executionIncompleteCount ?? 0 });
 
   const handleForceRefresh = () => {
     const localeEvent = 'languageChanged';
@@ -64,7 +67,11 @@ export function ParticipationTab() {
       onOk: () => {
         forceRefresh.mutate(undefined, {
           onSuccess: () => message.success(i18n.t('insights:participation.refreshSuccess')),
-          onError: () => message.error(i18n.t('insights:participation.refreshFailure')),
+          onError: (err) => {
+            const code = errorCode(err);
+            const busy = code === ErrorCodes.RETRY_LATER || code === ErrorCodes.SYSTEM_BUSY;
+            message.error(i18n.t(busy ? 'insights:participation.refreshBusy' : 'insights:participation.refreshFailure'));
+          },
         });
       },
     });
@@ -90,11 +97,17 @@ export function ParticipationTab() {
             }
           }}
           disabledDate={(current) => {
-            const upperBound = data?.dataThrough ? dayjs(data?.dataThrough).endOf('day') : dayjs().subtract(1, 'day').endOf('day');
+            const upperBound = dayjs().endOf('day');
             return current && (current > upperBound || current < dayjs(data?.dataThrough || dayjs().subtract(1, 'day')).subtract(180, 'day'));
           }}
         />
-        <Segmented aria-label={t('participation.granularity')} options={granularityOptions} value={granularity} onChange={(v) => setGranularity(v as Granularity)} />
+        <Select<InsightWorkType>
+          aria-label={t('participation.workTypeFilter')}
+          value={workType}
+          onChange={setWorkType}
+          options={workTypeOptions}
+          style={{ width: 140 }}
+        />
         <Button
           style={{ marginLeft: 'auto' }}
           icon={<ReloadOutlined aria-hidden="true" />}
@@ -114,8 +127,10 @@ export function ParticipationTab() {
       {isLoading ? <div className="participation-state"><Spin tip={t('participation.loading')} /></div>
         : isError ? <div className="participation-state"><Empty description={t('participation.loadFailure')}><Button onClick={() => refetch()}>{t('participation.retry')}</Button></Empty></div>
         : !data?.available ? <div className="participation-state"><Empty description={t(data?.refreshTriggered ? 'participation.generating' : 'participation.noData')} /></div>
+        : data.sampleSize === 0 ? <div className="participation-state"><Empty description={t('participation.emptyForFilter')} /></div>
         : <>
-      {/* Summary cards */}
+      {/* Summary cards and charts stay visible but dimmed while a new filter result is in flight. */}
+      <Spin spinning={isFetching}>
       {data.average && (
         <div className="participation-stats">
           <StatCard label={t('participation.average')} value={hasSamples ? formatDuration(data.average.totalDurationSeconds) : '—'}
@@ -126,26 +141,24 @@ export function ParticipationTab() {
           <StatCard tone="agent" label={t('participation.agentShare')} value={hasSamples && data.agentWorkitemCount != null ? `${(data.agentWorkitemCount / data.sampleSize * 100).toFixed(1)}%` : '—'}
             detail={t('participation.sampleFraction', { participating: data.agentWorkitemCount ?? '—', count: data.sampleSize })}
             tip={t('participation.agentShareTip')} />
-          <StatCard tone="agent" label={t('participation.averageExecution')} value={data.averageExecutionSeconds != null ? formatDuration(data.averageExecutionSeconds) : '—'}
-            detail={data.agentWorkitemCount != null ? t('participation.executionRecords', { complete: data.executionSampleSize ?? 0, count: data.agentWorkitemCount }) : t('participation.executionRecordsUnavailable', { complete: data.executionSampleSize ?? 0 })}
-            tip={executionTip} />
         </div>
       )}
 
       <Suspense fallback={<div className="participation-state"><Spin tip={t('participation.loadingCharts')} /></div>}>
-        <div className="participation-chart-grid" key={`${startDate}-${endDate}-${granularity}`}>
-          <ParticipationChart kind="distribution" data={data.trend} average={data.average} sampleSize={data.sampleSize} granularity={granularity} />
-          <ParticipationChart kind="ratio" data={data.trend} average={data.average} sampleSize={data.sampleSize} granularity={granularity} />
-          <ParticipationChart kind="duration" data={data.trend} average={data.average} sampleSize={data.sampleSize} granularity={granularity} />
+        <div className="participation-chart-grid" key={`${startDate}-${endDate}-${workType}`}>
+          <ParticipationChart kind="distribution" data={data.trend} average={data.average} sampleSize={data.sampleSize} />
+          <ParticipationChart kind="ratio" data={data.trend} average={data.average} sampleSize={data.sampleSize} />
+          <ParticipationChart kind="duration" data={data.trend} average={data.average} sampleSize={data.sampleSize} />
         </div>
       </Suspense>
+      </Spin>
 
       {/* Slow tail table */}
       <Card
-        title={<span className="participation-slow-tail-title"><span>{t('participation.slowTail')}</span><Tag color="orange">{t('participation.topPercent')}</Tag></span>}
+        title={<span className="participation-slow-tail-title"><span>{t('participation.slowTail')}</span><Tag color="orange">{t('participation.topTen')}</Tag></span>}
         styles={{ body: { padding: 0 } }}
       >
-        <SlowTailTable key={`${startDate}-${endDate}`} startDate={startDate} endDate={endDate} />
+        <SlowTailTable key={`${startDate}-${endDate}-${workType}`} startDate={startDate} endDate={endDate} workType={workType} />
       </Card>
       </>}
     </div>

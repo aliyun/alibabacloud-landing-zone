@@ -96,4 +96,156 @@ class DaemonCheckpointControllerTest {
         assertEquals(503, response.getStatusCode().value());
         verifyNoInteractions(auditLogService);
     }
+
+    @Test
+    void refreshDownloadUrlRejectsUnknownExecutorToken() {
+        when(authenticator.authenticate(500L, "bad"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.fail());
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "bad", 1L);
+
+        assertEquals(401, response.getStatusCode().value());
+        verifyNoInteractions(checkpointService, auditLogService);
+    }
+
+    @Test
+    void refreshDownloadUrlReturnsNotFoundForUnknownDispatch() {
+        when(authenticator.authenticate(500L, "tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "tok", 1L);
+
+        assertEquals(404, response.getStatusCode().value());
+        assertEquals("daemon.checkpoint.url.not_found",
+                ((java.util.Map<?, ?>) response.getBody()).get("code"));
+    }
+
+    @Test
+    void refreshDownloadUrlRejectsInvalidCheckpointIdentity() {
+        when(authenticator.authenticate(500L, "tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+        when(dispatchDao.findById(500L)).thenReturn(runningDispatch());
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "tok", 0L);
+
+        assertEquals(400, response.getStatusCode().value());
+        verifyNoInteractions(checkpointService);
+    }
+
+    @Test
+    void refreshDownloadUrlRejectsDispatchThatIsNoLongerRefreshable() {
+        when(authenticator.authenticate(500L, "tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+        DispatchDO dispatch = runningDispatch();
+        dispatch.setStatus(DispatchStatus.SUCCEEDED);
+        when(dispatchDao.findById(500L)).thenReturn(dispatch);
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "tok", 3L);
+
+        assertEquals(409, response.getStatusCode().value());
+        verifyNoInteractions(checkpointService);
+    }
+
+    @Test
+    void refreshDownloadUrlMapsMissingObjectToGone() {
+        when(authenticator.authenticate(500L, "tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+        DispatchDO dispatch = runningDispatch();
+        when(dispatchDao.findById(500L)).thenReturn(dispatch);
+        when(checkpointService.refreshDownloadLink(dispatch, 3L))
+                .thenThrow(new DispatchCheckpointService.CheckpointObjectMissingException());
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "tok", 3L);
+
+        assertEquals(410, response.getStatusCode().value());
+        assertEquals("daemon.checkpoint.url.object_missing",
+                ((java.util.Map<?, ?>) response.getBody()).get("code"));
+        verifyNoInteractions(auditLogService);
+    }
+
+    @Test
+    void refreshDownloadUrlMapsNonCandidateToForbidden() {
+        when(authenticator.authenticate(500L, "tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+        DispatchDO dispatch = runningDispatch();
+        when(dispatchDao.findById(500L)).thenReturn(dispatch);
+        when(checkpointService.refreshDownloadLink(dispatch, 3L))
+                .thenThrow(new DispatchCheckpointService.CheckpointNotRestorableException());
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "tok", 3L);
+
+        assertEquals(403, response.getStatusCode().value());
+        assertEquals("daemon.checkpoint.url.not_restorable",
+                ((java.util.Map<?, ?>) response.getBody()).get("code"));
+    }
+
+    @Test
+    void refreshDownloadUrlMapsUnknownCheckpointToNotFound() {
+        when(authenticator.authenticate(500L, "tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+        DispatchDO dispatch = runningDispatch();
+        when(dispatchDao.findById(500L)).thenReturn(dispatch);
+        when(checkpointService.refreshDownloadLink(dispatch, 3L))
+                .thenThrow(new DispatchCheckpointService.CheckpointNotFoundException());
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "tok", 3L);
+
+        assertEquals(404, response.getStatusCode().value());
+        assertEquals("daemon.checkpoint.url.not_found",
+                ((java.util.Map<?, ?>) response.getBody()).get("code"));
+    }
+
+    @Test
+    void refreshDownloadUrlMapsServiceInvalidIdentityToBadRequest() {
+        when(authenticator.authenticate(500L, "tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+        DispatchDO dispatch = runningDispatch();
+        when(dispatchDao.findById(500L)).thenReturn(dispatch);
+        when(checkpointService.refreshDownloadLink(dispatch, 3L))
+                .thenThrow(new DispatchCheckpointService.CheckpointInvalidRequestException());
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "tok", 3L);
+
+        assertEquals(400, response.getStatusCode().value());
+        assertEquals("daemon.checkpoint.url.invalid_request",
+                ((java.util.Map<?, ?>) response.getBody()).get("code"));
+        verifyNoInteractions(auditLogService);
+    }
+
+    @Test
+    void refreshDownloadUrlReturnsSignedLinkAndRecordsAudit() {
+        when(authenticator.authenticate(500L, "tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+        DispatchDO dispatch = runningDispatch();
+        when(dispatchDao.findById(500L)).thenReturn(dispatch);
+        when(checkpointService.refreshDownloadLink(dispatch, 3L)).thenReturn(
+                new CheckpointDownloadLink(3L, "https://oss/cp?Signature=abc",
+                        "2026-10-23T10:00:00Z", "sha256:deadbeef", 600));
+
+        ResponseEntity<?> response = controller.refreshDownloadUrl(500L, "tok", 3L);
+
+        assertEquals(200, response.getStatusCode().value());
+        java.util.Map<?, ?> body = (java.util.Map<?, ?>) response.getBody();
+        assertEquals(3L, body.get("checkpointSeq"));
+        assertEquals("https://oss/cp?Signature=abc", body.get("downloadUrl"));
+        assertEquals("2026-10-23T10:00:00Z", body.get("expiresAt"));
+        assertEquals("sha256:deadbeef", body.get("sha256"));
+        assertEquals(600, body.get("expiresInSeconds"));
+        verify(auditLogService).record(argThat(record ->
+                record.getTenantId() == 100L
+                        && "REFRESH_CHECKPOINT_URL".equals(record.getAction())
+                        && "dispatch".equals(record.getTargetType())
+                        && Long.valueOf(500L).equals(record.getTargetId())
+                        && "daemon.checkpoint-url".equals(record.getEventType())));
+    }
+
+    private static DispatchDO runningDispatch() {
+        DispatchDO dispatch = new DispatchDO();
+        dispatch.setId(500L);
+        dispatch.setTenantId(100L);
+        dispatch.setWorkitemId(200L);
+        dispatch.setAgentId(300L);
+        dispatch.setStatus(DispatchStatus.RUNNING);
+        return dispatch;
+    }
 }

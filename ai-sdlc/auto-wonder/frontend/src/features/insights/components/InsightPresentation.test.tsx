@@ -2,7 +2,6 @@ import { expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { Sparkline } from './Sparkline';
 import SquadLines from '../realtime/SquadLines';
-import InventoryPanel from '../realtime/InventoryPanel';
 import { SlowTailTable } from './SlowTailTable';
 import { useHumanAgentSlowTail } from '../hooks';
 vi.mock('../hooks', () => ({ useHumanAgentSlowTail: vi.fn() }));
@@ -21,17 +20,14 @@ it('represents busy members as the true fraction, including zero', () => {
   expect(container.querySelectorAll('[role="img"]')[1].firstElementChild).toHaveStyle({ width: '0%' });
 });
 
-it('does not label a single workitem as no data', () => {
-  render(<InventoryPanel inventory={{ byLifecycle: { init: 1, inProgress: 0, done: 0, canceled: 0 }, byType: { req: 1, task: 0, bug: 0 } }} />);
-  expect(screen.queryByText(/暂无数据/)).not.toBeInTheDocument();
-});
-
 it('distinguishes slow-tail loading and errors from an empty result', () => {
   vi.mocked(useHumanAgentSlowTail).mockReturnValue({ isLoading: true } as ReturnType<typeof useHumanAgentSlowTail>);
-  const { rerender } = render(<SlowTailTable startDate="2026-09-01" endDate="2026-09-25" />);
+  const { rerender } = render(<SlowTailTable startDate="2026-09-01" endDate="2026-09-25" workType="ALL" />);
+  expect(useHumanAgentSlowTail).toHaveBeenLastCalledWith('2026-09-01', '2026-09-25', 'ALL');
   expect(document.querySelector('.ant-spin-spinning')).toBeInTheDocument();
   vi.mocked(useHumanAgentSlowTail).mockReturnValue({ isError: true, refetch: vi.fn() } as unknown as ReturnType<typeof useHumanAgentSlowTail>);
-  rerender(<SlowTailTable startDate="2026-09-01" endDate="2026-09-25" />);
+  rerender(<SlowTailTable startDate="2026-09-01" endDate="2026-09-25" workType="BUG" />);
+  expect(useHumanAgentSlowTail).toHaveBeenLastCalledWith('2026-09-01', '2026-09-25', 'BUG');
   expect(screen.getByText('慢尾工单加载失败')).toBeInTheDocument();
   expect(screen.queryByText('无慢尾工单')).not.toBeInTheDocument();
 });

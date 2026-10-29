@@ -11,6 +11,7 @@ import com.aliyun.autowonder.skill.RuntimeMcpConnectionTestService;
 import javax.websocket.Session;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 class InboundFrameRouterConversationTest {
@@ -40,6 +41,40 @@ class InboundFrameRouterConversationTest {
             interactionWorkflowService, convSvc, null, runtimeMcpConnectionTestService);
 
     @Test
+    void doesNotConfirmWhenTerminalPersistenceFails() throws Exception {
+        ExecutorSession es = mock(ExecutorSession.class);
+        when(es.getTenantId()).thenReturn(1L); when(es.getExecutorId()).thenReturn(9L);
+        doThrow(new IllegalStateException("db unavailable")).when(convSvc).acknowledgeTurn(
+                eq(1L), eq(9L), eq(77L), eq(55L), any(), any(), any(), any(), any(), eq(2));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () -> router.route(es,
+                "{\"type\":\"CONVERSATION_TURN_ACK\",\"conversationId\":77,\"turnId\":55,"
+                + "\"dispatchAttempt\":2,\"conversationDeliveryProtocolVersion\":1,\"status\":\"SUCCESS\"}"));
+        verify(es, never()).sendText(anyString());
+    }
+
+    @Test
+    void confirmsNegotiatedTerminalDeliveryWithExactIdentity() throws Exception {
+        ExecutorSession es = mock(ExecutorSession.class);
+        when(es.getTenantId()).thenReturn(1L); when(es.getExecutorId()).thenReturn(9L);
+        String terminal = "{\"type\":\"CONVERSATION_TURN_ACK\",\"conversationId\":77,\"turnId\":55,"
+                + "\"dispatchAttempt\":2,\"conversationDeliveryProtocolVersion\":1,\"status\":\"SUCCESS\"}";
+        router.route(es, terminal);
+        router.route(es, terminal);
+        var sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(es, times(2)).sendText(sent.capture());
+        assertEquals(sent.getAllValues().get(0), sent.getAllValues().get(1));
+        verify(convSvc, times(2)).acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, null, null, null, 2);
+        var ack = com.aliyun.autowonder.json.JSON.parseObject(sent.getAllValues().get(0));
+        assertEquals("CONVERSATION_DELIVERY_ACK", ack.getString("type"));
+        assertEquals("CONVERSATION_TURN_ACK", ack.getString("frameType"));
+        assertEquals(2, ack.getIntValue("dispatchAttempt"));
+        assertEquals(55L, ack.getLongValue("turnId"));
+        assertEquals(77L, ack.getLongValue("conversationId"));
+        assertEquals(0L, ack.getLongValue("eventSeq"));
+        assertEquals(0, ack.getIntValue("chunkIndex"));
+    }
+
+    @Test
     void routesConversationTurnAckToService() {
         ExecutorSession es = new ExecutorSession(9L, 3L, 1L, mock(Session.class));
         String frame = "{\"type\":\"CONVERSATION_TURN_ACK\",\"conversationId\":77,\"turnId\":55,"
@@ -47,7 +82,33 @@ class InboundFrameRouterConversationTest {
 
         router.route(es, frame);
 
-        verify(convSvc).acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "hi", "s1");
+        verify(convSvc).acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "hi", "s1", null);
+    }
+
+    @Test
+    void parsesConversationTurnUsageFromAck() {
+        ExecutorSession es = new ExecutorSession(9L, 3L, 1L, mock(Session.class));
+        String frame = "{\"type\":\"CONVERSATION_TURN_ACK\",\"conversationId\":77,\"turnId\":55,"
+                + "\"status\":\"SUCCESS\",\"replyMarkdown\":\"hi\",\"sessionId\":\"s1\","
+                + "\"usage\":{\"provider\":\"qoder\",\"model\":\"ultimate\",\"inputTokens\":1234,"
+                + "\"outputTokens\":56,\"cacheReadTokens\":7,\"cacheWriteTokens\":8,"
+                + "\"reasoningTokens\":9,\"credits\":0.3512}}";
+
+        router.route(es, frame);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(
+                com.aliyun.autowonder.aiusage.dto.ConversationTurnUsage.class);
+        verify(convSvc).acknowledgeTurn(eq(1L), eq(9L), eq(77L), eq(55L), eq("SUCCESS"),
+                isNull(), eq("hi"), eq("s1"), captor.capture());
+        var usage = captor.getValue();
+        assertEquals("qoder", usage.getProvider());
+        assertEquals("ultimate", usage.getModel());
+        assertEquals(1234L, usage.getInputTokens());
+        assertEquals(56L, usage.getOutputTokens());
+        assertEquals(7L, usage.getCacheReadTokens());
+        assertEquals(8L, usage.getCacheWriteTokens());
+        assertEquals(9L, usage.getReasoningTokens());
+        assertEquals(0, new java.math.BigDecimal("0.3512").compareTo(usage.getCredits()));
     }
 
     @Test

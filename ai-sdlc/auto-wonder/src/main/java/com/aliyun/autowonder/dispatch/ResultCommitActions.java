@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.dispatch;
 
+import com.aliyun.autowonder.configuration.ThreadPoolManager;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.slf4j.LoggerFactory;
@@ -20,19 +21,23 @@ final class ResultCommitActions implements AutoCloseable {
         scope.actions.putIfAbsent(key, action);
         return true;
     }
+    static boolean deferAsync(String key, Runnable action) {
+        return defer(key, () -> ThreadPoolManager.asyncTaskThreadPool.execute(() -> runSafely(key, action)));
+    }
     static void cancel(String key) {
         ResultCommitActions scope = CURRENT.get();
         if (scope != null) scope.actions.remove(key);
     }
     void committed() {
         close();
-        actions.forEach((key, action) -> {
-            try { action.run(); }
-            catch (RuntimeException failure) {
-                LoggerFactory.getLogger(ResultCommitActions.class).warn(
-                        "result committed; deferred action will be reconciled key={}", key, failure);
-            }
-        });
+        actions.forEach(ResultCommitActions::runSafely);
+    }
+    private static void runSafely(String key, Runnable action) {
+        try { action.run(); }
+        catch (RuntimeException failure) {
+            LoggerFactory.getLogger(ResultCommitActions.class).warn(
+                    "result committed; deferred action will be reconciled key={}", key, failure);
+        }
     }
     @Override public void close() { CURRENT.remove(); }
 }

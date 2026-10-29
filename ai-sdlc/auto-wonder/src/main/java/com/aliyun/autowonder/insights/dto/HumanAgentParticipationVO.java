@@ -11,18 +11,6 @@ public class HumanAgentParticipationVO {
     private long agentWorkitemCount;
     public long getAgentWorkitemCount() { return agentWorkitemCount; }
     public void setAgentWorkitemCount(long value) { agentWorkitemCount = value; }
-    private int executionSampleSize;
-    public int getExecutionSampleSize() { return executionSampleSize; }
-    public void setExecutionSampleSize(int value) { executionSampleSize = value; }
-    private Double averageExecutionSeconds;
-    public Double getAverageExecutionSeconds() { return averageExecutionSeconds; }
-    public void setAverageExecutionSeconds(Double value) { averageExecutionSeconds = value; }
-    private int executionMissingCount;
-    public int getExecutionMissingCount() { return executionMissingCount; }
-    public void setExecutionMissingCount(int value) { executionMissingCount = value; }
-    private int executionIncompleteCount;
-    public int getExecutionIncompleteCount() { return executionIncompleteCount; }
-    public void setExecutionIncompleteCount(int value) { executionIncompleteCount = value; }
     private int identifiedCompletedCount;
     public int getIdentifiedCompletedCount() { return identifiedCompletedCount; }
     public void setIdentifiedCompletedCount(int value) { identifiedCompletedCount = value; }
@@ -41,6 +29,14 @@ public class HumanAgentParticipationVO {
     private DurationSummary average;
     private P90Workitem p90;
     private List<TrendEntry> trend;
+
+    private Integer averageTotalMinutes;
+    public Integer getAverageTotalMinutes() { return averageTotalMinutes; }
+    public void setAverageTotalMinutes(Integer value) { averageTotalMinutes = value; }
+
+    private boolean realtimeTail;
+    public boolean isRealtimeTail() { return realtimeTail; }
+    public void setRealtimeTail(boolean value) { realtimeTail = value; }
 
     public boolean isAvailable() { return available; }
     public void setAvailable(boolean available) { this.available = available; }

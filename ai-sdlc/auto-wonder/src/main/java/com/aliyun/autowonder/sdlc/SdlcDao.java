@@ -9,6 +9,7 @@ import java.util.List;
 public interface SdlcDao {
     void insert(SdlcDO sdlc);
     SdlcDO findById(@Param("id") Long id);
+    SdlcDO findByIdForUpdate(@Param("id") Long id, @Param("tenantId") Long tenantId);
     List<SdlcDO> listByIds(@Param("ids") Collection<Long> ids);
     List<SdlcDO> list(@Param("workType") String workType,
                       @Param("status") String status,

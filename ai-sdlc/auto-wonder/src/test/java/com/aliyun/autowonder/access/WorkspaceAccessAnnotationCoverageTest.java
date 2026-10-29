@@ -5,7 +5,9 @@ import com.aliyun.autowonder.artifact.ArtifactController;
 import com.aliyun.autowonder.branding.PlatformBrandingController;
 import com.aliyun.autowonder.executor.ExecutorController;
 import com.aliyun.autowonder.integration.AoneIntegrationController;
+import com.aliyun.autowonder.integration.ImChannelPublicController;
 import com.aliyun.autowonder.integration.dingtalk.DingTalkBindingController;
+import com.aliyun.autowonder.integration.feishu.FeishuCallbackController;
 import com.aliyun.autowonder.im.PlatformImChannelConfigController;
 import com.aliyun.autowonder.mcp.McpTokenController;
 import com.aliyun.autowonder.setting.SystemSettingController;
@@ -64,6 +66,10 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.memory.store.DaemonMemoryController",
             "com.aliyun.autowonder.notification.NotificationController",
             "com.aliyun.autowonder.taskpackage.DaemonTaskPackageController",
+            // Dispatch-scoped task data/identity endpoints authenticate with the executor token
+            // through DaemonUploadAuthenticator and carry no logged-in workspace context.
+            "com.aliyun.autowonder.taskdata.DaemonTaskDataController",
+            "com.aliyun.autowonder.taskdata.DaemonWorkitemIdentityController",
             "com.aliyun.autowonder.user.AuthController",
             "com.aliyun.autowonder.workitem.DaemonCommentController"
     );
@@ -72,6 +78,11 @@ class WorkspaceAccessAnnotationCoverageTest {
             // Feishu callbacks authenticate through FeishuCallbackSecurity using the binding's
             // verification token and, when configured, signature; no user workspace context exists.
             "com.aliyun.autowonder.integration.feishu.FeishuCallbackController#callback("
+                    + "java.lang.Long, java.lang.String, java.lang.String, java.lang.String, java.lang.String)",
+            // Platform shared group-chat callback: the config id only locates the platform
+            // GROUP_CHAT credentials and FeishuCallbackSecurity still verifies the signature;
+            // external callbacks carry no logged-in user's workspace context.
+            "com.aliyun.autowonder.integration.feishu.FeishuCallbackController#groupCallback("
                     + "java.lang.Long, java.lang.String, java.lang.String, java.lang.String, java.lang.String)",
             "com.aliyun.autowonder.branding.PlatformBrandingController#logo()",
             "com.aliyun.autowonder.branding.PlatformBrandingController#adminConfig()",
@@ -87,6 +98,11 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.access.PlatformAdminController#add("
                     + "com.aliyun.autowonder.access.dto.AddPlatformAdminRequest)",
             "com.aliyun.autowonder.access.PlatformAdminController#remove(java.lang.Long)",
+            // 空间级看板是平台级/多空间只读聚合：授权由 SpaceDashboardService 按调用者可管理的空间集合
+            // 判定（平台管理员 / owner / ADMIN 角色），与 token 绑定的当前工作空间无关，
+            // 因此不进入工作区访问阶梯。
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardController#overview("
+                    + "java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.lang.String)",
             // SSO 配置面与 PlatformAdminController 同源：SystemAdminService.requireSystemAdmin
             // 做全局平台管理员校验，不属于工作区访问阶梯。
             "com.aliyun.autowonder.auth.federation.FederationAdminController#listIdps()",
@@ -114,6 +130,15 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.im.PlatformImChannelConfigController#updateDingTalk("
                     + "com.aliyun.autowonder.im.dto.UpdateDingTalkChannelRequest)",
             "com.aliyun.autowonder.integration.IntegrationCapabilityController#capabilities()",
+            // Platform shared group-chat selection and configuration are global (one row for the
+            // whole platform) and every endpoint authorizes through
+            // SystemAdminService.requireSystemAdmin, so they stay outside the access ladder.
+            "com.aliyun.autowonder.im.PlatformImChannelConfigController#selection()",
+            "com.aliyun.autowonder.im.PlatformImChannelConfigController#selectProvider("
+                    + "com.aliyun.autowonder.im.dto.SelectImChannelRequest)",
+            "com.aliyun.autowonder.im.PlatformImChannelConfigController#groupChat(java.lang.String)",
+            "com.aliyun.autowonder.im.PlatformImChannelConfigController#updateGroupChat("
+                    + "java.lang.String, com.aliyun.autowonder.im.dto.UpdateGroupChatConfigRequest)",
             "com.aliyun.autowonder.mcp.McpTokenController#issue("
                     + "com.aliyun.autowonder.mcp.dto.CreateMcpTokenRequest)",
             "com.aliyun.autowonder.mcp.McpTokenController#list()",
@@ -357,6 +382,7 @@ class WorkspaceAccessAnnotationCoverageTest {
         assertAccess(WorkspaceController.class, "updateMemberIdentityTags", WorkspaceAccessLevel.ADMIN);
         assertAccess(WorkspaceController.class, "transferOwner", WorkspaceAccessLevel.ADMIN);
 
+        assertAccess(ImChannelPublicController.class, "groupConfig", WorkspaceAccessLevel.READ_ONLY);
     }
 
     @Test
@@ -392,6 +418,10 @@ class WorkspaceAccessAnnotationCoverageTest {
         assertExempt(PlatformBrandingController.class, "uploadLogo");
         assertExempt(PlatformImChannelConfigController.class, "list");
         assertExempt(PlatformImChannelConfigController.class, "updateDingTalk");
+        assertExempt(PlatformImChannelConfigController.class, "selection");
+        assertExempt(PlatformImChannelConfigController.class, "selectProvider");
+        assertExempt(PlatformImChannelConfigController.class, "groupChat");
+        assertExempt(PlatformImChannelConfigController.class, "updateGroupChat");
         assertExempt(PlatformAdminController.class, "list");
         assertExempt(PlatformAdminController.class, "candidates");
         assertExempt(PlatformAdminController.class, "add");
@@ -404,6 +434,12 @@ class WorkspaceAccessAnnotationCoverageTest {
         assertExempt(WorkspaceController.class, "delete");
         assertExempt(WorkspaceController.class, "recycleBin");
         assertExempt(WorkspaceController.class, "restore");
+    }
+
+    @Test
+    void feishuPlatformCallbacksStayOutsideWorkspaceAccessLadder() {
+        assertExempt(FeishuCallbackController.class, "callback");
+        assertExempt(FeishuCallbackController.class, "groupCallback");
     }
 
     private boolean isControllerExemptFromWorkspaceAccess(Class<?> controller) {

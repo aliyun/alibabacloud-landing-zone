@@ -26,6 +26,8 @@ import com.aliyun.autowonder.workspace.WorkspaceDO;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.memory.MemoryDO;
 import com.aliyun.autowonder.memory.MemoryScopeResolver;
+import com.aliyun.autowonder.repo.RepoDO;
+import com.aliyun.autowonder.repo.RepoDao;
 import com.aliyun.autowonder.skill.SkillDO;
 import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.squad.SquadAttributionService;
@@ -52,6 +54,14 @@ public class AgentService {
     private final ExecutorDao executorDao;
     private final ExecutorRegistry executorRegistry;
     private final SkillDao capabilityDao;
+    private ChiefEffectiveConfigResolver chiefConfig;
+
+    @Autowired
+    public void setChiefConfig(ChiefEffectiveConfigResolver chiefConfig) {
+        this.chiefConfig = chiefConfig;
+    }
+
+    private RepoDao repoDao;
     private MemoryScopeResolver memoryScopeResolver;
     private SquadAttributionService squadAttributionService;
     private SquadMemberDao squadMemberDao;
@@ -69,6 +79,11 @@ public class AgentService {
     @Autowired(required = false)
     public void setSquadMemberDao(SquadMemberDao squadMemberDao) {
         this.squadMemberDao = squadMemberDao;
+    }
+
+    @Autowired(required = false)
+    public void setRepoDao(RepoDao repoDao) {
+        this.repoDao = repoDao;
     }
 
     public AgentService(AgentDao agentDao, AgentVersionDao versionDao,
@@ -172,6 +187,12 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_PLATFORM_LOCKED);
         }
         AgentVersionDO draft = ensureDraft(agent, tenantId, userId);
+        if (isPlatform(agent)) {
+            checkOfficialIdentityField(req.getProvidedFields(), "businessBackground", req.getBusinessBackground(),
+                    draft.getBusinessBackground(), chiefConfig == null ? null : chiefConfig.officialSoulMd());
+            checkOfficialIdentityField(req.getProvidedFields(), "responsibilities", req.getResponsibilities(),
+                    draft.getResponsibilities(), chiefConfig == null ? null : chiefConfig.officialAgentMd());
+        }
         String identityJson = fieldProvided(req.getProvidedFields(), "evolutionMode")
                 ? identityJsonWithEvolutionMode(draft.getIdentityJson(), req.getEvolutionMode())
                 : draft.getIdentityJson();
@@ -179,9 +200,9 @@ public class AgentService {
                 ? req.getRoleName() : draft.getRoleName();
         String roleCode = fieldProvided(req.getProvidedFields(), "roleCode")
                 ? req.getRoleCode() : draft.getRoleCode();
-        String businessBackground = fieldProvided(req.getProvidedFields(), "businessBackground")
+        String businessBackground = !isPlatform(agent) && fieldProvided(req.getProvidedFields(), "businessBackground")
                 ? req.getBusinessBackground() : draft.getBusinessBackground();
-        String responsibilities = fieldProvided(req.getProvidedFields(), "responsibilities")
+        String responsibilities = !isPlatform(agent) && fieldProvided(req.getProvidedFields(), "responsibilities")
                 ? req.getResponsibilities() : draft.getResponsibilities();
         Long sdlcId = fieldProvided(req.getProvidedFields(), "sdlcId")
                 ? req.getSdlcId() : draft.getSdlcId();
@@ -194,6 +215,19 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
         return toVersionVO(versionDao.findById(draft.getId()));
+    }
+
+    private void checkOfficialIdentityField(java.util.Set<String> providedFields, String field,
+            String requested, String stored, String official) {
+        if (!fieldProvided(providedFields, field)
+                || (providedFields == null && requested == null)) {
+            return;
+        }
+        // Accept unchanged legacy/effective round trips without copying official text to the draft.
+        if (!java.util.Objects.equals(requested, stored)
+                && !(official != null && java.util.Objects.equals(requested, official))) {
+            throw new BizException(ErrorCode.AGENT_PLATFORM_LOCKED);
+        }
     }
 
     private boolean fieldProvided(java.util.Set<String> providedFields, String fieldName) {
@@ -251,13 +285,19 @@ public class AgentService {
 
         if (hasVersionField) {
             AgentVersionDO draft = ensureDraft(agent, tenantId, userId);
+            if (isPlatform(agent)) {
+                checkOfficialIdentityField(req.getProvidedFields(), "businessBackground", req.getBusinessBackground(),
+                        draft.getBusinessBackground(), chiefConfig == null ? null : chiefConfig.officialSoulMd());
+                checkOfficialIdentityField(req.getProvidedFields(), "responsibilities", req.getResponsibilities(),
+                        draft.getResponsibilities(), chiefConfig == null ? null : chiefConfig.officialAgentMd());
+            }
             String roleName = mergeField(req.getProvidedFields(), "roleName",
                     req.getRoleName(), draft.getRoleName());
             String roleCode = mergeField(req.getProvidedFields(), "roleCode",
                     req.getRoleCode(), draft.getRoleCode());
-            String bg = mergeField(req.getProvidedFields(), "businessBackground",
+            String bg = isPlatform(agent) ? draft.getBusinessBackground() : mergeField(req.getProvidedFields(), "businessBackground",
                     req.getBusinessBackground(), draft.getBusinessBackground());
-            String resp = mergeField(req.getProvidedFields(), "responsibilities",
+            String resp = isPlatform(agent) ? draft.getResponsibilities() : mergeField(req.getProvidedFields(), "responsibilities",
                     req.getResponsibilities(), draft.getResponsibilities());
             int rows = versionDao.updateConfig(draft.getId(), tenantId,
                     roleName, roleCode, bg, resp, draft.getSdlcId(),
@@ -974,6 +1014,7 @@ public class AgentService {
             for (AgentRepoPermDO p : repoRows) {
                 AgentVersionVO.RepoPermItem item = new AgentVersionVO.RepoPermItem();
                 item.setRepoId(p.getRepoId());
+                item.setRepoName(repoName(p.getRepoId(), v.getTenantId()));
                 item.setPermLevel(p.getPermLevel());
                 item.setAllowedBranchPatterns(BranchPatternPolicy.decode(p.getAllowedBranchPatterns()));
                 repoPerms.add(item);
@@ -1024,6 +1065,18 @@ public class AgentService {
         return capability.getName();
     }
 
+    /** 仓库名称只用于展示：仓库已删除、跨租户或依赖缺失时返回 null，由调用方回退为 id。 */
+    private String repoName(Long repoId, Long tenantId) {
+        if (repoDao == null) {
+            return null;
+        }
+        RepoDO repo = repoDao.findById(repoId);
+        if (repo == null || repo.getTenantId() == null || !repo.getTenantId().equals(tenantId)) {
+            return null;
+        }
+        return repo.getName();
+    }
+
     AgentVO toVO(AgentDO a) {
         AgentVO vo = new AgentVO();
         vo.setId(a.getId());
@@ -1041,6 +1094,9 @@ public class AgentService {
 
     private AgentVO toSummaryVO(AgentDO a) {
         AgentVO vo = toVO(a);
+        if (isPlatform(a) && chiefConfig != null) {
+            vo.setOfficialConfiguration(chiefConfig.officialView());
+        }
         AgentVersionDO display = resolveDisplayVersion(a);
         if (display != null) {
             vo.setRoleName(display.getRoleName());

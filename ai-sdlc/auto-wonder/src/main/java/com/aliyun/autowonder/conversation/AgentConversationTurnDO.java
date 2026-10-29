@@ -13,8 +13,14 @@ public class AgentConversationTurnDO {
     private String externalMsgId;
     private String requestId;
     private String sourceContext;
+    private Long submittedUserId;
     private String status;
     private String error;
+    private Long sourceInboundTurnId;
+    private String deliveryStatus;
+    private Integer deliveryAttempt;
+    private Date deliveryAvailableAt;
+    private String deliveryError;
     private Date lastDispatchAt;
     private Integer dispatchAttempt;
     private Date gmtCreate;

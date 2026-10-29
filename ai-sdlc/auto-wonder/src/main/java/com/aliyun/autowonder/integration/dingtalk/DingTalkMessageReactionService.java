@@ -20,7 +20,7 @@ public class DingTalkMessageReactionService {
 
     public void markThinking(DingtalkRobotBindingDO binding, String openConversationId,
             String openMsgId) {
-        if (binding == null || isBlank(openConversationId) || isBlank(openMsgId)) {
+        if (skipShared(binding) || isBlank(openConversationId) || isBlank(openMsgId)) {
             return;
         }
         try {
@@ -38,7 +38,7 @@ public class DingTalkMessageReactionService {
 
     public void recallThinking(DingtalkRobotBindingDO binding, String openConversationId,
             String openMsgId) {
-        if (binding == null || isBlank(openConversationId) || isBlank(openMsgId)) {
+        if (skipShared(binding) || isBlank(openConversationId) || isBlank(openMsgId)) {
             return;
         }
         try {
@@ -52,6 +52,12 @@ public class DingTalkMessageReactionService {
             log.warn("dingtalk reaction thinking recall failed robotCode={} conversationId={} msgId={}: {}",
                     binding.getRobotCode(), openConversationId, openMsgId, e.getMessage());
         }
+    }
+
+    private boolean skipShared(DingtalkRobotBindingDO binding) {
+        // Shared group bots use the platform credentials and the internal prefixed conversation
+        // id is not a DingTalk openConversationId, so thinking reactions are not supported.
+        return binding == null || bindingService.isShared(binding);
     }
 
     private boolean isBlank(String value) {

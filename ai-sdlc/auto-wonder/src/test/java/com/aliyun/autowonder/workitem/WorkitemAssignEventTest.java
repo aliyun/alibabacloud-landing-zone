@@ -92,6 +92,22 @@ class WorkitemAssignEventTest {
         org.junit.jupiter.api.Assertions.assertEquals(5L, e.getSdlcStepId());
         org.junit.jupiter.api.Assertions.assertEquals(42L, e.getAgentId());
         org.junit.jupiter.api.Assertions.assertEquals(3L, e.getUserId());
+        assertEquals("HUMAN", e.getActor().type());
+        assertEquals(3L, e.getActor().ref());
+    }
+
+    @Test
+    void assignmentEventKeepsAgentActorInsteadOfCredentialOwner() {
+        when(workitemDao.findById(100L)).thenReturn(row());
+        when(workitemDao.updateAssignee(100L, 7L, "AGENT", 42L, 1, 3L)).thenReturn(1);
+        var actor = AssignmentActor.agent(12L, "Terraform PD");
+
+        service.assignAs(100L, "AGENT", 42L, null, null, 7L, 3L, actor);
+
+        ArgumentCaptor<WorkitemAssignedEvent> cap = ArgumentCaptor.forClass(WorkitemAssignedEvent.class);
+        verify(publisher).publishEvent(cap.capture());
+        assertEquals(actor, cap.getValue().getActor());
+        assertEquals(3L, cap.getValue().getUserId());
     }
 
     @Test

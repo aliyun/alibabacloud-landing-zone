@@ -83,7 +83,7 @@ function emptyLaunchConfig(): StoredLaunchConfig {
 }
 
 const MOCK_WS_URL = 'wss://community.example/ws/executor';
-const MOCK_RUNTIME_VERSION = '0.3.22';
+const MOCK_RUNTIME_VERSION = '0.3.30';
 const MOCK_POWERSHELL_UTF8_PREAMBLE = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; ';
 const MOCK_PROVIDERS: Record<string, string> = {
   QODER_CN_CLI: 'qodercn',
@@ -694,6 +694,28 @@ export const handlers = [
       message: '',
       data: [],
       traceId: 'trace-workitem-watchers',
+    });
+  }),
+  // 工单列表、看板与详情页的标签编辑会拉取当前空间用过的标签做联想；
+  // 全局兜底为空列表，需要联想数据的用例用 server.use 覆盖。
+  http.get('/api/workitems/tag-options', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: [],
+      traceId: 'trace-workitem-tag-options',
+    });
+  }),
+  // 高级筛选的创建者候选复用工作空间成员接口，默认空成员列表；
+  // 需要候选的用例用 server.use 覆盖成自己的成员数据。
+  http.get('/api/workspaces/current/members', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: [],
+      traceId: 'trace-workspace-members',
     });
   }),
   http.get('/api/users/me/settings', () => {

@@ -1,0 +1,81 @@
+{
+  "scope": {
+    "platform": "Scope: {{total}} workspaces platform-wide",
+    "platformDetail": "Disabled workspaces and recycled workspaces are excluded",
+    "managed": "Scope: {{total}} workspaces you manage",
+    "managedDetail": "Workspaces you own or administer; disabled and recycled workspaces are excluded"
+  },
+  "section": {
+    "agents": "Digital workers",
+    "agentsSubtitle": "Current snapshot, not affected by the time window",
+    "delivery": "Workitem delivery",
+    "cost": "Cost analysis"
+  },
+  "agents": {
+    "workspaceCount": "Workspaces",
+    "workspaceHint": "Disabled and recycled workspaces excluded",
+    "agentCount": "Digital workers",
+    "agentHint": "Platform built-in workers excluded",
+    "agentTooltip": "Standard digital workers only, including draft, in review, online and offline",
+    "humanCount": "People",
+    "humanHint": "Deduplicated across workspaces",
+    "humanTooltip": "A person in several workspaces counts once; removed members and deleted accounts are excluded",
+    "squadCount": "Squads",
+    "squadHint": "Disbanded squads excluded"
+  },
+  "delivery": {
+    "workitem": "Workitems",
+    "workitemHint": "Created within the {{days}}-day window",
+    "workitemTooltip": "Workitems created in the window, including canceled and completed ones; measured by creation time",
+    "completed": "Completed",
+    "completedHint": "Completed within the {{days}}-day window",
+    "completedTooltip": "Currently completed with the latest entry into a done node inside the window; a different basis from workitems, do not add them up",
+    "inProgress": "In progress",
+    "inProgressHint": "Created in the window and still open",
+    "inProgressTooltip": "Created in the window and currently in an initial or in-progress state, including pending decisions",
+    "topCompleted": "Workspace with the most completed workitems",
+    "bottomCompleted": "Workspace with the fewest completed workitems",
+    "rankHint": "Select a workspace name to open its insights page",
+    "rankZeroHint": "Workspaces with zero completions are included"
+  },
+  "cost": {
+    "total": "Total credits",
+    "totalHint": "All AI usage within the {{days}}-day window",
+    "totalTooltip": "Dispatches and conversations combined, including non-workitem chats such as the platform assistant; unpriced records count as zero",
+    "dailyAverage": "Credits per day",
+    "dailyHint": "Denominator: {{days}} natural days in the window",
+    "dailyTooltip": "Averaged over natural days; days without usage still count",
+    "perWorkitem": "Credits per completed workitem",
+    "perWorkitemHint": "Denominator: {{done}} completed workitems of all types in the delivery window",
+    "perWorkitemUnavailableHint": "Denominator: no completed workitems in the delivery window",
+    "perWorkitemTooltip": "The numerator is all AI usage including non-workitem chats, so this is an upper bound of the real workitem cost",
+    "unavailableValue": "--",
+    "topCredits": "Workspace consuming the most credits",
+    "bottomCredits": "Workspace consuming the fewest credits",
+    "rankHint": "Select a workspace name to open its insights page",
+    "rankZeroHint": "Workspaces with zero usage are included"
+  },
+  "workType": {
+    "label": "Workitem type",
+    "REQ": "Requirement",
+    "BUG": "Defect",
+    "TASK": "Task"
+  },
+  "rank": {
+    "empty": "No data",
+    "more": "and {{total}} more workspaces",
+    "moreTooltip": "{{total}} workspaces tie; only the first {{shown}} are shown: {{names}}",
+    "drilldown": "Open the insights page of {{name}}"
+  },
+  "range": {
+    "delivery": "Delivery statistics date range",
+    "cost": "Cost statistics date range"
+  },
+  "state": {
+    "error": "Failed to load the dashboard data",
+    "retry": "Retry",
+    "forbiddenTitle": "No permission to view the workspace dashboard",
+    "forbiddenDescription": "The workspace dashboard is available to platform admins and workspace admins only.",
+    "backToWorkspaces": "Back to workspaces"
+  }
+}

@@ -39,6 +39,12 @@ describe('participation chart options', () => {
       expect(options.series).toEqual([expect.objectContaining({ stillShowZeroSum: false, data: [expect.objectContaining({ value: human }), expect.objectContaining({ value: 100-human })] })]);
     }
   });
+  it('shortens natural-day axis labels to month and day and leaves other labels intact', () => {
+    const options = participationChartOptions('ratio', [row], average, palette);
+    const formatter = (options.xAxis as unknown as { axisLabel: { formatter: (label: string) => string } }).axisLabel.formatter;
+    expect(formatter('2026-09-25')).toBe('09-25');
+    expect(formatter('2026-09-25T00:00:00Z')).toBe('2026-09-25T00:00:00Z');
+  });
 });
 
 it('uses unrounded aggregate ratios and renders missing sample periods as gaps', () => {

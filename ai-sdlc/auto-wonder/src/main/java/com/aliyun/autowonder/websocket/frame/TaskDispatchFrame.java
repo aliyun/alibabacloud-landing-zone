@@ -39,6 +39,8 @@ public class TaskDispatchFrame extends OutboundFrame {
     private String packageRefreshPath;
     private String artifactUploadPath;
     private String checkpointUploadPath;
+    /** Optional: older runtimes ignore it and keep using the dispatch-time resume URL. */
+    private String checkpointRefreshPath;
     private String memorySnapshotPath;
     private String memoryChangesPath;
     private String memoryMutationPath;

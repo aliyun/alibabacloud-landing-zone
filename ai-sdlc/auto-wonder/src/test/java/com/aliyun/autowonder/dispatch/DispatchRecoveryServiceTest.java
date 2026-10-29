@@ -40,6 +40,7 @@ class DispatchRecoveryServiceTest {
         jdbc.execute("CREATE TABLE workitem_comment_delivery (id BIGINT AUTO_INCREMENT PRIMARY KEY,tenant_id BIGINT,workitem_id BIGINT,comment_id BIGINT,target_agent_id BIGINT,dispatch_id BIGINT,executor_id BIGINT,status VARCHAR(16),error VARCHAR(1024),reply_comment_id BIGINT,delivered_at TIMESTAMP,applied_at TIMESTAMP,gmt_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,retry_dispatch_id BIGINT DEFAULT 0)");
         String schema = Files.readString(Path.of("docs/migration/V059__dispatch_recovery.sql")).split("ALTER TABLE")[0].replaceAll("(?m)^--.*$", "");
         for (String sql : schema.split(";")) if (!sql.isBlank()) jdbc.execute(sql);
+        jdbc.execute("ALTER TABLE dispatch_recovery ADD COLUMN control_event_id BIGINT NOT NULL DEFAULT 0");
         dao = mock(DispatchDao.class); workitems = mock(WorkitemDao.class); transport = mock(DispatchControlTransport.class);
         service = new DispatchRecoveryService(jdbc, new DataSourceTransactionManager(ds), dao, workitems, transport);
         runtimeEvents = mock(DispatchRuntimeEventDao.class); checkpoints = mock(DispatchCheckpointDao.class);
@@ -321,6 +322,32 @@ class DispatchRecoveryServiceTest {
         verify(dao, never()).insert(any());
     }
 
+    @Test void stateExposesStoredResumeModeVerbatimForEveryExecution() {
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,resume_mode) VALUES (100,1,10,'SUCCEEDED','SIDE_INTERACTION')");
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,resume_mode) VALUES (101,1,10,'SUCCEEDED','CANONICAL_INTERACTION')");
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,resume_mode) VALUES (102,1,10,'SUCCEEDED','COMMENT_INTERACTION')");
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,resume_mode) VALUES (103,1,10,'SUCCEEDED','COMMENT_REWORK')");
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,resume_mode) VALUES (104,1,10,'SUCCEEDED','RECOVERY')");
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status) VALUES (105,1,10,'SUCCEEDED')");
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,resume_mode) VALUES (106,1,10,'SUCCEEDED','FUTURE_MODE')");
+
+        var executions = (List<?>) service.state(1L, 10L).get("executions");
+        Map<Long, Object> modes = new java.util.HashMap<>();
+        for (Object raw : executions) {
+            Map<?, ?> execution = (Map<?, ?>) raw;
+            assertTrue(execution.containsKey("resumeMode"));
+            modes.put(((Number) execution.get("dispatchId")).longValue(), execution.get("resumeMode"));
+        }
+        assertEquals("SIDE_INTERACTION", modes.get(100L));
+        assertEquals("CANONICAL_INTERACTION", modes.get(101L));
+        assertEquals("COMMENT_INTERACTION", modes.get(102L));
+        assertEquals("COMMENT_REWORK", modes.get(103L));
+        assertEquals("RECOVERY", modes.get(104L));
+        assertTrue(modes.containsKey(105L));
+        assertNull(modes.get(105L));
+        assertEquals("FUTURE_MODE", modes.get(106L));
+    }
+
     void orphanInventory(String status, boolean authoritative, java.util.Set<Long> owned) {
         dispatch(status, 50L);
         jdbc.update("UPDATE dispatch SET gmt_modified=? WHERE id=100", new Timestamp(System.currentTimeMillis()-180_000));
@@ -576,6 +603,136 @@ class DispatchRecoveryServiceTest {
         }
         return registry;
     }
+    @Test void pauseWaiterReleaseAcceptsOnlyDurablePauseOrReleasedInventory() {
+        dispatch("PAUSED", 50L);
+        assertTrue(service.canReleasePauseWaiter(dao.findById(100L)));
+
+        jdbc.update("UPDATE dispatch SET status='CANCELED',error='PAUSE_CONFIRMATION_MISSING: inventory released' WHERE id=100");
+        assertTrue(service.canReleasePauseWaiter(dao.findById(100L)));
+
+        jdbc.update("UPDATE dispatch SET status='CANCELED',error='USER_CANCELED' WHERE id=100");
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+
+        jdbc.update("UPDATE dispatch SET status='TIMEOUT',error='DISPATCH_ACK_TIMEOUT' WHERE id=100");
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void failedPredecessorReleasesOnlyAfterAuthoritativeInventoryDropsIt() {
+        dispatch("FAILED", 50L);
+        service.setExecutorRegistry(registry(true, false));
+        assertTrue(service.canReleasePauseWaiter(dao.findById(100L)));
+
+        service.setExecutorRegistry(registry(true, true));
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+
+        service.setExecutorRegistry(registry(false, false));
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void incompleteInventoryCannotReleaseFailedPredecessor() {
+        dispatch("FAILED", 50L);
+        var registry = mock(ExecutorRegistry.class);
+        when(registry.currentDispatchSnapshot(50L)).thenReturn(java.util.Optional.of(
+                new ExecutorDispatchSnapshot("current", 10, true, false,
+                        java.util.Set.of(), java.util.Set.of(), java.util.Set.of(),
+                        java.util.Set.of(), null, System.currentTimeMillis())));
+        service.setExecutorRegistry(registry);
+
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void stopPendingBlocksFailedPredecessorReleaseEvenWhenInventoryDroppedIt() {
+        dispatch("FAILED", 50L);
+        jdbc.update("INSERT INTO dispatch_recovery(tenant_id,dispatch_id,stop_pending) VALUES (1,100,1)");
+        service.setExecutorRegistry(registry(true, false));
+
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void cancelIntentBlocksFailedPredecessorRelease() {
+        dispatch("FAILED", 50L);
+        jdbc.update("INSERT INTO dispatch_recovery(tenant_id,dispatch_id,cancel_requested) VALUES (1,100,1)");
+        service.setExecutorRegistry(registry(true, false));
+
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void succeededPredecessorWithoutExecutorNeedsNoInventory() {
+        dispatch("SUCCEEDED", null);
+
+        assertTrue(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void restartQueryFailureIsNotTreatedAsRestart() {
+        var store = mock(com.aliyun.autowonder.workitem.DeliveryRestartStore.class);
+        when(store.createdAfter(eq(1L), eq(10L), any())).thenThrow(
+                new org.springframework.dao.QueryTimeoutException("transient"));
+        service.setRestartStore(store);
+
+        assertThrows(org.springframework.dao.QueryTimeoutException.class,
+                () -> service.restartAfter(1L, 10L, new java.util.Date()));
+    }
+
+    @Test void pauseWaiterReleaseRejectsPredecessorWithoutIdentity() {
+        assertFalse(service.canReleasePauseWaiter(null));
+        var unidentified = new DispatchDO();
+        unidentified.setStatus(DispatchStatus.SUCCEEDED);
+        assertFalse(service.canReleasePauseWaiter(unidentified));
+        var statusless = new DispatchDO();
+        statusless.setId(100L);
+        assertFalse(service.canReleasePauseWaiter(statusless));
+    }
+
+    @Test void canceledPredecessorWithoutPauseFenceErrorDoesNotRelease() {
+        dispatch("CANCELED", null);
+
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void failedPredecessorWithoutExecutorRegistryStaysBlocked() {
+        dispatch("FAILED", 50L);
+
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void inventoryMustBeAuthoritativeAndErrorFreeToRelease() {
+        dispatch("FAILED", 50L);
+        service.setExecutorRegistry(snapshotRegistry(new ExecutorDispatchSnapshot(
+                "current", 10, false, true, java.util.Set.of(), java.util.Set.of(),
+                java.util.Set.of(), java.util.Set.of(), null, System.currentTimeMillis())));
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+
+        service.setExecutorRegistry(snapshotRegistry(new ExecutorDispatchSnapshot(
+                "current", 10, true, true, java.util.Set.of(), java.util.Set.of(),
+                java.util.Set.of(), java.util.Set.of(), "inventory unavailable",
+                System.currentTimeMillis())));
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void inventoryStillRunningThePredecessorKeepsItBlocked() {
+        dispatch("FAILED", 50L);
+        service.setExecutorRegistry(snapshotRegistry(new ExecutorDispatchSnapshot(
+                "current", 10, true, true, java.util.Set.of(100L), java.util.Set.of(),
+                java.util.Set.of(), java.util.Set.of(), null, System.currentTimeMillis())));
+
+        assertFalse(service.canReleasePauseWaiter(dao.findById(100L)));
+    }
+
+    @Test void restartAfterWithoutStoreOrTimestampIsFalse() {
+        assertFalse(service.restartAfter(1L, 10L, new java.util.Date()));
+
+        var store = mock(com.aliyun.autowonder.workitem.DeliveryRestartStore.class);
+        service.setRestartStore(store);
+        assertFalse(service.restartAfter(1L, 10L, null));
+        verifyNoInteractions(store);
+    }
+
+    private ExecutorRegistry snapshotRegistry(ExecutorDispatchSnapshot snapshot) {
+        var registry = mock(ExecutorRegistry.class);
+        when(registry.currentDispatchSnapshot(50L)).thenReturn(java.util.Optional.of(snapshot));
+        return registry;
+    }
+
     @Test void successfulReplyWithoutAckIsNotInvented() {
         dispatch("SUCCEEDED",null); guidance("DELIVERED");
         jdbc.update("UPDATE dispatch SET gmt_modified=?",new Timestamp(System.currentTimeMillis()-180_000));

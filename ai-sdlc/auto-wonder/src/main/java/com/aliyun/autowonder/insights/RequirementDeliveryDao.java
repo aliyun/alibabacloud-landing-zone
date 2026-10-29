@@ -6,6 +6,11 @@ import org.apache.ibatis.annotations.Param;
 import java.util.Date;
 import java.util.List;
 
+/**
+ * 需求交付指标取数。数据洞察「需求交付」tab 已下线（工单 #56970），保留以兼容存量接口，
+ * SQL 与映射不再演进。
+ */
+@Deprecated
 @Mapper
 public interface RequirementDeliveryDao {
 

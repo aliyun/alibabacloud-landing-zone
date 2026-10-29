@@ -13,6 +13,17 @@ import org.junit.jupiter.params.provider.ValueSource;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ConversationTurnDisplayTest {
+    @ParameterizedTest @ValueSource(strings={"content","error"})
+    void expiryReasonRoundtripsBothEmptyAndPartialOutputModes(String field) {
+        var source=ConversationTurnDisplay.source("PLATFORM_ASSISTANT",field,"QUESTION_EXPIRED",Map.of());
+        var display=ConversationTurnDisplay.project("PLATFORM_ASSISTANT",source);
+        assertNotNull(display);
+        assertEquals("QUESTION_EXPIRED",(field.equals("content")?display.content():display.error()).code());
+        assertTrue((field.equals("content")?display.content():display.error()).args().isEmpty());
+        assertNull(ConversationTurnDisplay.project("PLATFORM_ASSISTANT",ConversationTurnDisplay.source(
+                "PLATFORM_ASSISTANT",field,"QUESTION_EXPIRED",Map.of("detail","not allowed"))));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"CANCELED", "EMPTY_OUTPUT", "REPLY_FAILED", "DISPATCH_REPLY_FAILED",
             "DISPATCH_FAILED", "EXECUTOR_COMPATIBILITY_FAILED", "DELIVERY_ATTEMPTS_EXHAUSTED"})

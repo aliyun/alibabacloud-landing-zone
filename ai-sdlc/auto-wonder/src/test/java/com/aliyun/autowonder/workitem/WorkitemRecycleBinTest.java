@@ -187,14 +187,14 @@ class WorkitemRecycleBinTest {
     void normalListStillExcludesDeletedWorkitems() {
         // 回归：常规列表查询不走回收站 SQL，仍只返回 is_deleted=0
         when(workitemDao.count(eq(100L), isNull(), isNull(), any(), isNull(), isNull(), eq(false),
-                isNull(), eq(7L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
+                isNull(), eq(7L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(0L);
         when(workitemDao.list(eq(100L), isNull(), isNull(), any(), isNull(), isNull(), eq(false),
-                isNull(), eq(7L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), eq(0), eq(20)))
+                isNull(), eq(7L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), eq(0), eq(20)))
                 .thenReturn(List.of());
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null,
-                100L, 7L, null, null, null, null, null, 1, 20);
+                100L, 7L, null, null, null, null, null, null, null, 1, 20);
 
         assertEquals(0L, page.getTotal());
         verify(workitemDao, never()).listRecycled(any(), any(), any(), any(), any(), any(), anyInt(), anyInt());

@@ -27,7 +27,7 @@ class PlatformBrandingServiceTest {
             "${autowonder.runtime.recommended-version:";
     private static final String YAML_RECOMMENDED_VERSION_PLACEHOLDER =
             "${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:";
-    private static final String EXPECTED_RECOMMENDED_RUNTIME_VERSION = "0.3.22";
+    private static final String EXPECTED_RECOMMENDED_RUNTIME_VERSION = "0.3.30";
 
     @Test
     void uploadLogoSupportsAdditionalFormatsAndPreservesBytes() {

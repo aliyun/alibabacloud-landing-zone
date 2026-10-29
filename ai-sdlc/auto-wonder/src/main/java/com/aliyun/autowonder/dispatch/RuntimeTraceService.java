@@ -36,8 +36,10 @@ public class RuntimeTraceService {
         if (dispatch == null || dispatch.getTenantId() == null || dispatch.getTenantId() != tenantId) {
             throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
         }
-        List<DispatchRuntimeEventDO> sources = eventDao.listByDispatch(tenantId, dispatchId);
-        long lastSeq = sources.stream().map(DispatchRuntimeEventDO::getSeq)
+        // seq is numbered by each executor runtime: after a failover re-run the second runtime
+        // restarts the count, so trace order and the changed cursor must use the arrival id.
+        List<DispatchRuntimeEventDO> sources = eventDao.listByDispatchInArrivalOrder(tenantId, dispatchId);
+        long lastSeq = sources.stream().map(DispatchRuntimeEventDO::getId)
                 .filter(java.util.Objects::nonNull).mapToLong(Long::longValue).max().orElse(0L);
         RuntimeTraceVO trace = new RuntimeTraceVO();
         trace.setDispatchId(dispatchId);
@@ -204,7 +206,7 @@ public class RuntimeTraceService {
                                                                   String content) {
         RuntimeActivityTimelineVO.Activity activity = new RuntimeActivityTimelineVO.Activity();
         activity.setEventId(source.getEventId());
-        activity.setSeq(source.getSeq());
+        activity.setSeq(source.getId());
         activity.setEventTime(eventTimeOf(source));
         activity.setEventType(source.getEventType());
         activity.setLevel(level);
@@ -226,7 +228,7 @@ public class RuntimeTraceService {
     private static RuntimeTraceVO.Event toEvent(DispatchRuntimeEventDO source) {
         RuntimeTraceVO.Event event = new RuntimeTraceVO.Event();
         event.setEventId(source.getEventId());
-        event.setSeq(source.getSeq());
+        event.setSeq(source.getId());
         event.setEventType(source.getEventType());
         event.setEventTime(source.getEventTime() == null ? null : source.getEventTime().toInstant().toString());
         event.setDetail(detailOf(source));

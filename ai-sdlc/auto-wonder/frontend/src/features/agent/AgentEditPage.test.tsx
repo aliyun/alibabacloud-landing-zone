@@ -392,6 +392,15 @@ describe('AgentEditPage', () => {
     expect(patched).toEqual([{ name: 'Beta' }]);
   });
 
+  it('shows current official identity read-only instead of the legacy draft', async () => {
+    server.use(http.get('/api/agents/1', () => ok({ ...agentData, kind: 'PLATFORM',
+      officialConfiguration: { responsibilities: 'official agent', businessBackground: 'official soul', fingerprint: 'release', capabilities: [] } })),
+      http.get('/api/agents/1/versions/1', () => ok(versionData)));
+    renderPage();
+    expect(await screen.findByDisplayValue('official agent')).toHaveAttribute('readonly');
+    expect(screen.getByDisplayValue('official soul')).toHaveAttribute('readonly');
+  });
+
   it('hides the sdlc template picker for platform agents', async () => {
     server.use(
       http.get('/api/agents/1', () => ok({ ...agentData, kind: 'PLATFORM' })),
@@ -488,8 +497,8 @@ describe('AgentEditPage', () => {
     expect(within(repoCard).queryByText('无需配置平台智能体的仓库配置')).not.toBeInTheDocument();
   });
 
-  it('shows mounted environment metadata from the editing version and explains lifecycle semantics without revealing values', async () => {
-    let revealRequests = 0;
+  it('shows mounted environment metadata from the editing version and never loads plaintext values', async () => {
+    let valueRequests = 0;
     server.use(
       http.get('/api/agents/1', () => ok({
         ...agentData,
@@ -507,7 +516,7 @@ describe('AgentEditPage', () => {
         { id: 81, name: 'API_TOKEN', description: '服务调用凭证', value: '**' },
       ])),
       http.get('/api/environment-variables/:id/value', () => {
-        revealRequests += 1;
+        valueRequests += 1;
         return ok({ value: 'plaintext-must-not-load' });
       }),
     );
@@ -521,7 +530,7 @@ describe('AgentEditPage', () => {
     expect(screen.getByText(/挂载或解绑会进入数字员工草稿，并遵循审核和发布流程/)).toBeInTheDocument();
     expect(screen.getByText(/变量库中的值更新无需数字员工审核，将在下一次任务派发或对话轮次生效/)).toBeInTheDocument();
     expect(screen.queryByText('plaintext-must-not-load')).not.toBeInTheDocument();
-    expect(revealRequests).toBe(0);
+    expect(valueRequests).toBe(0);
   });
 
   it('searches unmounted library variables by name or description', async () => {

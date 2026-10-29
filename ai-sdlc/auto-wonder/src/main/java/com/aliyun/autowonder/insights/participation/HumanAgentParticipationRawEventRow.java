@@ -6,6 +6,7 @@ public class HumanAgentParticipationRawEventRow {
 
     private long workitemId;
     private String title;
+    private String workType;
     private Date workitemCreatedAt;
     private long eventId;
     private String eventType;
@@ -29,6 +30,14 @@ public class HumanAgentParticipationRawEventRow {
 
     public void setTitle(String title) {
         this.title = title;
+    }
+
+    public String getWorkType() {
+        return workType;
+    }
+
+    public void setWorkType(String workType) {
+        this.workType = workType;
     }
 
     public Date getWorkitemCreatedAt() {

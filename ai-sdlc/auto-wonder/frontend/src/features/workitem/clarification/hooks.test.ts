@@ -241,6 +241,27 @@ describe('useClarificationEvents', () => {
     expect(result.current.streamedEvents[0].payload?.content).toBe('first');
   });
 
+  it('keeps different attempts with the same sequence in realtime', () => {
+    const { result } = renderHook(() => useClarificationEvents('100', 1, null), { wrapper });
+    act(() => {
+      emitTurnEvent(capturedCallback!, { ...makeEvent(10, 1, 'text', 'first'), dispatchAttempt: 1 });
+      emitTurnEvent(capturedCallback!, { ...makeEvent(10, 1, 'text', 'resumed'), dispatchAttempt: 2 });
+    });
+    expect(result.current.streamedEvents.map(e => e.payload?.content)).toEqual(['first', 'resumed']);
+  });
+
+  it('uses only the current attempt for text and completion while preserving prior timeline', () => {
+    const { result } = renderHook(() => useClarificationEvents('100', 1, 10), { wrapper });
+    act(() => {
+      emitTurnEvent(capturedCallback!, { ...makeEvent(10, 1, 'text', 'old'), dispatchAttempt: 1 });
+      emitTurnEvent(capturedCallback!, { ...makeEvent(10, 2, 'status'), dispatchAttempt: 1, payload: { type: 'status', status: 'completed' } });
+      emitTurnEvent(capturedCallback!, { ...makeEvent(10, 1, 'text', 'new'), dispatchAttempt: 2 });
+    });
+    expect(result.current.streamedText).toBe('new');
+    expect(result.current.streamedTurnTerminated).toBe(false);
+    expect(result.current.streamedEvents).toHaveLength(3);
+  });
+
   it('ignores non-CONVERSATION_TURN_EVENT events', () => {
     const { result } = renderHook(
       () => useClarificationEvents('100', 1, null),
@@ -651,13 +672,13 @@ describe('assembleTurnEvents', () => {
 
   // stale 重投会把整套逻辑事件再发一遍（dispatchAttempt=2），不去重历史详情
   // 内容直接翻倍。同一 (turnId, eventSeq) 只保留 dispatchAttempt 最大的那一组。
-  it('keeps only the latest dispatch attempt for the same (turnId, eventSeq)', () => {
+  it('preserves each dispatch attempt for the same (turnId, eventSeq)', () => {
     const events = assembleTurnEvents([
       row({ id: 1, dispatchAttempt: 1 }),
       row({ id: 2, dispatchAttempt: 2, payloadFragment: '{"type":"text","content":"重投"}' }),
     ]);
-    expect(events).toHaveLength(1);
-    expect(events[0].payload?.content).toBe('重投');
+    expect(events).toHaveLength(2);
+    expect(events.map(e => e.payload?.content)).toEqual(['hi', '重投']);
   });
 
   it('resolves the latest attempt independently per turn', () => {
@@ -667,6 +688,7 @@ describe('assembleTurnEvents', () => {
       row({ id: 3, turnId: 10, dispatchAttempt: 1, payloadFragment: '{"type":"text","content":"十首投"}' }),
     ]);
     expect(events.map((e) => [e.turnId, e.payload?.content])).toEqual([
+      [9, 'hi'],
       [9, '九重投'],
       [10, '十首投'],
     ]);
@@ -706,6 +728,28 @@ describe('assembleTurnEvents', () => {
 
 describe('useTurnEvents', () => {
   const url = '/api/workitems/:workitemId/clarification-conversations/:conversationId/turns/:turnId/events';
+
+  it('loads later pages on demand and joins a card split at the page boundary', async () => {
+    const cursors: string[] = [];
+    server.use(http.get(url, ({ request }) => {
+      const cursor = new URL(request.url).searchParams.get('afterId')!;
+      cursors.push(cursor);
+      const rows = cursor === '0' ? Array.from({ length: 500 }, (_, i) => ({
+        id: i + 1, conversationId: 1, turnId: 9, dispatchAttempt: 1, eventSeq: i + 1,
+        chunkIndex: 0, chunkCount: i === 499 ? 2 : 1, eventType: i === 499 ? 'acp_elicitation' : 'status',
+        payloadFragment: i === 499 ? '{"data":{"requestId":"card",' : '{}', gmtCreate: '',
+      })) : [{ id: 501, conversationId: 1, turnId: 9, dispatchAttempt: 1, eventSeq: 500,
+        chunkIndex: 1, chunkCount: 2, eventType: 'acp_elicitation', payloadFragment: '"message":"question"}}', gmtCreate: '' }];
+      return HttpResponse.json({ success: true, code: '0', data: rows });
+    }));
+    const { result } = renderHook(() => useTurnEvents('100', 1, 9, true), { wrapper });
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+    expect(cursors).toEqual(['0']);
+    await act(async () => { await result.current.fetchNextPage(); });
+    await waitFor(() => expect(result.current.hasNextPage).toBe(false));
+    expect(cursors).toEqual(['0', '500']);
+    expect(result.current.timeline.find(n => n.kind === 'elicitation')?.elicitation?.message).toBe('question');
+  });
 
   it('sends no request while disabled and fetches once enabled', async () => {
     let calls = 0;

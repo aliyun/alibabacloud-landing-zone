@@ -36,6 +36,8 @@ public interface WorkitemDao {
             @Param("tag") String tag,
             @Param("scheduledStart") String scheduledStart,
             @Param("createdFrom") Date createdFrom, @Param("createdTo") Date createdTo,
+            @Param("creatorIds") List<Long> creatorIds,
+            @Param("tagConditions") List<WorkitemTagCondition> tagConditions,
             @Param("offset") int offset, @Param("limit") int limit);
     long count(@Param("tenantId") Long tenantId,
             @Param("workType") String workType,
@@ -49,7 +51,9 @@ public interface WorkitemDao {
             @Param("keyword") String keyword, @Param("keywordId") Long keywordId,
             @Param("tag") String tag,
             @Param("scheduledStart") String scheduledStart,
-            @Param("createdFrom") Date createdFrom, @Param("createdTo") Date createdTo);
+            @Param("createdFrom") Date createdFrom, @Param("createdTo") Date createdTo,
+            @Param("creatorIds") List<Long> creatorIds,
+            @Param("tagConditions") List<WorkitemTagCondition> tagConditions);
     int updateContent(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("title") String title, @Param("contentMd") String contentMd,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
@@ -111,6 +115,9 @@ public interface WorkitemDao {
     int updateTags(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("tags") String tagsJson,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
+
+    /** 未删除工单使用过的标签，按使用次数降序、名称升序，最多 limit 个。 */
+    List<String> listTagOptions(@Param("tenantId") Long tenantId, @Param("limit") int limit);
 
     /** 按分享令牌取工单（令牌全局唯一；软删工单不可见，对外链接随之失效）。 */
     WorkitemDO findByExternalShareToken(@Param("externalShareToken") String externalShareToken);

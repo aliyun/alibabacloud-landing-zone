@@ -46,7 +46,7 @@ class IntegrationHumanI18nTest {
     @ParameterizedTest @ValueSource(strings = {"zh-CN", "en-US"})
     void channelSelectedAndRequestValidation(String tag) {
         var dao = mock(PlatformImChannelConfigDao.class);
-        var service = new PlatformImChannelConfigService(dao, mock(SecretCrypto.class));
+        var service = new PlatformImChannelConfigService(dao, mock(SecretCrypto.class), new ObjectMapper());
         failure(tag, () -> service.requireSelected("FEISHU"), "请使用平台当前选择的 IM 渠道", "Use the currently selected platform IM channel", "10001");
         failure(tag, () -> service.update(1, "DINGTALK", null), "请求不能为空", "Request is required", "10001");
     }
@@ -54,7 +54,7 @@ class IntegrationHumanI18nTest {
     @ParameterizedTest @ValueSource(strings = {"zh-CN", "en-US"})
     void channelLengthAndHttpsValidation(String tag) {
         var dao = mock(PlatformImChannelConfigDao.class);
-        var service = new PlatformImChannelConfigService(dao, mock(SecretCrypto.class));
+        var service = new PlatformImChannelConfigService(dao, mock(SecretCrypto.class), new ObjectMapper());
         var request = new UpdateDingTalkChannelRequest(); request.setAppKey("x".repeat(129));
         failure(tag, () -> service.updateDingTalk(1, request), "appKey 长度不能超过 128", "appKey must not exceed 128 characters", "10001");
         request.setAppKey(null); request.setBaseUrl("https://user:private@example.com");
@@ -66,7 +66,7 @@ class IntegrationHumanI18nTest {
     void channelEncryptedReferenceValidation(String tag) {
         var keys = mock(SecretCrypto.class); when(keys.encrypt("secret")).thenReturn("x".repeat(1025));
         var dao = mock(PlatformImChannelConfigDao.class);
-        var service = new PlatformImChannelConfigService(dao, keys);
+        var service = new PlatformImChannelConfigService(dao, keys, new ObjectMapper());
         var request = new UpdateDingTalkChannelRequest(); request.setAppSecret("secret");
         failure(tag, () -> service.updateDingTalk(1, request), "加密凭据引用过长", "Encrypted credential reference is too long", "10001");
         verifyNoInteractions(dao);

@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.tenant;
 
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.spacedashboard.SpaceDashboardDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.apache.ibatis.executor.statement.RoutingStatementHandler;
 import org.apache.ibatis.executor.statement.StatementHandler;
@@ -12,6 +13,7 @@ import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.RowBounds;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -25,6 +27,17 @@ import static org.mockito.Mockito.when;
 class TenantInterceptorTest {
 
     private static final long TENANT_ID = 42L;
+
+    /** 空间级看板的语句按 scope 跨空间聚合，必须逐条登记豁免。 */
+    private static final List<String> SPACE_DASHBOARD_STATEMENTS = List.of(
+            SpaceDashboardDao.class.getName() + ".listScopedWorkspaces",
+            SpaceDashboardDao.class.getName() + ".countAgents",
+            SpaceDashboardDao.class.getName() + ".countSquads",
+            SpaceDashboardDao.class.getName() + ".countDistinctHumans",
+            SpaceDashboardDao.class.getName() + ".countCreatedWorkitems",
+            SpaceDashboardDao.class.getName() + ".countCompletedWorkitems",
+            SpaceDashboardDao.class.getName() + ".countInProgressWorkitems",
+            SpaceDashboardDao.class.getName() + ".sumCredits");
 
     @Test
     void ownershipLookupIsExemptFromTenantRewrite() {
@@ -58,8 +71,9 @@ class TenantInterceptorTest {
 
     @Test
     void allowlistIsExplicitAndContainsNoPrefixOrWildcard() {
-        assertEquals(Set.of(WorkitemDao.class.getName() + ".findTenantIdById"),
-                TenantInterceptor.CROSS_TENANT_STATEMENTS,
+        Set<String> expected = new HashSet<>(SPACE_DASHBOARD_STATEMENTS);
+        expected.add(WorkitemDao.class.getName() + ".findTenantIdById");
+        assertEquals(expected, TenantInterceptor.CROSS_TENANT_STATEMENTS,
                 "every cross-tenant statement must be added deliberately together with its own authorization checks");
         for (String statement : TenantInterceptor.CROSS_TENANT_STATEMENTS) {
             assertFalse(statement.endsWith(".*") || statement.contains("*"),
@@ -112,6 +126,29 @@ class TenantInterceptorTest {
         } finally {
             AutoWonderContext.destroy();
         }
+    }
+
+    @Test
+    void spaceDashboardReadsKeepCrossWorkspaceReachWhenACurrentWorkspaceIsBound() throws Throwable {
+        AutoWonderContext.get().setCurrentWorkspaceId(TENANT_ID);
+        try {
+            String sql = "SELECT a.tenant_id, COUNT(*) FROM agent a "
+                    + "WHERE a.tenant_id IN (1, 2) GROUP BY a.tenant_id";
+            for (String statementId : SPACE_DASHBOARD_STATEMENTS) {
+                StatementHandler handler = statementHandler(statementId, sql, SqlCommandType.SELECT);
+                new TenantInterceptor().intercept(invocationOn(handler));
+                assertEquals(sql, handler.getBoundSql().getSql(),
+                        statementId + " must aggregate every workspace in the caller's scope");
+            }
+        } finally {
+            AutoWonderContext.destroy();
+        }
+    }
+
+    @Test
+    void everySpaceDashboardStatementIsRegisteredExplicitly() {
+        assertTrue(TenantInterceptor.CROSS_TENANT_STATEMENTS.containsAll(SPACE_DASHBOARD_STATEMENTS),
+                "the dashboard scope replaces the tenant rewrite, so all of its statements stay registered");
     }
 
     @Test

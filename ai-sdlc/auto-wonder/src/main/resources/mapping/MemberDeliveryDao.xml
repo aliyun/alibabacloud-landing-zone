@@ -2,30 +2,50 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aliyun.autowonder.insights.MemberDeliveryDao">
     <sql id="workitemDispatchFence"><include refid="com.aliyun.autowonder.dashboard.DashboardDao.workitemDispatchFence"/></sql>
+    <!-- kanbanCategoryExpr 内部的相对 refid 会解析到本命名空间，故按 DeliveryOverviewDao 的模式提供同名转发。 -->
+    <sql id="dispatchActive"><include refid="com.aliyun.autowonder.workitem.WorkitemDao.dispatchActive"/></sql>
+    <sql id="dispatchStarted"><include refid="com.aliyun.autowonder.workitem.WorkitemDao.dispatchStarted"/></sql>
+    <sql id="pendingHumanRequest"><include refid="com.aliyun.autowonder.workitem.WorkitemDao.pendingHumanRequest"/></sql>
     <select id="members" resultType="com.aliyun.autowonder.insights.MemberDeliveryService$Member">
         SELECT m.user_id AS memberId, COALESCE(NULLIF(u.nickname,''), u.username, CONCAT('成员 #',m.user_id)) AS memberName,
           CASE WHEN COALESCE(NULLIF(u.nickname,''), u.username) IS NULL THEN 'MEMBER_ID_FALLBACK' ELSE NULL END AS memberNameKind
         FROM org_member m LEFT JOIN user u ON u.id=m.user_id
         WHERE m.tenant_id=#{tenantId} AND m.is_deleted=0 AND m.status=0
     </select>
-    <select id="counts" resultType="com.aliyun.autowonder.insights.MemberDeliveryService$Counts">
-        SELECT CASE WHEN w.assignee_type='HUMAN' THEN w.assignee_ref ELSE w.assign_operator_id END AS memberId, COUNT(*) AS total,
-          SUM(CASE WHEN success.success_at &gt;= #{start} AND success.success_at &lt; #{end} THEN 1 ELSE 0 END) AS completed,
-          SUM(CASE WHEN sn.category='IN_PROGRESS' AND success.id IS NULL THEN 1 ELSE 0 END) AS inProgress,
-          SUM(CASE WHEN w.work_type='REQ' AND success.success_at &gt;= #{start} AND success.success_at &lt; #{end} THEN 1 ELSE 0 END) AS requirements
-        FROM workitem w
-        LEFT JOIN status_node sn ON sn.id=w.status_node_id AND sn.tenant_id=w.tenant_id
-        LEFT JOIN (<include refid="com.aliyun.autowonder.dashboard.DashboardDao.endToEndSuccessfulWorkitems"/>) success ON success.id=w.id
-        WHERE w.tenant_id=#{tenantId} AND w.is_deleted=0 AND (
-          (w.gmt_create &gt;= #{start} AND w.gmt_create &lt; #{end})
-          OR (success.success_at &gt;= #{start} AND success.success_at &lt; #{end})
-          OR EXISTS (SELECT 1 FROM workitem_event e WHERE e.tenant_id=w.tenant_id AND e.workitem_id=w.id
-            AND e.gmt_create &gt;= #{start} AND e.gmt_create &lt; #{end})
-          OR EXISTS (SELECT 1 FROM dispatch d WHERE d.tenant_id=w.tenant_id AND d.workitem_id=w.id AND d.is_deleted=0
-            <include refid="com.aliyun.autowonder.dashboard.DashboardDao.workitemDispatchFence"/>
-            AND d.gmt_create &lt; #{end} AND (d.gmt_modified &gt;= #{start}
-              OR d.status IN ('PENDING','PACKAGING','DISPATCHED','ACKED','RUNNING','PAUSING')))
-        )
-        GROUP BY CASE WHEN w.assignee_type='HUMAN' THEN w.assignee_ref ELSE w.assign_operator_id END
+    <select id="counts" resultType="com.aliyun.autowonder.insights.MemberDeliveryService$TypeCounts">
+        <!-- 一次分类、一次分类型聚合：派生表先按看板统一分类算出每张工单的类别、周期内是否创建与是否交付成功，
+             外层按 (成员归属, 工单类型) 汇总；Service 用类型维度收敛 summary、累加全部类型得到 members 明细，
+             因此统计区筛选不改变下方成员任务分析表，也不需要第二次数据库查询。
+             状态列与已完成互斥，已取消工单在集合层面剔除，故 created 天然只统计当前未取消的周期内新建工单。 -->
+        SELECT t.memberId AS memberId, t.workType AS workType, COUNT(*) AS total,
+          SUM(t.createdInPeriod) AS created,
+          SUM(CASE WHEN t.successInPeriod = 1 THEN 1 ELSE 0 END) AS completed,
+          SUM(CASE WHEN t.category = 'IN_PROGRESS' AND t.successInPeriod = 0 THEN 1 ELSE 0 END) AS inProgress,
+          SUM(CASE WHEN t.category = 'NEW' AND t.successInPeriod = 0 THEN 1 ELSE 0 END) AS notStarted,
+          SUM(CASE WHEN t.category = 'PENDING_DECISION' AND t.successInPeriod = 0 THEN 1 ELSE 0 END) AS pendingDecision,
+          SUM(CASE WHEN t.workType = 'REQ' AND t.successInPeriod = 1 THEN 1 ELSE 0 END) AS requirements
+        FROM (
+          SELECT CASE WHEN w.assignee_type='HUMAN' THEN w.assignee_ref ELSE w.assign_operator_id END AS memberId,
+            w.work_type AS workType,
+            CASE WHEN w.gmt_create &gt;= #{start} AND w.gmt_create &lt; #{end} THEN 1 ELSE 0 END AS createdInPeriod,
+            CASE WHEN success.success_at &gt;= #{start} AND success.success_at &lt; #{end} THEN 1 ELSE 0 END AS successInPeriod,
+            <include refid="com.aliyun.autowonder.workitem.WorkitemDao.kanbanCategoryExpr"/> AS category
+          FROM workitem w
+          LEFT JOIN status_node sn ON sn.id=w.status_node_id AND sn.tenant_id=w.tenant_id
+          LEFT JOIN (<include refid="com.aliyun.autowonder.dashboard.DashboardDao.endToEndSuccessfulWorkitems"/>) success ON success.id=w.id
+          WHERE w.tenant_id=#{tenantId} AND w.is_deleted=0
+            AND COALESCE(UPPER(sn.category), '') &lt;&gt; 'CANCELED'
+            AND (
+              (w.gmt_create &gt;= #{start} AND w.gmt_create &lt; #{end})
+              OR (success.success_at &gt;= #{start} AND success.success_at &lt; #{end})
+              OR EXISTS (SELECT 1 FROM workitem_event e WHERE e.tenant_id=w.tenant_id AND e.workitem_id=w.id
+                AND e.gmt_create &gt;= #{start} AND e.gmt_create &lt; #{end})
+              OR EXISTS (SELECT 1 FROM dispatch d WHERE d.tenant_id=w.tenant_id AND d.workitem_id=w.id AND d.is_deleted=0
+                <include refid="com.aliyun.autowonder.dashboard.DashboardDao.workitemDispatchFence"/>
+                AND d.gmt_create &lt; #{end} AND (d.gmt_modified &gt;= #{start}
+                  OR d.status IN ('PENDING','PACKAGING','DISPATCHED','ACKED','RUNNING','PAUSING')))
+            )
+        ) t
+        GROUP BY t.memberId, t.workType
     </select>
 </mapper>

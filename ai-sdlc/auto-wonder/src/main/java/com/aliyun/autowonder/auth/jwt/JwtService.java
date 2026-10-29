@@ -110,6 +110,35 @@ public class JwtService {
                 requireClaim(claims, "agentVersionId"));
     }
 
+    public String signConversationTurn(long userId, long workspaceId, String purpose,
+            com.aliyun.autowonder.mcp.McpAccessTokenService.ExecutionScope scope,
+            Long workitemId, long ttlSeconds) {
+        long now = System.currentTimeMillis();
+        JwtBuilder builder = Jwts.builder().setSubject(String.valueOf(userId))
+                .claim("uid", userId).claim("workspace", workspaceId).claim("purpose", purpose)
+                .claim("subjectId", scope.conversationId()).claim("turnId", scope.turnId())
+                .claim("dispatchAttempt", scope.dispatchAttempt()).claim("executorId", scope.executorId())
+                .claim("agentId", scope.agentId()).claim("agentVersionId", scope.agentVersionId())
+                .setIssuedAt(new Date(now)).setExpiration(new Date(now + ttlSeconds * 1000L)).signWith(key);
+        if (workitemId != null) builder.claim("workitemId", workitemId);
+        return builder.compact();
+    }
+
+    public ConversationTurnClaims parseConversationTurn(String token) {
+        Claims claims = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody();
+        Number workitemId = claims.get("workitemId", Number.class);
+        return new ConversationTurnClaims(requireClaim(claims, "uid"), requireClaim(claims, "workspace"),
+                claims.get("purpose", String.class),
+                new com.aliyun.autowonder.mcp.McpAccessTokenService.ExecutionScope(
+                        requireClaim(claims, "subjectId"), requireClaim(claims, "turnId"),
+                        Math.toIntExact(requireClaim(claims, "dispatchAttempt")), requireClaim(claims, "executorId"),
+                        requireClaim(claims, "agentId"), requireClaim(claims, "agentVersionId")),
+                workitemId == null ? null : workitemId.longValue());
+    }
+
+    public record ConversationTurnClaims(long userId, long workspaceId, String purpose,
+            com.aliyun.autowonder.mcp.McpAccessTokenService.ExecutionScope scope, Long workitemId) {}
+
     private long requireClaim(Claims claims, String name) {
         Number value = claims.get(name, Number.class);
         if (value == null) {

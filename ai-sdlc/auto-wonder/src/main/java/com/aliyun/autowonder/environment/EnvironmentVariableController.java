@@ -6,8 +6,6 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import org.springframework.http.CacheControl;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import javax.validation.Valid;
@@ -26,13 +24,6 @@ public class EnvironmentVariableController {
     @GetMapping
     public Result<List<EnvironmentVariableVO>> list() {
         return Result.ok(service.list(currentWorkspaceId()));
-    }
-
-    @GetMapping("/{id}/value")
-    public ResponseEntity<Result<EnvironmentVariableValueVO>> reveal(@PathVariable("id") Long id) {
-        return ResponseEntity.ok()
-                .cacheControl(CacheControl.noStore())
-                .body(Result.ok(service.reveal(currentWorkspaceId(), currentUserId(), id)));
     }
 
     @PostMapping

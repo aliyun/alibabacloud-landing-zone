@@ -20,6 +20,32 @@
         SELECT * FROM sdlc_step WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
         ORDER BY step_order ASC
     </select>
+    <select id="listBySdlcForUpdate" resultType="com.aliyun.autowonder.sdlc.SdlcStepDO" useCache="false" flushCache="true">
+        SELECT * FROM sdlc_step
+        WHERE tenant_id = #{tenantId} AND sdlc_id = #{sdlcId} AND is_deleted = 0
+        ORDER BY step_order ASC, id ASC FOR UPDATE
+    </select>
+    <select id="minNegativeOrderForUpdate" resultType="java.lang.Integer" useCache="false" flushCache="true">
+        SELECT step_order FROM sdlc_step
+        WHERE tenant_id = #{tenantId} AND sdlc_id = #{sdlcId} AND step_order &lt; 0
+        ORDER BY step_order ASC LIMIT 1 FOR UPDATE
+    </select>
+    <select id="negativeOrdersForUpdate" resultType="java.lang.Integer" useCache="false" flushCache="true">
+        SELECT step_order FROM sdlc_step
+        WHERE tenant_id = #{tenantId} AND sdlc_id = #{sdlcId} AND step_order &lt; #{cursor}
+        ORDER BY step_order DESC LIMIT #{pageSize} FOR UPDATE
+    </select>
+    <select id="listBySdlcIds" resultType="com.aliyun.autowonder.sdlc.SdlcStepDO">
+        SELECT * FROM sdlc_step
+        WHERE is_deleted = 0 AND sdlc_id IN
+        <choose>
+            <when test="sdlcIds != null and sdlcIds.size() > 0">
+                <foreach collection="sdlcIds" item="sdid" open="(" separator="," close=")">#{sdid}</foreach>
+            </when>
+            <otherwise>(NULL)</otherwise>
+        </choose>
+        ORDER BY sdlc_id ASC, step_order ASC, id ASC
+    </select>
     <!-- 列表页只需要步骤数，聚合出 count 即可，避免把 MEDIUMTEXT 的 instruction_md 整页拉回。 -->
     <select id="countBySdlcIds" resultType="com.aliyun.autowonder.sdlc.dto.SdlcStepCount">
         SELECT sdlc_id AS sdlcId, COUNT(*) AS cnt FROM sdlc_step
@@ -45,17 +71,18 @@
             on_success = #{onSuccess}, on_fail = #{onFail}, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
     </update>
-    <!-- 软删除时把 step_order 置为 -id，释放 uk_sdlc_order 占用的正数序号，避免新增/重排步骤唯一键冲突 -->
+    <!-- The caller holds the live parent lock and supplies an unused negative order. -->
     <update id="softDelete">
-        UPDATE sdlc_step SET is_deleted = 1, step_order = -id, modifier_id = #{modifierId}
-        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+        UPDATE sdlc_step SET is_deleted = 1, step_order = #{stepOrder}, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND sdlc_id = #{sdlcId} AND is_deleted = 0
     </update>
-    <update id="deleteAllBySdlc">
-        UPDATE sdlc_step SET is_deleted = 1, step_order = -id
+    <!-- Only after deleting the parent in the same transaction; its order namespace is retired. -->
+    <update id="deleteAllForDeletedParent">
+        UPDATE sdlc_step SET is_deleted = 1
         WHERE sdlc_id = #{sdlcId} AND tenant_id = #{tenantId} AND is_deleted = 0
     </update>
     <update id="updateOrder">
         UPDATE sdlc_step SET step_order = #{stepOrder}, modifier_id = #{modifierId}
-        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND sdlc_id = #{sdlcId} AND is_deleted = 0
     </update>
 </mapper>

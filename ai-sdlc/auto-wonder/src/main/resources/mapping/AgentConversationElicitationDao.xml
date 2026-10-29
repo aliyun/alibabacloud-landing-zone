@@ -14,23 +14,30 @@
         <result column="schema_json" property="schemaJson"/>
         <result column="status" property="status"/>
         <result column="answer_json" property="answerJson"/>
+        <result column="answer_protocol_version" property="answerProtocolVersion"/>
+        <result column="dispatch_attempt" property="dispatchAttempt"/>
+        <result column="executor_id" property="executorId"/>
+        <result column="answer_id" property="answerId"/>
+        <result column="delivery_status" property="deliveryStatus"/>
+        <result column="delivery_deadline" property="deliveryDeadline"/>
+        <result column="next_delivery_at" property="nextDeliveryAt"/>
         <result column="gmt_create" property="gmtCreate"/>
         <result column="gmt_modified" property="gmtModified"/>
     </resultMap>
 
     <sql id="BaseColumns">
         id, tenant_id, conversation_id, turn_id, request_id, mode, message,
-        schema_json, status, answer_json, gmt_create, gmt_modified
+        schema_json, status, answer_json, answer_protocol_version, dispatch_attempt, executor_id, answer_id, delivery_status, delivery_deadline, next_delivery_at, gmt_create, gmt_modified
     </sql>
 
     <!-- INSERT IGNORE + uk_conv_request：事件分片重投时静默吞掉重复，避免热路径多一次查询。 -->
     <insert id="insertIfAbsent" parameterType="com.aliyun.autowonder.conversation.AgentConversationElicitationDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT IGNORE INTO agent_conversation_elicitation
-        (tenant_id, conversation_id, turn_id, request_id, mode, message, schema_json, status)
+        (tenant_id, conversation_id, turn_id, request_id, mode, message, schema_json, status, answer_protocol_version, dispatch_attempt, executor_id)
         VALUES
         (#{tenantId}, #{conversationId}, #{turnId}, #{requestId}, #{mode}, #{message},
-         #{schemaJson}, #{status})
+         #{schemaJson}, #{status}, #{answerProtocolVersion}, #{dispatchAttempt}, #{executorId})
     </insert>
 
     <select id="findByRequestId" resultMap="BaseResultMap">
@@ -90,10 +97,71 @@
 
     <select id="listPendingOlderThan" resultMap="BaseResultMap">
         SELECT <include refid="BaseColumns"/> FROM agent_conversation_elicitation
-        WHERE status = 'PENDING'
+        WHERE status = 'PENDING' AND id &gt; #{afterId}
           AND gmt_create &lt; #{cutoff}
         ORDER BY id ASC
         LIMIT #{limit}
     </select>
 
+    <update id="saveAnswerIfPending">
+        UPDATE agent_conversation_elicitation
+        SET status = #{status}, answer_json = #{answerJson}, answer_id = #{answerId},
+            delivery_status = 'SAVED', delivery_deadline = #{deliveryDeadline},
+            next_delivery_at = #{nextDeliveryAt}, gmt_modified = CURRENT_TIMESTAMP
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId}
+          AND request_id = #{requestId} AND status = 'PENDING'
+          AND answer_protocol_version = 1 AND dispatch_attempt = #{dispatchAttempt}
+          AND executor_id = #{executorId}
+    </update>
+    <select id="listDueAnswers" resultMap="BaseResultMap">
+        SELECT <include refid="BaseColumns"/> FROM agent_conversation_elicitation
+        WHERE status IN ('ANSWERED','DECLINED')
+          AND delivery_status IN ('SAVED','RECEIVED','UNKNOWN','UNAVAILABLE') AND next_delivery_at &lt;= #{now}
+        ORDER BY next_delivery_at, id LIMIT #{limit}
+    </select>
+    <update id="claimAnswerDelivery">
+        UPDATE agent_conversation_elicitation SET next_delivery_at = #{next}
+        WHERE id = #{id} AND status IN ('ANSWERED','DECLINED')
+          AND delivery_status IN ('SAVED','RECEIVED','UNKNOWN','UNAVAILABLE') AND next_delivery_at &lt;= #{now}
+    </update>
+    <update id="advanceAnswerDelivery">
+        UPDATE agent_conversation_elicitation SET delivery_status = #{stage}, gmt_modified = CURRENT_TIMESTAMP
+        WHERE id = #{id} AND answer_id = #{answerId}
+          AND delivery_status IN ('SAVED','RECEIVED')
+          AND (#{stage} IN ('WRITTEN','UNAVAILABLE','UNKNOWN')
+               OR (#{stage} = 'RECEIVED' AND delivery_status = 'SAVED'))
+    </update>
+    <select id="listQuestionHistory" resultMap="BaseResultMap">
+        SELECT <include refid="BaseColumns"/> FROM agent_conversation_elicitation
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId}
+          AND status IN ('EXPIRED','CANCELED','ANSWERED','DECLINED')
+        ORDER BY id DESC LIMIT 100
+    </select>
+    <select id="listAnswerDeliveries" resultMap="BaseResultMap">
+        SELECT * FROM (
+            SELECT <include refid="BaseColumns"/> FROM agent_conversation_elicitation
+            WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId}
+            ORDER BY id DESC LIMIT 100
+        ) recent WHERE answer_id IS NOT NULL AND status IN ('ANSWERED','DECLINED') ORDER BY id DESC
+    </select>
+    <select id="findByRequestIdForUpdate" resultMap="BaseResultMap">
+        SELECT <include refid="BaseColumns"/> FROM agent_conversation_elicitation
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId} AND request_id = #{requestId}
+        FOR UPDATE
+    </select>
+    <update id="closeAnswerDeliveriesForTurn">
+        UPDATE agent_conversation_elicitation SET delivery_status = 'UNKNOWN', next_delivery_at = NULL, gmt_modified = CURRENT_TIMESTAMP
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId} AND turn_id = #{turnId}
+          AND delivery_status IN ('SAVED','RECEIVED')
+    </update>
+    <update id="finishAnswerDelivery">
+        UPDATE agent_conversation_elicitation SET next_delivery_at = NULL
+        WHERE id = #{id} AND answer_id = #{answerId} AND delivery_status IN ('UNKNOWN','UNAVAILABLE')
+    </update>
+    <update id="finishAnswerDeliveriesForTurn">
+        UPDATE agent_conversation_elicitation SET next_delivery_at = NULL
+        WHERE tenant_id = #{tenantId} AND executor_id = #{executorId} AND conversation_id = #{conversationId}
+          AND turn_id = #{turnId} AND dispatch_attempt = #{attempt}
+          AND delivery_status IN ('UNKNOWN','UNAVAILABLE')
+    </update>
 </mapper>

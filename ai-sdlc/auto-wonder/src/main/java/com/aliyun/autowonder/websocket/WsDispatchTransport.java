@@ -13,6 +13,7 @@ import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import com.aliyun.autowonder.memory.store.MemoryStoreApplicationService;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
+import com.aliyun.autowonder.util.SignedUrlRedactor;
 import com.aliyun.autowonder.websocket.frame.DebugLogDirective;
 import com.aliyun.autowonder.websocket.frame.TaskDispatchFrame;
 import org.slf4j.Logger;
@@ -96,9 +97,10 @@ public class WsDispatchTransport implements DispatchTransport {
         TaskDispatchFrame frame = buildFrame(dispatch, taskPackage);
         log.info("dispatch urls dispatchId={} executorId={} downloadUrl={} packageRefreshPath={}"
                         + " artifactUploadPath={} checkpointUploadPath={} resumeMode={} resumeCheckpointUrl={}",
-                dispatch.getId(), dispatch.getExecutorId(), frame.getDownloadUrl(),
+                dispatch.getId(), dispatch.getExecutorId(), SignedUrlRedactor.redact(frame.getDownloadUrl()),
                 frame.getPackageRefreshPath(), frame.getArtifactUploadPath(),
-                frame.getCheckpointUploadPath(), frame.getResumeMode(), frame.getResumeCheckpointUrl());
+                frame.getCheckpointUploadPath(), frame.getResumeMode(),
+                SignedUrlRedactor.redact(frame.getResumeCheckpointUrl()));
         String frameJson = serializeFrame(frame);
 
         ExecutorSession es = sessionRegistry.findByExecutorId(dispatch.getExecutorId());
@@ -190,6 +192,7 @@ public class WsDispatchTransport implements DispatchTransport {
         f.setPackageRefreshPath("/api/daemon/dispatches/" + dispatch.getId() + "/package-url");
         f.setArtifactUploadPath("/api/daemon/dispatches/" + dispatch.getId() + "/artifacts");
         f.setCheckpointUploadPath("/api/daemon/dispatches/" + dispatch.getId() + "/checkpoint");
+        f.setCheckpointRefreshPath("/api/daemon/dispatches/" + dispatch.getId() + "/checkpoint-url");
         String memoryBase = "/api/daemon/dispatches/" + dispatch.getId() + "/memory";
         f.setMemorySnapshotPath(memoryBase + "/snapshot");
         f.setMemoryChangesPath(memoryBase + "/changes");

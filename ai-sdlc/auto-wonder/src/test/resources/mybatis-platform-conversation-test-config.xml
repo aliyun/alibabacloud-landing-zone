@@ -18,6 +18,7 @@
     </environments>
     <mappers>
         <mapper resource="mapping/AgentConversationDao.xml"/>
+        <mapper resource="mapping/AgentConversationTurnDao.xml"/>
         <mapper resource="mapping/ConversationShareDao.xml"/>
         <mapper resource="mapping/ConversationTurnArtifactDao.xml"/>
     </mappers>

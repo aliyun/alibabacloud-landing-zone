@@ -308,7 +308,7 @@ class WorkspaceAccessAspectTest {
         var error = new WorkspaceAccessDeniedException(WorkspaceAccessLevel.READ_ONLY,
                 annotation.value(), annotation.action(), annotation.actionKey());
         assertWorkspaceActionBoundary(error, WorkspaceAccessLevel.READ_ONLY, WorkspaceAccessLevel.READ_ONLY,
-                "查看项目成员交付统计", "view Workspace member delivery statistics");
+                "查看项目工单交付统计", "view Workspace work item delivery statistics");
     }
 
     private void assertWorkspaceActionBoundary(WorkspaceAccessDeniedException error,

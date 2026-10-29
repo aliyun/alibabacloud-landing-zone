@@ -8,6 +8,7 @@ import lombok.Setter;
 public class AuditLogQuery {
     private String module;
     private String action;
+    private String riskLevel;
     private Long actorId;
     private String actorType;
     private String targetType;

@@ -38,14 +38,11 @@ describe('environment variable locale boundary', () => {
     expect(list).toHaveBeenCalledOnce();
     await language('zh-CN'); expect(screen.getByText('暂无环境变量')).toBeInTheDocument();
   });
-  it('keeps cached route validation, replacement draft and revealed secret across switches', async () => {
+  it('keeps cached route validation and replacement draft across switches', async () => {
     const list = vi.spyOn(api, 'listEnvironmentVariables');
-    const reveal = vi.spyOn(api, 'revealEnvironmentVariableValue').mockResolvedValue('raw-secret');
     const update = vi.spyOn(api, 'updateEnvironmentVariable').mockResolvedValue(variable);
     const { client, router, container } = mount();
     const row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-    await within(row).findByText('raw-secret');
     await userEvent.click(within(row).getByRole('button', { name: '编辑 API_TOKEN' }));
     await userEvent.click(screen.getByRole('checkbox', { name: '替换当前值' }));
     const name = screen.getByLabelText('名称'), value = screen.getByLabelText('新值'), description = screen.getByLabelText('说明');
@@ -63,10 +60,10 @@ describe('environment variable locale boundary', () => {
       expect(description).toHaveValue('部署<img src=x>');
       expect(screen.getByRole('checkbox', { name: en ? 'Replace current value' : '替换当前值' })).toBeChecked();
       await screen.findByText(en ? 'Use letters, digits and underscores; the name cannot start with a digit' : '使用字母、数字和下划线，且不能以数字开头');
-      expect(within(row).getByText('raw-secret')).toBeInTheDocument();
+      expect(within(row).getByText('**')).toBeInTheDocument();
       expect(within(row).getByText(new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false }).format(new Date(variable.gmtModified)))).toBeInTheDocument();
       expect(screen.getByText('raw-invalid-date')).toBeInTheDocument();
-      expect(list).toHaveBeenCalledTimes(requests); expect(reveal).toHaveBeenCalledOnce(); expect(container.querySelector('img')).toBeNull();
+      expect(list).toHaveBeenCalledTimes(requests); expect(container.querySelector('img')).toBeNull();
     }
     screen.getByRole('button', { name: '显示值' }).focus(); await userEvent.keyboard('{Enter}');
     expect(value).toHaveAttribute('type', 'text'); expect(screen.getByRole('button', { name: '隐藏值' })).toBeInTheDocument();
@@ -78,44 +75,36 @@ describe('environment variable locale boundary', () => {
   }, 20000);
   it('retranslates held own errors while preserving raw errors and create draft', async () => {
     vi.spyOn(api, 'createEnvironmentVariable').mockRejectedValueOnce(null).mockRejectedValueOnce(new Error('保存失败，请重试'));
-    vi.spyOn(api, 'revealEnvironmentVariableValue').mockRejectedValue(null);
-    mount(); const row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' })); await screen.findByText('查看环境变量值失败');
-    await language('en-US'); expect(screen.getByText('Failed to reveal environment variable value')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Dismiss error' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Add environment variable' }));
-    const name = screen.getByLabelText('Name'), value = screen.getByLabelText('Value');
+    mount(); await screen.findByText('API_TOKEN');
+    await userEvent.click(screen.getByRole('button', { name: '新增环境变量' }));
+    const name = screen.getByLabelText('名称'), value = screen.getByLabelText('值');
     await userEvent.type(name, 'RAW_KEY'); await userEvent.type(value, 'raw-secret');
-    await userEvent.click(screen.getByRole('button', { name: 'Create' })); await screen.findByText('Save failed. Please try again');
-    await language('zh-CN'); expect(screen.getByText('保存失败，请重试')).toBeInTheDocument(); expect(screen.getByLabelText('名称')).toBe(name); expect(value).toHaveValue('raw-secret');
+    await userEvent.click(screen.getByRole('button', { name: '创建' })); await screen.findByText('保存失败，请重试');
+    await language('en-US'); expect(screen.getByText('Save failed. Please try again')).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toBe(name); expect(value).toHaveValue('raw-secret');
+    await language('zh-CN'); expect(screen.getByText('保存失败，请重试')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '创建' })); await screen.findByText('保存失败，请重试');
     await language('en-US'); expect(screen.getByText('保存失败，请重试')).toBeInTheDocument();
   });
-  it.each(['reveal', 'delete'] as const)('keeps delayed %s fallback reactive', async operation => {
+  it('keeps delayed delete fallback reactive', async () => {
     let reject!: (error: unknown) => void;
     const pending = new Promise<never>((_, fail) => { reject = fail; });
-    vi.spyOn(api, 'revealEnvironmentVariableValue').mockImplementation(() => pending);
     vi.spyOn(api, 'deleteEnvironmentVariable').mockImplementation(() => pending);
     mount(); const row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    await userEvent.click(within(row).getByRole('button', { name: operation === 'reveal' ? '显示 API_TOKEN 的值' : '删除 API_TOKEN' }));
-    if (operation === 'delete') await userEvent.click(screen.getByRole('button', { name: '确认删除' }));
+    await userEvent.click(within(row).getByRole('button', { name: '删除 API_TOKEN' }));
+    await userEvent.click(screen.getByRole('button', { name: '确认删除' }));
     await language('en-US'); await act(async () => { reject(null); });
-    await screen.findByText(operation === 'reveal' ? 'Failed to reveal environment variable value' : 'Delete failed. Please try again');
-    await language('zh-CN'); expect(screen.getByText(operation === 'reveal' ? '查看环境变量值失败' : '删除失败，请重试')).toBeInTheDocument();
+    await screen.findByText('Delete failed. Please try again');
+    await language('zh-CN'); expect(screen.getByText('删除失败，请重试')).toBeInTheDocument();
   });
-  it.each(['create', 'update', 'delete', 'copy'] as const)('uses completion locale for delayed %s', async operation => {
+  it.each(['create', 'update', 'delete'] as const)('uses completion locale for delayed %s', async operation => {
     let finish!: () => void; const pending = new Promise<void>(resolve => { finish = resolve; });
     const success = vi.spyOn(message, 'success');
-    vi.spyOn(api, 'revealEnvironmentVariableValue').mockResolvedValue('raw-copy');
     vi.spyOn(api, 'createEnvironmentVariable').mockImplementation(async () => { await pending; return variable; });
     vi.spyOn(api, 'updateEnvironmentVariable').mockImplementation(async () => { await pending; return variable; });
     vi.spyOn(api, 'deleteEnvironmentVariable').mockImplementation(() => pending);
-    const writeText = vi.fn(() => pending); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     mount(); const row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    if (operation === 'copy') {
-      await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-      await userEvent.click(await within(row).findByRole('button', { name: '复制 API_TOKEN 的值' })); expect(writeText).toHaveBeenCalledWith('raw-copy');
-    } else if (operation === 'delete') {
+    if (operation === 'delete') {
       await userEvent.click(within(row).getByRole('button', { name: '删除 API_TOKEN' })); await userEvent.click(screen.getByRole('button', { name: '确认删除' }));
     } else {
       await userEvent.click(operation === 'create' ? screen.getByRole('button', { name: '新增环境变量' }) : within(row).getByRole('button', { name: '编辑 API_TOKEN' }));
@@ -123,6 +112,6 @@ describe('environment variable locale boundary', () => {
       await userEvent.click(screen.getByRole('button', { name: operation === 'create' ? '创建' : '保存' }));
     }
     await language('en-US'); await act(async () => { finish(); });
-    await waitFor(() => expect(success).toHaveBeenCalledWith({ create: 'Environment variable created', update: 'Environment variable updated', delete: 'Environment variable deleted', copy: 'Copied' }[operation]));
+    await waitFor(() => expect(success).toHaveBeenCalledWith({ create: 'Environment variable created', update: 'Environment variable updated', delete: 'Environment variable deleted' }[operation]));
   });
 });

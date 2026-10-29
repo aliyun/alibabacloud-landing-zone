@@ -95,6 +95,44 @@ class PlatformConversationServiceTest {
                 agentDao, workspaceService, executorRouter);
     }
 
+    @Test
+    void busyCurrentOwnerAllowsExistingConversationSubmissionWithoutRebinding() {
+        stubConversation(ownedConversation());
+        when(executorRouter.selectPlatform(TENANT_ID, AGENT_ID, 88L, EXECUTOR_ID)).thenReturn(null);
+        when(executorRouter.canQueueOnOwner(TENANT_ID, AGENT_ID, 88L, EXECUTOR_ID, true)).thenReturn(true);
+        service.submitTurn(TENANT_ID, CONVERSATION_ID, OWNER_ID, "Continue", "busy-owner");
+        verify(conversationService).submitTurn(TENANT_ID, AGENT_ID, "PLATFORM_ASSISTANT",
+                CHANNEL_CONVERSATION_ID, "Continue", "web-platform:" + CONVERSATION_ID + ":busy-owner", null, OWNER_ID);
+        verify(conversationDao, never()).updateExecutor(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void busyOwnerDoesNotBypassBodyWritePermission() {
+        stubConversation(ownedConversation());
+        when(executorRouter.canQueueOnOwner(TENANT_ID, AGENT_ID, 88L, EXECUTOR_ID, true)).thenReturn(true);
+        assertThrows(BizException.class, () -> service.submitTurn(TENANT_ID, CONVERSATION_ID,
+                STRANGER_ID, "Continue", "busy-owner"));
+        verifyNoInteractions(conversationService, executorRouter);
+    }
+
+    @Test
+    void expiredHistorySurvivesTerminalAndRefreshWithoutBecomingPendingOrDelivered() {
+        stubConversation(ownedConversation());
+        var expired=new AgentConversationElicitationDO();expired.setRequestId("expired");expired.setTurnId(TURN_ID);
+        expired.setStatus("EXPIRED");expired.setMessage("Original question");expired.setSchemaJson("{}");
+        when(turnDao.listTurnsByConversation(TENANT_ID,CONVERSATION_ID)).thenReturn(List.of(turn(TURN_ID,"OUT","stopped")));
+        when(elicitationService.listQuestionHistory(TENANT_ID,CONVERSATION_ID)).thenReturn(List.of(expired));
+        for(int i=0;i<2;i++) {
+            var vo=service.get(TENANT_ID,CONVERSATION_ID,OWNER_ID);
+            assertEquals("EXPIRED",vo.getQuestionHistory().getFirst().getStatus());
+            assertEquals("Original question",vo.getQuestionHistory().getFirst().getMessage());
+            assertTrue(vo.getPendingElicitations().isEmpty());assertTrue(vo.getAnswerDeliveries().isEmpty());
+        }
+        verifyNoInteractions(conversationService);
+        when(elicitationService.listQuestionHistory(TENANT_ID,CONVERSATION_ID)).thenThrow(new IllegalStateException("read failed"));
+        assertThrows(IllegalStateException.class,()->service.get(TENANT_ID,CONVERSATION_ID,OWNER_ID));
+    }
+
     // ---------- create ----------
 
     @Test
@@ -596,7 +634,7 @@ class PlatformConversationServiceTest {
         // 幂等键自带会话身份：uk_external_msg 只按租户唯一，不带会话就会跨会话撞键。
         verify(conversationService).submitTurn(TENANT_ID, AGENT_ID,
                 PlatformConversationChannel.CHANNEL, CHANNEL_CONVERSATION_ID, "在吗",
-                "web-platform:" + CONVERSATION_ID + ":client-1");
+                "web-platform:" + CONVERSATION_ID + ":client-1", null, OWNER_ID);
         verify(conversationDao, never()).updateExecutor(anyLong(), anyLong(), anyLong());
     }
 
@@ -611,7 +649,7 @@ class PlatformConversationServiceTest {
         ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
         verify(conversationService, times(2)).submitTurn(eq(TENANT_ID), eq(AGENT_ID),
                 eq(PlatformConversationChannel.CHANNEL), eq(CHANNEL_CONVERSATION_ID), eq("在吗"),
-                captor.capture());
+                captor.capture(), isNull(), eq(OWNER_ID));
         String scopedPrefix = "web-platform:" + CONVERSATION_ID + ":";
         for (String externalMsgId : captor.getAllValues()) {
             assertTrue(externalMsgId.startsWith(scopedPrefix), externalMsgId);
@@ -636,7 +674,7 @@ class PlatformConversationServiceTest {
 
         ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
         verify(conversationService, times(2)).submitTurn(eq(TENANT_ID), eq(AGENT_ID),
-                eq(PlatformConversationChannel.CHANNEL), anyString(), eq("在吗"), captor.capture());
+                eq(PlatformConversationChannel.CHANNEL), anyString(), eq("在吗"), captor.capture(), isNull(), eq(OWNER_ID));
         assertNotEquals(captor.getAllValues().get(0), captor.getAllValues().get(1),
                 "两个会话复用同一个 clientMessageId 时，后到的消息会被幂等去重静默丢弃");
     }
@@ -816,7 +854,7 @@ class PlatformConversationServiceTest {
                 .thenReturn(activeShare(GRANTEE_ID));
 
         service.replyElicitation(TENANT_ID, CONVERSATION_ID, OWNER_ID, "req-1", "ACCEPT", "{}");
-        verify(elicitationService).reply(TENANT_ID, CONVERSATION_ID, "req-1", "ACCEPT", "{}");
+        verify(elicitationService).reply(TENANT_ID, CONVERSATION_ID, "req-1", "ACCEPT", "{}", OWNER_ID);
 
         // 回答问题卡片会驱动挂起的 Agent 继续本轮，是写操作，被分享人不能代答。
         assertOwnerOnly(() -> service.replyElicitation(TENANT_ID, CONVERSATION_ID, GRANTEE_ID,

@@ -211,6 +211,17 @@ nobody asked it to do.
 `no`, including `PORT_<n>_LISTENERS` for all five ports and
 `CREDENTIAL_FILES_DELETED`.
 
+## Optional real Qoder dispatch
+
+`verify.sh --check --with-runtime` selects the recommended runtime from this
+exact source's `application.yml`, validates any explicit lifecycle `app.env`
+override against `GET /api/platform/branding/public`, and requires the installed
+package and daemon self-check to match. It has no independent runtime version
+pin and does not silently skip missing prerequisites or mismatches. Follow the
+[Agent guide's token-free version resolver and isolated installation procedure](AGENT_GUIDE.md#optional-real-qoder-task-dispatch)
+before running the gate. Source/effective versions are retained with the real
+dispatch, routing, artifact-download and cleanup evidence.
+
 ## Optional SLS protocol regression
 
 Start with `./e2e-tests/verify.sh --start --with-sls --project-root "$(pwd -P)" --keep-on-failure`.

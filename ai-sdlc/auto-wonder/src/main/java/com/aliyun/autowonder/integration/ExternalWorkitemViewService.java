@@ -68,8 +68,8 @@ public class ExternalWorkitemViewService {
         view.setSourceStatusId(link.getSourceStatusId());
         view.setSourceStatusName(link.getSourceStatusName());
         view.setSourceLifecycle(link.getSourceLifecycle());
-        view.setReporter(toPrincipal(principalById.get(link.getReporterPrincipalId())));
-        view.setBusinessOwner(toPrincipal(principalById.get(link.getBusinessOwnerPrincipalId())));
+        view.setReporter(principal(principalById, link.getReporterPrincipalId()));
+        view.setBusinessOwner(principal(principalById, link.getBusinessOwnerPrincipalId()));
         view.setPrincipalRelations(toRelationViews(snapshots, principalById));
         view.setLastSyncAt(link.getLastSyncAt());
         view.setSyncStatus(link.getSyncStatus());
@@ -137,12 +137,16 @@ public class ExternalWorkitemViewService {
         Map<Long, ExternalPrincipalDO> principals = loadPrincipals(principalIds);
         Map<Long, ExternalPrincipalVO> result = new LinkedHashMap<>();
         for (Map.Entry<Long, ExternalWorkitemLinkDO> entry : preferredByWorkitem.entrySet()) {
-            ExternalPrincipalVO reporter = toPrincipal(principals.get(entry.getValue().getReporterPrincipalId()));
+            ExternalPrincipalVO reporter = principal(principals, entry.getValue().getReporterPrincipalId());
             if (reporter != null) {
                 result.put(entry.getKey(), reporter);
             }
         }
         return result;
+    }
+
+    private ExternalPrincipalVO principal(Map<Long, ExternalPrincipalDO> principals, Long principalId) {
+        return principalId == null ? null : toPrincipal(principals.get(principalId));
     }
 
     private ExternalWorkitemLinkDO preferLink(ExternalWorkitemLinkDO first, ExternalWorkitemLinkDO second) {

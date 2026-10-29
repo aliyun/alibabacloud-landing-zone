@@ -280,4 +280,91 @@ class ExecutorRestartServiceTest {
         assertEquals("COMPLETED", service.status(7).getString("status"));
         verifyNoInteractions(branding);
     }
+
+    @Test void statusesReadsEveryRestartStateInOneBatch() {
+        JSONObject requested = new JSONObject();
+        requested.put("status", "REQUESTED");
+        requested.put("issuedAt", Instant.now().toString());
+        JSONObject restarting = new JSONObject();
+        restarting.put("status", "RESTARTING");
+        restarting.put("issuedAt", Instant.now().toString());
+        values.put(ExecutorRestartService.key(7), requested.toJSONString());
+        values.put(ExecutorRestartService.key(8), restarting.toJSONString());
+        stubMgetFromValues();
+
+        Map<Long, JSONObject> states = service.statuses(List.of(7L, 8L, 9L));
+
+        assertEquals(Set.of(7L, 8L), states.keySet(), "an executor without a stored state stays absent");
+        assertEquals("REQUESTED", states.get(7L).getString("status"));
+        assertEquals("RESTARTING", states.get(8L).getString("status"));
+        verify(redis, times(1)).mget(anyList());
+    }
+
+    @Test void statusesAppliesTheSameTimeoutRuleWithoutWritingBack() {
+        JSONObject stale = new JSONObject();
+        stale.put("status", "RESTARTING");
+        stale.put("issuedAt", Instant.now().minusSeconds(700).toString());
+        values.put(ExecutorRestartService.key(7), stale.toJSONString());
+        stubMgetFromValues();
+
+        JSONObject state = service.statuses(List.of(7L)).get(7L);
+
+        assertEquals("TIMED_OUT", state.getString("status"));
+        assertEquals(stale.toJSONString(), values.get(ExecutorRestartService.key(7)),
+                "reading a list page must not persist the derived timeout");
+    }
+
+    @Test void statusesDecodesStatesWrittenThroughThePlainStringApi() {
+        JSONObject state = new JSONObject();
+        state.put("status", "REQUESTED");
+        state.put("issuedAt", Instant.now().toString());
+        when(redis.mget(anyList())).thenReturn(Arrays.asList(
+                state.toJSONString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+        assertEquals("REQUESTED", service.statuses(List.of(7L)).get(7L).getString("status"));
+    }
+
+    @Test void statusesSkipsAnUndecodableStateAndKeepsTheRest() {
+        JSONObject state = new JSONObject();
+        state.put("status", "REQUESTED");
+        state.put("issuedAt", Instant.now().toString());
+        when(redis.mget(anyList())).thenReturn(Arrays.asList(
+                corruptFrame(), state.toJSONString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+        Map<Long, JSONObject> states = service.statuses(List.of(7L, 8L));
+
+        assertEquals(Set.of(8L), states.keySet(), "one bad row must not hide the others");
+        assertEquals("REQUESTED", states.get(8L).getString("status"));
+    }
+
+    @Test void statusesIgnoresEmptyIdsAndUndecodableReplies() {
+        assertTrue(service.statuses(null).isEmpty());
+        assertTrue(service.statuses(List.of()).isEmpty());
+        assertTrue(service.statuses(Arrays.asList(null, null)).isEmpty());
+        verify(redis, never()).mget(anyList());
+
+        when(redis.mget(anyList())).thenReturn(List.of());
+        assertTrue(service.statuses(List.of(7L)).isEmpty(), "a short reply cannot be indexed past its end");
+
+        when(redis.mget(anyList())).thenReturn(Arrays.asList(corruptFrame()));
+        assertTrue(service.statuses(List.of(7L)).isEmpty());
+    }
+
+    private static byte[] corruptFrame() {
+        // A well-formed IDL header with an unknown compression flag makes decoding throw.
+        return new byte[]{'_', 'i', 'd', 'l', '1', 'X', '_', 'x'};
+    }
+
+    private void stubMgetFromValues() {
+        when(redis.mget(anyList())).thenAnswer(a -> {
+            Collection<String> keys = a.getArgument(0);
+            List<byte[]> stored = new ArrayList<>();
+            for (String key : keys) {
+                String value = values.get(key);
+                stored.add(value == null ? null
+                        : value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            return stored;
+        });
+    }
 }

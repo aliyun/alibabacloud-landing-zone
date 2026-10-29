@@ -37,6 +37,11 @@ public class BizException extends RuntimeException {
         this.messageArgs = args == null ? new Object[0] : args.clone();
     }
 
+    /** For subclasses that carry additional structured metadata besides the keyed message. */
+    protected BizException(String code, String key, Object[] args, String diagnostic) {
+        this(code, key, args, diagnostic, null);
+    }
+
     public static BizException keyed(ErrorCode code, String key, Object[] args, String diagnostic) {
         return keyed(code, key, args, diagnostic, null);
     }

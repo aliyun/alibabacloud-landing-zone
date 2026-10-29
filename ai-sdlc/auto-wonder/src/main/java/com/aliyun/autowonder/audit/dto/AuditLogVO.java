@@ -13,6 +13,7 @@ public class AuditLogVO {
     private String actorName;
     private String module;
     private String action;
+    private String riskLevel;
     private String targetType;
     private Long targetId;
     private String detailJson;

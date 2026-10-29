@@ -19,6 +19,8 @@ import org.hyperic.sigar.Sigar;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -51,18 +53,26 @@ public class MetricMonitorConfiguration {
         this.sigarConfiguration = sigarConfiguration;
     }
 
+    @Bean(name = "autowonderMonitorLogProducer")
+    @ConditionalOnExpression("${autowonder.sls.enabled:false} and ${autowonder.telemetry.sls-enabled:true}")
+    public Producer getLogProducer() {
+        properties.validate();
+        ProducerConfig producerConfig = new ProducerConfig();
+        producerConfig.setMaxBlockMs(1000);
+        producer = new LogProducer(producerConfig);
+        producer.putProjectConfig(new ProjectConfig(properties.getProject(), properties.getEndpoint(),
+                properties.getAccessKeyId(), properties.getAccessKeySecret()));
+        return producer;
+    }
+
     @Primary
     @Bean(name = "autowonderMonitorRegistry")
-    public MetricRegistry getMetricRegistry() {
+    public MetricRegistry getMetricRegistry(
+            @Qualifier("autowonderMonitorLogProducer") ObjectProvider<Producer> producerProvider) {
         MetricRegistry registry = new MetricRegistry();
 
-        if (properties.isEnabled()) {
-            properties.validate();
-            ProducerConfig producerConfig = new ProducerConfig();
-            producerConfig.setMaxBlockMs(1000);
-            producer = new LogProducer(producerConfig);
-            producer.putProjectConfig(new ProjectConfig(properties.getProject(), properties.getEndpoint(),
-                    properties.getAccessKeyId(), properties.getAccessKeySecret()));
+        Producer producer = producerProvider.getIfAvailable();
+        if (producer != null) {
             reporter = MetricReporter.forRegistry(registry)
                     .convertRatesTo(TimeUnit.SECONDS)
                     .convertDurationsTo(TimeUnit.NANOSECONDS)

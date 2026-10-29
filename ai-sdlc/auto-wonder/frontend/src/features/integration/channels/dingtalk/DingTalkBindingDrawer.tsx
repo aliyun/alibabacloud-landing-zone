@@ -21,24 +21,29 @@ import { listAgents } from '@/features/agent/api';
 import {
   createDingTalkBinding,
   DINGTALK_DEFAULT_BASE_URL,
+  listDingTalkBindings,
   updateDingTalkBinding,
   type DingTalkBinding,
-  type DingTalkBindingRequest,
+  type DingTalkBindingPayload,
   type TransportMode,
 } from './dingtalkApi';
+import { GroupIdGuide } from '../GroupIdGuide';
+import { ImIdentityConflictAlert } from '@/shared/ui/ImIdentityConflictAlert';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const { Paragraph, Text } = Typography;
 
 interface DrawerFormValues {
   agentId: number;
-  appKey: string;
+  groupId?: string;
+  appKey?: string;
   appSecret?: string;
-  robotCode: string;
+  robotCode?: string;
   transportMode?: TransportMode;
   baseUrl?: string;
   regionId?: string;
   callbackToken?: string;
+  status?: 'ENABLED' | 'DISABLED';
 }
 
 interface Props {
@@ -46,16 +51,20 @@ interface Props {
   mode: 'create' | 'edit';
   record: DingTalkBinding | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (binding: DingTalkBinding) => void;
+  onExistingBinding?: (binding: DingTalkBinding) => void;
 }
 
-export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: Props) {
+export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved, onExistingBinding }: Props) {
   const { t } = useTranslation(['integration', 'agent']);
   const [form] = Form.useForm<DrawerFormValues>();
   useLocalizedValidation(form, open);
   const queryClient = useQueryClient();
   const runAccessCommand = useAccessCommand();
   const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
+  const [conflictError, setConflictError] = useState<unknown>(null);
+
+  const shared = mode === 'create' || record?.bindingMode === 'SHARED';
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents-for-binding'],
@@ -65,49 +74,89 @@ export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: 
   useEffect(() => {
     if (!open) return;
     setCallbackUrl(null);
+    setConflictError(null);
     if (mode === 'edit' && record) {
-      form.setFieldsValue({
-        agentId: record.agentId,
-        appKey: record.appKey,
-        appSecret: undefined,
-        robotCode: record.robotCode,
-        transportMode: record.transportMode,
-        baseUrl: record.baseUrl ?? undefined,
-        regionId: record.regionId ?? undefined,
-      });
+      if (record.bindingMode === 'SHARED') {
+        form.setFieldsValue({
+          agentId: record.agentId,
+          groupId: record.groupId ?? '',
+          status: record.status,
+        });
+      } else {
+        form.setFieldsValue({
+          agentId: record.agentId,
+          appKey: record.appKey,
+          appSecret: undefined,
+          robotCode: record.robotCode,
+          transportMode: record.transportMode,
+          baseUrl: record.baseUrl ?? undefined,
+          regionId: record.regionId ?? undefined,
+          status: record.status,
+        });
+      }
     } else {
       form.resetFields();
-      form.setFieldsValue({ transportMode: 'STREAM' });
+      form.setFieldsValue({ status: 'ENABLED' });
     }
   }, [open, mode, record, form]);
 
   const saveMutation = useMutation({
-    mutationFn: async (values: DrawerFormValues) => {
-      const body: DingTalkBindingRequest = {
-        appKey: values.appKey,
-        robotCode: values.robotCode,
+    mutationFn: async (values: DrawerFormValues): Promise<DingTalkBinding> => {
+      if (shared) {
+        const body: DingTalkBindingPayload = {
+          bindingMode: 'SHARED',
+          groupId: values.groupId ?? '',
+          agentId: values.agentId,
+          status: values.status ?? 'ENABLED',
+        };
+        if (mode === 'edit' && record) {
+          return updateDingTalkBinding(record.id, { ...body, version: record.version });
+        }
+        return createDingTalkBinding(body);
+      }
+      const body: DingTalkBindingPayload = {
+        appKey: values.appKey ?? '',
+        robotCode: values.robotCode ?? '',
         agentId: values.agentId,
         transportMode: values.transportMode ?? record?.transportMode ?? 'STREAM',
         streamEnv: 'ONLINE',
         baseUrl: values.baseUrl,
         regionId: values.regionId,
         callbackToken: values.callbackToken,
+        status: values.status ?? record?.status,
       };
       if (values.appSecret) {
         body.appSecret = values.appSecret;
       }
-      if (mode === 'edit' && record) {
-        return updateDingTalkBinding(record.id, body);
-      }
-      return createDingTalkBinding(body);
+      return updateDingTalkBinding(record!.id, body);
     },
     onSuccess: (binding) => {
       message.success(i18n.t('integration:bindingSaved'));
       queryClient.invalidateQueries({ queryKey: ['dingtalk-bindings'] });
       setCallbackUrl(binding.callbackUrl);
-      onSaved();
+      onSaved(binding);
     },
-    onError: (error: Error) => message.error(error.message || i18n.t('integration:saveFailed')),
+    onError: async (error: Error, values: DrawerFormValues) => {
+      // A failed create may still have committed server-side. Look up the submitted group before
+      // letting the user retry, so a lost response cannot create a duplicate binding.
+      const submittedGroup = values.groupId?.trim();
+      if (shared && mode === 'create' && submittedGroup) {
+        try {
+          const rows = await listDingTalkBindings();
+          const existing = rows.find((row) => row.bindingMode === 'SHARED'
+            && row.groupId === submittedGroup);
+          if (existing) {
+            message.warning(i18n.t('integration:existingBindingOpened'));
+            onExistingBinding?.(existing);
+            return;
+          }
+        } catch {
+          // The lookup itself failed; keep the original save error and let the user decide.
+        }
+      }
+      setConflictError(error);
+      message.error(error.message || i18n.t('integration:saveFailed'));
+    },
   });
 
   async function handleSubmit() {
@@ -130,7 +179,7 @@ export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: 
   return (
     <Drawer closable={{ 'aria-label': t('close') }}
       title={mode === 'edit' ? t('editBinding') : t('newBinding')}
-      width={480}
+      width={520}
       open={open}
       onClose={onClose}
       destroyOnClose
@@ -142,69 +191,115 @@ export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: 
       }
     >
       <Form form={form} layout="vertical">
-        <Form.Item
-          label={t('linkedAgent')}
-          name="agentId"
-          rules={[{ required: true, message: t('requiredAgent') }]}
-        >
-          <Select
-            showSearch
-            optionFilterProp="label"
-            placeholder={t('agentPlaceholder')}
-            options={agentOptions}
-          />
-        </Form.Item>
-        <Form.Item label={t('appKey')} name="appKey" rules={[{ required: true, message: t('requiredAppKey') }]}>
-          <Input placeholder="dingxxxxxx" />
-        </Form.Item>
-        <Form.Item
-          label={mode === 'edit' ? t('appSecretEdit') : t('appSecret')}
-          name="appSecret"
-          rules={mode === 'create' ? [{ required: true, message: t('requiredAppSecret') }] : []}
-        >
-          <Input.Password iconRender={(visible) => <Button type="text" htmlType="button" aria-label={visible ? t('hideSecret') : t('showSecret')}
-                icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />}
-                style={{ padding: 0, width: 16, height: 16 }} />} placeholder={mode === 'edit' ? '••••••••' : t('secretPlaceholder')} />
-        </Form.Item>
-        <Form.Item
-          label={t('robotCode')}
-          name="robotCode"
-          rules={[{ required: true, message: t('requiredRobotCode') }]}
-        >
-          <Input placeholder="robot_xxxxxx" />
-        </Form.Item>
+        {shared ? (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={t('sharedBindingHint')}
+            />
+            <GroupIdGuide provider="DINGTALK" />
+            <Form.Item
+              label={t('groupChatGroupId')}
+              name="groupId"
+              extra={t('groupIdHelp')}
+              rules={[{ required: true, whitespace: true, message: t('requiredGroupId') }]}
+            >
+              <Input placeholder={t('groupIdPlaceholder')} maxLength={256} />
+            </Form.Item>
+            <Form.Item
+              label={t('linkedAgent')}
+              name="agentId"
+              rules={[{ required: true, message: t('requiredAgent') }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                placeholder={t('agentPlaceholder')}
+                options={agentOptions}
+              />
+            </Form.Item>
+            <Form.Item label={t('bindingStatus')} name="status">
+              <Select options={[{ label: t('enabled'), value: 'ENABLED' }, { label: t('disabled'), value: 'DISABLED' }]} />
+            </Form.Item>
+          </>
+        ) : (
+          <>
+            <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('legacyEditHint')} />
+            <Form.Item
+              label={t('linkedAgent')}
+              name="agentId"
+              rules={[{ required: true, message: t('requiredAgent') }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                placeholder={t('agentPlaceholder')}
+                options={agentOptions}
+              />
+            </Form.Item>
+            <Form.Item label={t('appKey')} name="appKey" rules={[{ required: true, message: t('requiredAppKey') }]}>
+              <Input placeholder="dingxxxxxx" />
+            </Form.Item>
+            <Form.Item
+              label={t('appSecretEdit')}
+              name="appSecret"
+            >
+              <Input.Password iconRender={(visible) => <Button type="text" htmlType="button" aria-label={visible ? t('hideSecret') : t('showSecret')}
+                    icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />}
+                    style={{ padding: 0, width: 16, height: 16 }} />} placeholder={mode === 'edit' ? '••••••••' : t('secretPlaceholder')} />
+            </Form.Item>
+            <Form.Item
+              label={t('robotCode')}
+              name="robotCode"
+              rules={[{ required: true, message: t('requiredRobotCode') }]}
+            >
+              <Input placeholder="robot_xxxxxx" />
+            </Form.Item>
+            <Form.Item label={t('bindingStatus')} name="status">
+              <Select options={[{ label: t('enabled'), value: 'ENABLED' }, { label: t('disabled'), value: 'DISABLED' }]} />
+            </Form.Item>
 
-        <Collapse
-          ghost
-          items={[
-            {
-              key: 'advanced',
-              label: t('advanced'),
-              children: (
-                <>
-                  <Form.Item label={t('transportMode')} name="transportMode">
-                    <Select
-                      options={[
-                        { label: t('httpCallback'), value: 'HTTP_CALLBACK' },
-                        { label: t('stream'), value: 'STREAM' },
-                      ]}
-                    />
-                  </Form.Item>
-                  <Form.Item label={t('gateway')} name="baseUrl">
-                    <Input placeholder={DINGTALK_DEFAULT_BASE_URL} />
-                  </Form.Item>
-                  <Form.Item label={t('dingRegion')} name="regionId">
-                    <Input placeholder={t('defaultPlaceholder')} />
-                  </Form.Item>
-                  <Form.Item label={t('callbackToken')} name="callbackToken">
-                    <Input placeholder={t('generatedPlaceholder')} />
-                  </Form.Item>
-                </>
-              ),
-            },
-          ]}
-        />
+            <Collapse
+              ghost
+              items={[
+                {
+                  key: 'advanced',
+                  label: t('advanced'),
+                  children: (
+                    <>
+                      <Form.Item label={t('transportMode')} name="transportMode">
+                        <Select
+                          options={[
+                            { label: t('httpCallback'), value: 'HTTP_CALLBACK' },
+                            { label: t('stream'), value: 'STREAM' },
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item label={t('gateway')} name="baseUrl">
+                        <Input placeholder={DINGTALK_DEFAULT_BASE_URL} />
+                      </Form.Item>
+                      <Form.Item label={t('dingRegion')} name="regionId">
+                        <Input placeholder={t('defaultPlaceholder')} />
+                      </Form.Item>
+                      <Form.Item label={t('callbackToken')} name="callbackToken">
+                        <Input placeholder={t('generatedPlaceholder')} />
+                      </Form.Item>
+                    </>
+                  ),
+                },
+              ]}
+            />
+          </>
+        )}
       </Form>
+
+      {conflictError != null && (
+        <div style={{ marginTop: 16 }}>
+          <ImIdentityConflictAlert error={conflictError} />
+        </div>
+      )}
 
       {callbackUrl && (
         <Alert

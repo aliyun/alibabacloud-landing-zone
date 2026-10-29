@@ -46,6 +46,42 @@ class WorkitemClarificationConversationServiceTest {
     }
 
     @Test
+    void expiredHistorySurvivesTerminalAndHistoryReadFailureIsExplicit() {
+        when(convDao.findById(1L,77L)).thenReturn(clarificationConversation(10011L));
+        var expired=new AgentConversationElicitationDO();expired.setRequestId("expired");expired.setTurnId(55L);
+        expired.setStatus("EXPIRED");expired.setMessage("Original question");expired.setSchemaJson("{}");
+        when(elicitationService.listQuestionHistory(1L,77L)).thenReturn(java.util.List.of(expired));
+        var vo=service.getConversation(1L,10011L,77L);
+        assertEquals("EXPIRED",vo.getQuestionHistory().getFirst().getStatus());
+        assertEquals("Original question",vo.getQuestionHistory().getFirst().getMessage());
+        assertTrue(vo.getPendingElicitations().isEmpty());assertTrue(vo.getAnswerDeliveries().isEmpty());
+        verifyNoInteractions(conversationService);
+        when(elicitationService.listQuestionHistory(1L,77L)).thenThrow(new IllegalStateException("read failed"));
+        assertThrows(IllegalStateException.class,()->service.getConversation(1L,10011L,77L));
+    }
+
+    @Test
+    void replayFromAnotherActorCannotBorrowAttachments() {
+        when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
+        var persisted = turn(90L, "IN", "look");
+        persisted.setSubmittedUserId(41L);
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:77:c-1")).thenReturn(persisted);
+        assertThrows(BizException.class, () -> service.submitTurn(1L, 10011L, 77L, 42L,
+                "look", "c-1", java.util.List.of(5L)));
+        verifyNoInteractions(attachmentService, conversationService);
+    }
+
+    @Test
+    void legacyReplayWithoutActorCannotBindAttachments() {
+        when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:c-1"))
+                .thenReturn(turn(90L, "IN", "look"));
+        assertThrows(BizException.class, () -> service.submitTurn(1L, 10011L, 77L, 42L,
+                "look", "c-1", java.util.List.of(5L)));
+        verifyNoInteractions(attachmentService, conversationService);
+    }
+
+    @Test
     void cancelTurnDelegatesToConversationService() {
         when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
 
@@ -187,7 +223,7 @@ class WorkitemClarificationConversationServiceTest {
 
         service.replyElicitation(1L, 10011L, 77L, "req-1", "accept", "{\"q0\":\"A\"}");
 
-        verify(elicitationService).reply(1L, 77L, "req-1", "accept", "{\"q0\":\"A\"}");
+        verify(elicitationService).reply(1L, 77L, "req-1", "accept", "{\"q0\":\"A\"}", null);
     }
 
     /** S16 的回答侧对偶：跨工单猜 conversationId 必须在触达卡片之前就被拒。 */
@@ -210,14 +246,14 @@ class WorkitemClarificationConversationServiceTest {
         agent.setOnlineVersionId(50L);
         when(agentDao.findById(3L)).thenReturn(agent);
         when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(10L);
-        when(turnDao.findByExternalMsgId(1L, "web-clarification:client-1"))
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:77:client-1"))
                 .thenReturn(null, turn(90L, "IN", "clarify"));
 
         service.submitTurn(1L, 10011L, 77L, 42L, "clarify", "client-1", null);
 
         verify(convDao).updateExecutor(1L, 77L, 10L);
         verify(conversationService).submitTurn(1L, 3L, "WORKITEM_CLARIFICATION",
-                conv.getChannelConversationId(), "clarify", "web-clarification:client-1");
+                conv.getChannelConversationId(), "clarify", "web-clarification:77:client-1", null, 42L);
     }
 
     /** E2E 回归：执行器离线返回可判定的业务错误码，而不是落到 10000 系统错误。 */
@@ -247,7 +283,7 @@ class WorkitemClarificationConversationServiceTest {
         agent.setOnlineVersionId(50L);
         when(agentDao.findById(3L)).thenReturn(agent);
         when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(9L);
-        when(turnDao.findByExternalMsgId(1L, "web-clarification:c-1"))
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:77:c-1"))
                 .thenReturn(null, turn(90L, "IN", "look at this"));
         when(attachmentService.requireBindableIds(1L, 77L, 42L, java.util.List.of(5L, 6L)))
                 .thenReturn(java.util.List.of(5L, 6L));
@@ -268,7 +304,7 @@ class WorkitemClarificationConversationServiceTest {
         agent.setOnlineVersionId(50L);
         when(agentDao.findById(3L)).thenReturn(agent);
         when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(9L);
-        when(turnDao.findByExternalMsgId(1L, "web-clarification:c-2"))
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:77:c-2"))
                 .thenReturn(null, turn(91L, "IN", ""));
         when(attachmentService.requireBindableIds(1L, 77L, 42L, java.util.List.of(5L)))
                 .thenReturn(java.util.List.of(5L));
@@ -277,7 +313,7 @@ class WorkitemClarificationConversationServiceTest {
                 java.util.List.of(5L));
 
         verify(conversationService).submitTurn(1L, 3L, "WORKITEM_CLARIFICATION",
-                conv.getChannelConversationId(), "", "web-clarification:c-2");
+                conv.getChannelConversationId(), "", "web-clarification:77:c-2", null, 42L);
         verify(attachmentService).bindToTurn(1L, 77L, 42L, java.util.List.of(5L), 91L);
     }
 
@@ -296,7 +332,8 @@ class WorkitemClarificationConversationServiceTest {
     void submitTurnReplayDoesNotDispatchAgainAndBindsUnboundAttachments() {
         when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
         AgentConversationTurnDO persisted = turn(90L, "IN", "look");
-        when(turnDao.findByExternalMsgId(1L, "web-clarification:c-1")).thenReturn(persisted);
+        persisted.setSubmittedUserId(42L);
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:77:c-1")).thenReturn(persisted);
         when(attachmentService.verifyReplay(1L, 77L, 42L, java.util.List.of(5L), 90L))
                 .thenReturn(java.util.List.of(5L));
 

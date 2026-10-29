@@ -2,6 +2,7 @@ package com.aliyun.autowonder.audit;
 
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Mapper
@@ -11,12 +12,13 @@ public interface AuditLogDao {
     List<AuditLogDO> search(@Param("tenantId") Long tenantId,
                             @Param("module") String module,
                             @Param("action") String action,
+                            @Param("riskLevel") String riskLevel,
                             @Param("actorType") String actorType,
                             @Param("actorId") Long actorId,
                             @Param("targetType") String targetType,
                             @Param("targetId") Long targetId,
-                            @Param("startTime") String startTime,
-                            @Param("endTime") String endTime,
+                            @Param("startTime") LocalDateTime startTime,
+                            @Param("endTime") LocalDateTime endTime,
                             @Param("keyword") String keyword,
                             @Param("offset") int offset,
                             @Param("limit") int limit);
@@ -24,11 +26,12 @@ public interface AuditLogDao {
     int countSearch(@Param("tenantId") Long tenantId,
                     @Param("module") String module,
                     @Param("action") String action,
+                    @Param("riskLevel") String riskLevel,
                     @Param("actorType") String actorType,
                     @Param("actorId") Long actorId,
                     @Param("targetType") String targetType,
                     @Param("targetId") Long targetId,
-                    @Param("startTime") String startTime,
-                    @Param("endTime") String endTime,
+                    @Param("startTime") LocalDateTime startTime,
+                    @Param("endTime") LocalDateTime endTime,
                     @Param("keyword") String keyword);
 }

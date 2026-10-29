@@ -684,4 +684,76 @@ describe('WorkspaceSelectPage', () => {
     }
   });
 
+  it('switches to a deep-linked workspace and returns to the allowed channel route', async () => {
+    mockMine([MANAGEABLE_WORKSPACE, { ...MANAGEABLE_WORKSPACE, id: 2, name: '目标空间' }]);
+    let switched = 0;
+    server.use(http.post('/api/workspaces/2/switch', () => {
+      switched += 1;
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { accessToken: 'token-2', accessLevel: 'READ_WRITE' },
+      });
+    }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/workspaces?targetWorkspaceId=2&returnTo=%2Fintegrations%3Ftab%3Dchannels']}>
+          <WorkspaceSelectPage />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(switched).toBe(1));
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/integrations');
+    });
+  });
+
+  it('reports a failed deep-link switch and stays on the workspace page', async () => {
+    mockMine([MANAGEABLE_WORKSPACE, { ...MANAGEABLE_WORKSPACE, id: 2, name: '目标空间' }]);
+    server.use(http.post('/api/workspaces/2/switch', () => HttpResponse.json({
+      success: false, code: '10000', message: '切换失败', traceId: null, data: null,
+    }, { status: 500 })));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/workspaces?targetWorkspaceId=2&returnTo=%2Fintegrations%3Ftab%3Dchannels']}>
+          <WorkspaceSelectPage />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('无法进入目标工作空间：你没有该工作空间的访问权限，或该空间已删除。请返回后联系对应管理员。'))
+      .toBeInTheDocument();
+    expect(screen.getByTestId('location-path')).toHaveTextContent('/workspaces');
+  });
+
+  it('refuses a deep link to a workspace the caller cannot access without switching', async () => {
+    mockMine([MANAGEABLE_WORKSPACE]);
+    let switched = 0;
+    server.use(http.post(RegExp('/api/workspaces/.*/switch'), () => {
+      switched += 1;
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { accessToken: 'token-x', accessLevel: 'READ_WRITE' },
+      });
+    }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/workspaces?targetWorkspaceId=99&returnTo=%2Fintegrations%3Ftab%3Dchannels']}>
+          <WorkspaceSelectPage />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('无法进入目标工作空间：你没有该工作空间的访问权限，或该空间已删除。请返回后联系对应管理员。'))
+      .toBeInTheDocument();
+    expect(switched).toBe(0);
+    expect(screen.getByTestId('location-path')).toHaveTextContent('/workspaces');
+  });
+
 });

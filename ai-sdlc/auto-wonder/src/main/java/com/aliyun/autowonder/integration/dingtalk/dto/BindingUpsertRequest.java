@@ -4,6 +4,9 @@ import lombok.Data;
 
 @Data
 public class BindingUpsertRequest {
+    private String bindingMode;
+    private String groupId;
+    private Integer version;
     private String appKey;
     private String appSecret; // 明文,仅提交时;编辑留空表示不改
     private String robotCode;

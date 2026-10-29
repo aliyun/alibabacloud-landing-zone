@@ -3,7 +3,7 @@ import { useAuthStore } from '@/shared/auth/store';
 import type { PageResult } from '@/shared/types/common';
 import type { Workitem, WorkitemDetail, TimelineEvent, Comment, Participant, DeliveryProgress, TimelineItem, Clarification, Artifact, RuntimeActivityTimeline, DispatchLiveActivity, RuntimeTrace, RuntimeTraceObservation, RuntimeTraceTurn } from '@/shared/types/workitem';
 
-export type WorkitemStatusCategory = 'NEW' | 'IN_PROGRESS' | 'PENDING_DECISION' | 'DONE';
+export type WorkitemStatusCategory = 'NEW' | 'IN_PROGRESS' | 'PENDING_DECISION' | 'DONE' | 'CANCELED';
 
 /** 定时工单过滤：ALL=待触发+已触发，PENDING=仅待触发，TRIGGERED=仅已触发。 */
 export type WorkitemScheduledStartFilter = 'ALL' | 'PENDING' | 'TRIGGERED';
@@ -25,6 +25,10 @@ export interface WorkitemQuery {
   createdFrom?: string;
   /** 创建时间高级筛选上界（排他，取结束日次日 00:00），ISO-8601 瞬间；缺省表示不限。 */
   createdTo?: string;
+  /** 创建者高级筛选：本地用户 ID 的逗号分隔列表；缺省表示不限。 */
+  creatorIds?: string;
+  /** 标签逻辑条件：JSON 数组字符串，条件之间 AND。 */
+  tagConditions?: string;
 }
 
 export interface CreateWorkitemParams {
@@ -91,6 +95,12 @@ export async function updateScheduledStart(
 
 export async function updateWorkitemTags(id: number | string, tags: string[]): Promise<Workitem> {
   const resp = await apiClient.put<Workitem>(`/api/workitems/${id}/tags`, { tags });
+  return resp.data;
+}
+
+/** 当前工作空间已使用过的标签，按使用次数降序，供筛选与编辑联想。 */
+export async function listWorkitemTagOptions(): Promise<string[]> {
+  const resp = await apiClient.get<string[]>('/api/workitems/tag-options');
   return resp.data;
 }
 
@@ -263,6 +273,18 @@ export async function pauseDispatch(workitemId: number | string, dispatchId: num
     `/api/workitems/${workitemId}/dispatches/${dispatchId}/pause`,
   );
   return resp.data;
+}
+
+export async function cancelDispatch(workitemId: number | string, dispatchId: number | string, force = false): Promise<void> {
+  await apiClient.post(`/api/workitems/${workitemId}/recovery`, {
+    action: 'cancel',
+    dispatchId,
+    force,
+  });
+}
+
+export async function controlDelivery(workitemId: number | string, action: 'close' | 'reopen', force = false): Promise<void> {
+  await apiClient.post(`/api/workitems/${workitemId}/recovery`, { action, force });
 }
 
 export async function getClarification(workitemId: number | string): Promise<Clarification | null> {

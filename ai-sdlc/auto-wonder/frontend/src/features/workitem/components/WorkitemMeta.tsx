@@ -1,9 +1,11 @@
 import { externalPrincipalName } from '../runtimeLabels';
 import type { ExternalPrincipalNameFallback } from '@/shared/types/workitem';
-import { Tag } from 'antd';
+import { EditOutlined } from '@ant-design/icons';
+import { Button, Tag } from 'antd';
 import { getPriorityMeta, workTypeMap } from '../constants';
 import { displayNameWithoutId } from '../nameDisplay';
 import { Trans, useTranslation } from 'react-i18next';
+import { WorkitemTagList } from './WorkitemTagList';
 
 interface WorkitemMetaProps {
   workType: string;
@@ -16,13 +18,16 @@ interface WorkitemMetaProps {
   creatorDisplayName?: string | null;
   sdlcName: string | null;
   tags?: string[];
+  tagsEditable?: boolean;
+  onEditTags?: () => void;
 }
 
-export function WorkitemMeta({ workType, statusName, priority, assigneeName, assigneeDisplayName, assigneeNameFallback, assigneeType, creatorDisplayName, sdlcName, tags }: WorkitemMetaProps) {
+export function WorkitemMeta({ workType, statusName, priority, assigneeName, assigneeDisplayName, assigneeNameFallback, assigneeType, creatorDisplayName, sdlcName, tags, tagsEditable = false, onEditTags }: WorkitemMetaProps) {
   const { t } = useTranslation('workitem');
   const priorityMeta = getPriorityMeta(priority);
   const assigneeText = externalPrincipalName(displayNameWithoutId(assigneeDisplayName, assigneeName), assigneeNameFallback);
   const isAgent = assigneeType === 'AGENT';
+  const hasTags = !!tags && tags.length > 0;
 
   return (
     <div className="aw-workitem-meta">
@@ -44,11 +49,24 @@ export function WorkitemMeta({ workType, statusName, priority, assigneeName, ass
       {sdlcName && (
         <span><Trans t={t} i18nKey="meta.sdlc" components={{ value: <span>{sdlcName}</span> }} /></span>
       )}
-      {tags && tags.length > 0 && (
+      {tagsEditable || hasTags ? (
         <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
-          <Trans t={t} i18nKey="meta.tags" components={{ value: <span>{tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}</span> }} />
+          <Trans t={t} i18nKey="meta.tags" components={{ value: <span /> }} />
+          <WorkitemTagList tags={tags} showEmpty={tagsEditable} />
+          {tagsEditable ? (
+            <Button
+              type="text"
+              size="small"
+              aria-label={hasTags ? t('tags.editAria') : t('tags.add')}
+              title={hasTags ? t('tags.edit') : t('tags.add')}
+              icon={<EditOutlined aria-hidden="true" />}
+              onClick={onEditTags}
+            >
+              {hasTags ? null : t('tags.add')}
+            </Button>
+          ) : null}
         </span>
-      )}
+      ) : null}
     </div>
   );
 }

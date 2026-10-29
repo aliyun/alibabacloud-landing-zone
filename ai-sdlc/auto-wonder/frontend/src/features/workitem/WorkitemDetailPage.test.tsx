@@ -1139,7 +1139,15 @@ describe('WorkitemDetailPage', () => {
 
     // 对齐间距在 crystal.css 的 .aw-workitem-actions（padding: 12px 0）上，组件只负责挂类名；
     // vitest 不加载 CSS 文件（css 未开启），这里改为断言类名装配。
-    expect(await screen.findByTestId('workitem-action-bar')).toHaveClass('aw-workitem-actions');
+    // 对齐间距在 crystal.css 的 .aw-workitem-actions（padding: 12px 0）上，组件只负责挂类名；
+    // vitest 不加载 CSS 文件（css 未开启），这里改为断言类名装配。
+    const delivery = await screen.findByTestId('delivery-toggle');
+    const actionBar = await screen.findByTestId('workitem-action-bar');
+    expect(actionBar).toHaveClass('aw-workitem-actions');
+    // 交付开关是操作栏内的最后一个轻量组，状态文字与标准按钮同组，不含额外装饰容器。
+    expect(actionBar.lastElementChild).toBe(delivery);
+    expect(within(delivery).getByText('交付已开启')).toBeInTheDocument();
+    expect(within(delivery).getByRole('button', { name: '关闭交付' })).toBeInTheDocument();
   });
 
   it('edits and saves the workitem title and markdown content', async () => {
@@ -1162,7 +1170,7 @@ describe('WorkitemDetailPage', () => {
 
     renderPage();
 
-    await userEvent.click(await screen.findByRole('button', { name: /编辑/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /编辑$/ }));
     await userEvent.clear(screen.getByLabelText('工单标题'));
     await userEvent.type(screen.getByLabelText('工单标题'), '跨境支付重构更新');
     await userEvent.clear(screen.getByLabelText('工单正文'));
@@ -2172,5 +2180,101 @@ describe('WorkitemDetailPage 关注入口装配', () => {
     await userEvent.click(toggle);
 
     await waitFor(() => expect(requests).toEqual([{ method: 'POST', url: '/api/workitems/1/watch' }]));
+  });
+});
+
+describe('WorkitemDetailPage 标签编辑', () => {
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  });
+
+  afterEach(() => {
+    useAuthStore.getState().clear();
+  });
+
+  it('edits workitem tags from the metadata action', async () => {
+    let body: { tags?: string[] } | null = null;
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...mockWorkitem, tags: ['发布'] },
+      })),
+      http.get('/api/workitems/tag-options', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: ['发布', '线上'],
+      })),
+      http.put('/api/workitems/1/tags', async ({ request }) => {
+        body = await request.json() as { tags?: string[] };
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { ...mockWorkitem, tags: body.tags },
+        });
+      }),
+      ...setupHandlers().filter((handler) => handler.info.path !== '/api/workitems/1'),
+    );
+
+    renderPage();
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    expect(screen.getByText('发布')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '编辑标签' }));
+    const editor = await screen.findByTestId('workitem-tags-editor');
+    await userEvent.type(within(editor).getByRole('combobox'), '线上');
+    fireEvent.keyDown(within(editor).getByRole('combobox'), { key: 'Enter', keyCode: 13, which: 13 });
+    await waitFor(() => expect(within(editor).getByText('线上', { selector: '.ant-select-selection-item-content' })).toBeInTheDocument());
+    await userEvent.click(within(editor).getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(body).toMatchObject({ tags: ['发布', '线上'] }));
+    await waitFor(() => expect(screen.queryByTestId('workitem-tags-editor')).not.toBeInTheDocument());
+  });
+
+  it('shows every tag but no edit entry to read-only members', async () => {
+    useAuthStore.getState().clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    const tags = Array.from({ length: 10 }, (_, index) => `标签${index}`);
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...mockWorkitem, tags },
+      })),
+      ...setupHandlers().filter((handler) => handler.info.path !== '/api/workitems/1'),
+    );
+
+    renderPage();
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    tags.forEach((tag) => expect(screen.getByText(tag)).toBeInTheDocument());
+    expect(screen.queryByTestId('workitem-tags-overflow')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑标签' })).not.toBeInTheDocument();
+  });
+
+  it('treats a read-only workitem domain as read-only in the detail meta', async () => {
+    useAuthStore.setState({ readOnlyDomains: ['WORKITEM'] });
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...mockWorkitem, tags: ['发布'] },
+      })),
+      ...setupHandlers().filter((handler) => handler.info.path !== '/api/workitems/1'),
+    );
+
+    renderPage();
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    expect(screen.getByText('发布')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑标签' })).not.toBeInTheDocument();
+  });
+
+  it('lets admins edit tags even when the workitem domain is read-only', async () => {
+    useAuthStore.setState({ accessLevel: 'ADMIN', readOnlyDomains: ['WORKITEM'] });
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...mockWorkitem, tags: ['发布'] },
+      })),
+      ...setupHandlers().filter((handler) => handler.info.path !== '/api/workitems/1'),
+    );
+
+    renderPage();
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '编辑标签' })).toBeInTheDocument();
   });
 });

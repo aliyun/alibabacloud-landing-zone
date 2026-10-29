@@ -128,7 +128,17 @@ public class DispatchRuntimeReconciler {
             try {
                 ExecutorDispatchSnapshot current = currentComplete(executorId, expectedSessionId);
                 if (current == null) return;
-                if (current.ownedDispatchIds().contains(row.getId())) continue;
+                if (current.ownedDispatchIds().contains(row.getId())) {
+                    if (DispatchStatus.PAUSE_FAILED.equals(row.getStatus())
+                            && row.executionSourceType() == ExecutionSourceType.WORKITEM
+                            && row.getWorkitemId() != null
+                            && !current.runningDispatchIds().contains(row.getId())
+                            && dispatchDao.existsWaitingForPredecessor(row.getTenantId(), row.getId())) {
+                        // A paused Runtime still owns its capsule; ask it to replay the durable receipt.
+                        pauseService.requestPause(row.getTenantId(), row.getWorkitemId(), row.getId(), 0L);
+                    }
+                    continue;
+                }
                 if (DispatchStatus.PAUSING.equals(row.getStatus())) {
                     pauseService.expireTimedOutPause(row,
                             System.currentTimeMillis() - PAUSE_RECEIPT_GRACE_MS);

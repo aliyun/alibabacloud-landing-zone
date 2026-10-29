@@ -36,6 +36,8 @@ public class AgentVersionVO {
     @Setter
     public static class RepoPermItem {
         private Long repoId;
+        /** Repository name for display; null when the repository was removed or is not resolvable. */
+        private String repoName;
         private String permLevel;
         private List<String> allowedBranchPatterns;
     }

@@ -40,9 +40,30 @@ class DashboardDaoMappingTest {
         String runningList = selectBody(xml, "listRunningWorkitems");
         String normalizedRunning = runningList.replaceAll("\\s+", " ").trim();
         assertTrue(normalizedRunning.contains("d.status = 'RUNNING'"));
-        assertTrue(normalizedRunning.contains("dispatchId"));
+        assertTrue(normalizedRunning.contains("d.workitem_id IS NOT NULL"));
+        assertTrue(normalizedRunning.contains("COUNT(*) AS runningDispatchCount"));
+        assertTrue(normalizedRunning.contains("GROUP BY d.workitem_id"));
         assertTrue(normalizedRunning.contains("workitemId"));
+        assertTrue(normalizedRunning.contains("runningMinutes"));
+        assertFalse(normalizedRunning.contains("dispatchId"), "detail list is workitem-level");
         assertFalse(normalizedRunning.contains("LIMIT"));
+    }
+
+    @Test
+    void overviewWorkitemKpisUseWorkitemScopeQueries() throws IOException {
+        String xml = readMapping();
+
+        String todayCreated = selectBody(xml, "countTodayCreatedWorkitems").replaceAll("\\s+", " ").trim();
+        assertTrue(todayCreated.contains("FROM workitem"));
+        assertTrue(todayCreated.contains("is_deleted = 0"));
+        assertTrue(todayCreated.contains("gmt_create >= CURDATE()"));
+        assertFalse(todayCreated.contains("dispatch"), "today-created must stay workitem-level");
+
+        String running = selectBody(xml, "countRunningWorkitems").replaceAll("\\s+", " ").trim();
+        assertTrue(running.contains("COUNT(DISTINCT d.workitem_id)"));
+        assertTrue(running.contains("d.status = 'RUNNING'"));
+        assertTrue(running.contains("d.workitem_id IS NOT NULL"));
+        assertTrue(running.contains("<include refid=\"workitemDispatchFence\"/>"));
     }
 
     @Test
@@ -59,15 +80,85 @@ class DashboardDaoMappingTest {
         assertUsesWorkitemDispatchFence(selectBody(xml, "squadInProgressWorkitems"),
                 "squadInProgressWorkitems");
         for (String id : java.util.List.of("listRunningFeed", "listRecentFeed",
-                "listRunningWorkitems", "listAgentRunning")) {
+                "listRunningWorkitems", "listAgentRunning", "countRunningWorkitems")) {
             assertUsesWorkitemDispatchFence(selectBody(xml, id), id);
         }
         for (String id : java.util.List.of("countRunningDispatches", "countQueuedDispatches",
-                "countTodaySucceeded", "countTodayFailedOrTimeout", "countTodayRetries",
-                "avgTodaySuccessDurationMinutes", "countActiveSquads", "squadLineAggregates",
-                "onlineWorkstations")) {
+                "countTodayCreatedWorkitems", "countTodaySucceeded", "countTodayFailedOrTimeout",
+                "countTodayRetries", "avgTodaySuccessDurationMinutes", "countActiveSquads",
+                "squadLineAggregates", "onlineWorkstations")) {
             assertFalse(selectBody(xml, id).contains("source_type"), id);
         }
+    }
+
+    @Test
+    void formalDeliveryFenceExcludesInteractionSessionsAndLegacyFenceKeepsResumeModeGuard() throws IOException {
+        String xml = readMapping();
+
+        String sourceAware = sqlBody(xml, "formalDeliveryFence", "autowonder-source-aware");
+        assertTrue(sourceAware.contains("d.source_type = 'WORKITEM'"));
+        assertTrue(sourceAware.contains("COALESCE(d.resume_mode, '') NOT IN ('COMMENT_INTERACTION', 'SIDE_INTERACTION', 'CANONICAL_INTERACTION')"));
+
+        String legacy = sqlBody(xml, "formalDeliveryFence", "autowonder-legacy");
+        assertFalse(legacy.contains("source_type"));
+        assertTrue(legacy.contains("COALESCE(d.resume_mode, '') NOT IN ('COMMENT_INTERACTION', 'SIDE_INTERACTION', 'CANONICAL_INTERACTION')"));
+
+        for (String id : java.util.List.of("pipelineExecutionStats", "pipelineReworkStats")) {
+            assertUsesFormalDeliveryFence(selectBody(xml, id), id);
+        }
+    }
+
+    @Test
+    void pipelineExecutionStatsAggregateOnlyTerminalFormalDispatchesInTheWindow() throws IOException {
+        String normalized = selectBody(readMapping(), "pipelineExecutionStats").replaceAll("\\s+", " ").trim();
+
+        assertTrue(normalized.contains("COALESCE(SUM(CASE WHEN d.status = 'SUCCEEDED' THEN 1 ELSE 0 END), 0) AS succeeded"));
+        assertTrue(normalized.contains("COALESCE(SUM(CASE WHEN d.status IN ('SUCCEEDED','FAILED','TIMEOUT') THEN 1 ELSE 0 END), 0) AS total"));
+        assertTrue(normalized.contains("COALESCE(SUM(CASE WHEN d.status IN ('FAILED','TIMEOUT') THEN 1 ELSE 0 END), 0) AS failedOrTimeout"));
+        assertTrue(normalized.contains("d.tenant_id = #{tenantId}"));
+        assertTrue(normalized.contains("d.is_deleted = 0"));
+        assertTrue(normalized.contains("d.gmt_create &gt;= #{start}"));
+        assertTrue(normalized.contains("d.gmt_create &lt; #{end}"));
+        assertFalse(normalized.toUpperCase().contains("BETWEEN"));
+        assertFalse(normalized.contains("CANCELED"));
+    }
+
+    @Test
+    void pipelineReworkStatsSeparateFailureRetriesAndCommentReworkFromOtherAttemptBumps() throws IOException {
+        String xml = readMapping();
+        String stats = selectBody(xml, "pipelineReworkStats").replaceAll("\\s+", " ").trim();
+        String condition = sqlBody(xml, "reworkDispatchCondition").replaceAll("\\s+", " ").trim();
+
+        assertTrue(stats.contains("COUNT(DISTINCT d.workitem_id) AS executedWorkitems"));
+        assertTrue(stats.contains("AS reworkedWorkitems"));
+        assertTrue(stats.contains("AS retryCount"));
+        assertTrue(stats.contains("<include refid=\"reworkDispatchCondition\"/>"));
+        assertTrue(stats.contains("d.gmt_create &gt;= #{start}"));
+        assertTrue(stats.contains("d.gmt_create &lt; #{end}"));
+
+        assertTrue(condition.contains("d.resume_mode = 'COMMENT_REWORK'"));
+        assertTrue(condition.contains("d.resume_mode IS NULL"));
+        assertTrue(condition.contains("d.attempt &gt;= 2"));
+        assertTrue(condition.contains("d.idempotency_key REGEXP '^[0-9]+:[0-9]+:[0-9]+$'"));
+        assertTrue(condition.contains("d.idempotency_key REGEXP '^WORKITEM:[0-9]+:[0-9]+:[0-9]+$'"));
+        assertFalse(condition.contains("attempt > 0"), "handoff/recovery/restart must not count as rework");
+    }
+
+    @Test
+    void averageWorkitemDurationReusesEndToEndSuccessDefinitionAndStaysNullForEmptyWindows() throws IOException {
+        String normalized = selectBody(readMapping(), "avgPipelineWorkitemDurationMinutes")
+                .replaceAll("\\s+", " ").trim();
+
+        assertTrue(normalized.contains("<include refid=\"endToEndSuccessfulWorkitems\"/>"));
+        assertTrue(normalized.contains("TIMESTAMPDIFF(MINUTE, successful_workitem.gmt_create, successful_workitem.success_at)"));
+        assertTrue(normalized.contains("successful_workitem.success_at &gt;= #{start}"));
+        assertTrue(normalized.contains("successful_workitem.success_at &lt; #{end}"));
+        assertFalse(normalized.toUpperCase().contains("BETWEEN"));
+        assertFalse(normalized.contains("COALESCE"), "empty window must stay null so the UI can render a dash");
+    }
+
+    private void assertUsesFormalDeliveryFence(String sql, String id) {
+        assertTrue(sql.contains("<include refid=\"formalDeliveryFence\"/>"), id);
     }
 
     private void assertUsesWorkitemDispatchFence(String sql, String id) {

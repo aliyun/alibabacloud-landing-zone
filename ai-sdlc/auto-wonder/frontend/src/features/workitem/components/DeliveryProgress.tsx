@@ -6,13 +6,15 @@ import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Card, Typography, Space, Spin, Collapse, Tag, Tooltip, Button, Select, ConfigProvider, Modal, Tabs, Alert, Empty } from 'antd';
-import { CheckCircleFilled, ClockCircleOutlined, CloseCircleFilled, CompressOutlined, DownloadOutlined, EyeOutlined, FileTextOutlined, FullscreenOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons';
+import { CheckCircleFilled, ClockCircleOutlined, CloseCircleFilled, CompressOutlined, DownloadOutlined, EyeOutlined, FileTextOutlined, FullscreenOutlined, LoadingOutlined, PauseCircleOutlined, ReloadOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons';
 import type { AgentDeliveryProgress, Artifact, DeliveryProgress as DeliveryProgressModel, DeliveryStep, DispatchAttempt, ProcessGraph, ProcessGraphEdge, ProcessGraphNode, StepTiming, SubStep, WorkflowPlan } from '@/shared/types/workitem';
 import { artifactCategories, artifactsForReadingCategory, groupArtifactsByExecution } from '../artifactGrouping';
 import { basename } from '@/shared/lib/artifactLinking';
 import { getArtifactDownloadUrl } from '../api';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { DispatchActivityFeed } from './DispatchActivityFeed';
+import { ExecutionActionBar } from './ExecutionActionBar';
+import type { ExecutionActionKind } from '../hooks';
 import { LiveActivityPanel } from './LiveActivityPanel';
 import { RuntimeTraceDrawer } from './RuntimeTraceDrawer';
 import { RuntimeLogPanel } from './RuntimeLogDrawer';
@@ -31,6 +33,7 @@ type GraphSelection = { node: ProcessGraphNode } | { edge: ProcessGraphEdge; ind
 
 interface DeliveryProgressProps {
   showWorkflowPlan?: boolean;
+  renderControlTimeline?: (dispatchId: number, compact?: boolean) => ReactNode;
   renderRecovery?: (dispatchId: number) => ReactNode;
   restartHistory?: ReactNode;
   steps?: DeliveryStep[];
@@ -43,6 +46,8 @@ interface DeliveryProgressProps {
   continuingDispatchId?: number | null;
   onPause?: (dispatchId: number) => void;
   pausingDispatchId?: number | null;
+  onExecutionAction?: (attempt: DispatchAttempt, action: ExecutionActionKind) => void;
+  pendingExecutionAction?: { dispatchId: number; action: ExecutionActionKind } | null;
 }
 
 export { formatDuration } from '../duration';
@@ -227,81 +232,19 @@ function buildAttemptViews(steps: ConvergedDeliveryStep[]): Map<number, DisplayA
   return byStep;
 }
 
-function pauseLabel(status: string | null | undefined): string {
-  if (status === 'PAUSING') {
-    return i18n.t('workitem:delivery.pausing');
-  }
-  if (status === 'PAUSE_FAILED') {
-    return i18n.t('workitem:delivery.retryPause');
-  }
-  return i18n.t('workitem:delivery.pause');
-}
-
 function stepIsPausing(step: ConvergedDeliveryStep): boolean {
   return step.attempts?.some((attempt) => attempt.status === 'PAUSING') ?? false;
 }
 
-function AttemptActionButton({
-  attempt,
-  onContinue,
-  continuingDispatchId,
-  onPause,
-  pausingDispatchId,
-}: {
-  attempt: DispatchAttempt;
-  onContinue?: (dispatchId: number) => void;
-  continuingDispatchId?: number | null;
-  onPause?: (dispatchId: number) => void;
-  pausingDispatchId?: number | null;
-}) {
-  const { t } = useTranslation('workitem');
-  if (attempt.error?.startsWith('CANCEL_REQUESTED:')) return <Tag color="warning">{t('delivery.cancelling')}</Tag>;
-  if (attempt.canContinue && onContinue) {
-    return (
-      <Button
-        size="small"
-        type="link"
-        aria-label={t('delivery.continue')}
-        icon={<PlayCircleOutlined aria-hidden="true" />}
-        loading={continuingDispatchId === attempt.dispatchId}
-        onClick={() => onContinue(attempt.dispatchId)}
-      >
-        {t('delivery.continue')}
-      </Button>
-    );
-  }
-  if (attempt.canPause && onPause) {
-    const label = pauseLabel(attempt.status);
-    const pausing = attempt.status === 'PAUSING';
-    return (
-      <Button
-        size="small"
-        type="link"
-        danger={!pausing}
-        aria-label={label}
-        icon={<PauseCircleOutlined aria-hidden="true" />}
-        loading={pausingDispatchId === attempt.dispatchId}
-        disabled={pausing}
-        onClick={pausing ? undefined : () => onPause(attempt.dispatchId)}
-      >
-        {label}
-      </Button>
-    );
-  }
-  return null;
-}
-
-function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onPause, pausingDispatchId }: {
+function StepCard({ step, index, attempts, renderControlTimeline }: {
   step: ConvergedDeliveryStep;
   index: number;
   attempts: DisplayAttempt[];
-  onContinue?: (dispatchId: number) => void;
-  continuingDispatchId?: number | null;
-  onPause?: (dispatchId: number) => void;
-  pausingDispatchId?: number | null;
+  renderControlTimeline?: (dispatchId: number, compact?: boolean) => ReactNode;
 }) {
   const { t } = useTranslation('workitem');
-  const isPausing = attempts.some((attempt) => attempt.status === 'PAUSING');
+  const isCancelling = attempts.some((attempt) => attempt.cancelRequested && attempt.status === 'PAUSING');
+  const isPausing = !isCancelling && attempts.some((attempt) => attempt.status === 'PAUSING');
   const isActive = step.status === 'active';
   const isPaused = step.status === 'paused';
   const isCancelled = step.status === 'cancelled';
@@ -309,7 +252,7 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
     || step.planStatus === 'REUSED' || step.planStatus === 'SKIPPED';
   const isFailed = step.status === 'failed';
   const isInterrupted = step.status === 'interrupted';
-  const executionLabel = step.planStatus === 'SKIPPED' ? t('delivery.noExecution') : isDone ? t('delivery.completed') : isPausing ? t('delivery.pausing') : isActive ? step.executionStatus ? dispatchExecutionLabel(step.executionStatus, step.waitingReason) : t('delivery.running') : isPaused ? t('delivery.paused') : isCancelled ? t('delivery.cancelled') : isFailed ? t('delivery.failed') : isInterrupted ? t('stepTiming.status.interrupted') : t('delivery.pending');
+  const executionLabel = step.planStatus === 'SKIPPED' ? t('delivery.noExecution') : isDone ? t('delivery.completed') : isCancelling ? t('delivery.ending') : isPausing ? t('delivery.pausing') : isActive ? step.executionStatus ? dispatchExecutionLabel(step.executionStatus, step.waitingReason) : t('delivery.running') : isPaused ? t('delivery.paused') : isCancelled ? t('delivery.cancelled') : isFailed ? t('delivery.failed') : isInterrupted ? t('stepTiming.status.interrupted') : t('delivery.pending');
   const planLabel = step.planStatus === 'RUN'
     ? t('delivery.rerun')
     : step.planStatus === 'REUSED'
@@ -317,8 +260,6 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
       : step.planStatus === 'SKIPPED'
         ? t('delivery.skipped')
         : null;
-  const primaryActionAttempt = attempts.find((attempt) =>
-    (attempt.canContinue && onContinue) || (attempt.canPause && onPause));
   const hasAttemptDetails = attempts.length > 0 || Boolean(step.agentName) || Boolean(step.executorName) || Boolean(step.subSteps?.length);
   const attentionStatus = isActive || isPaused || isFailed;
   const [recordsOpen, setRecordsOpen] = useState(attentionStatus);
@@ -369,15 +310,6 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
           {step.durationMs != null && `  ${formatDuration(step.durationMs)}`}
         </Text>
         {step.usage && <StepTokenBadge usage={step.usage} />}
-        {primaryActionAttempt && (
-          <AttemptActionButton
-            attempt={primaryActionAttempt}
-            onContinue={onContinue}
-            continuingDispatchId={continuingDispatchId}
-            onPause={onPause}
-            pausingDispatchId={pausingDispatchId}
-          />
-        )}
       </div>
 
       {hasAttemptDetails && (
@@ -413,18 +345,12 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
                             {attempt.durationMs != null && ` · ${formatDuration(attempt.durationMs)}`}
                             {attempt.error && ` · ${attempt.error}`}
                           </Text>
-                          {attempt.dispatchId !== primaryActionAttempt?.dispatchId && (
-                            <AttemptActionButton
-                              attempt={attempt}
-                              onContinue={onContinue}
-                              continuingDispatchId={continuingDispatchId}
-                              onPause={onPause}
-                              pausingDispatchId={pausingDispatchId}
-                            />
-                          )}
                         </div>
                         {recordsOpen && attempt.isActivityFeedHost && (
-                          <DispatchActivityFeed dispatchId={attempt.dispatchId} status={attempt.status} />
+                          <>
+                            {renderControlTimeline?.(attempt.dispatchId)}
+                            <DispatchActivityFeed dispatchId={attempt.dispatchId} status={attempt.status} />
+                          </>
                         )}
                       </div>
                     ))}
@@ -451,19 +377,7 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
   );
 }
 
-function StepList({
-  steps,
-  onContinue,
-  continuingDispatchId,
-  onPause,
-  pausingDispatchId,
-}: {
-  steps: ConvergedDeliveryStep[];
-  onContinue?: (dispatchId: number) => void;
-  continuingDispatchId?: number | null;
-  onPause?: (dispatchId: number) => void;
-  pausingDispatchId?: number | null;
-}) {
+function StepList({ steps, renderControlTimeline }: { steps: ConvergedDeliveryStep[] } & Pick<DeliveryProgressProps, 'renderControlTimeline'>) {
   const attemptsByStep = buildAttemptViews(steps);
 
   return (
@@ -474,10 +388,7 @@ function StepList({
           step={step}
           index={i}
           attempts={attemptsByStep.get(step.stepId) ?? []}
-          onContinue={onContinue}
-          continuingDispatchId={continuingDispatchId}
-          onPause={onPause}
-          pausingDispatchId={pausingDispatchId}
+          renderControlTimeline={renderControlTimeline}
         />
       ))}
     </Space>
@@ -869,13 +780,22 @@ function executionEntries(agents: ConvergedAgentProgress[], executions?: Dispatc
     if (existing) {
       if (!existing.steps.some(value => value.stepId === step.stepId)) existing.steps.push(step);
       // A later step may carry more recent status/action metadata for the same dispatch.
-      if (attempt.canPause || attempt.canContinue) existing.attempt = attempt;
+      if (attempt.control || attempt.canPause || attempt.canContinue) existing.attempt = { ...existing.attempt, ...attempt };
     } else entries.set(attempt.dispatchId, { agent, dispatchId: attempt.dispatchId, attempt, steps: [step] });
   })));
   executions?.forEach(attempt => {
     const existing = entries.get(attempt.dispatchId);
     if (existing) {
-      existing.attempt = { ...existing.attempt, ...attempt, canPause: existing.attempt.canPause, canContinue: existing.attempt.canContinue };
+      existing.attempt = {
+        ...existing.attempt,
+        ...attempt,
+        control: attempt.control ?? existing.attempt.control,
+        canPause: attempt.control?.pause?.allowed ?? existing.attempt.canPause,
+        canContinue: attempt.control?.resume?.allowed ?? existing.attempt.canContinue,
+        cancelRequested: attempt.cancelRequested ?? existing.attempt.cancelRequested,
+        stopPending: attempt.stopPending ?? existing.attempt.stopPending,
+        forced: attempt.forced ?? existing.attempt.forced,
+      };
     } else {
       const agent = agents.find(value => value.agentId === attempt.agentId) ?? {
         agentId: attempt.agentId ?? -attempt.dispatchId, agentName: attempt.agentName ?? '—',
@@ -900,12 +820,12 @@ function DispatchFailureDetails({ dispatchId, error, status }: { dispatchId: num
   </div>;
 }
 
-function DeliveryWorkbench({ agents, progress, artifacts, artifactsLoading, onContinue, continuingDispatchId, onPause, pausingDispatchId, renderRecovery, restartHistory }: {
+function DeliveryWorkbench({ agents, progress, artifacts, artifactsLoading, onExecutionAction, pendingExecutionAction, renderRecovery, renderControlTimeline, restartHistory }: {
   agents: ConvergedAgentProgress[];
   progress: DeliveryProgressModel | null | undefined;
   artifacts: Artifact[];
   artifactsLoading?: boolean;
-} & Pick<DeliveryProgressProps, 'onContinue' | 'continuingDispatchId' | 'onPause' | 'pausingDispatchId' | 'renderRecovery' | 'restartHistory'>) {
+} & Pick<DeliveryProgressProps, 'onExecutionAction' | 'pendingExecutionAction' | 'renderRecovery' | 'renderControlTimeline' | 'restartHistory'>) {
   const { t } = useTranslation('workitem');
   const entries = useMemo(() => executionEntries(agents, progress?.executions), [agents, progress?.executions]);
   const currentAgent = [...agents].filter(agent => agent.status === 'active').sort((a, b) =>
@@ -923,16 +843,20 @@ function DeliveryWorkbench({ agents, progress, artifacts, artifactsLoading, onCo
   const [selectedStepId, setSelectedStepId] = useState<number | null>(null);
   const [railVisible, setRailVisible] = useState(() => window.innerWidth >= 760);
   const [railWidth, setRailWidth] = useState(260);
+  const [showAllExecutions, setShowAllExecutions] = useState(false);
   const followCurrent = pinnedDispatch === null && pinnedAgent === null;
   const selectedEntry = pinnedDispatch !== null ? entries.find(entry => entry.dispatchId === pinnedDispatch) : pinnedAgent !== null ? [...entries].reverse().find(entry => entry.agent.agentId === pinnedAgent) : defaultEntry;
   const selectedAgent = pinnedAgent !== null ? agents.find(agent => agent.agentId === pinnedAgent) : selectedEntry?.agent ?? attentionAgent ?? agents[agents.length - 1];
   const selectedStep = selectedAgent?.steps.find(step => step.stepId === selectedStepId);
+  const selectedIsTimeout = selectedEntry?.attempt.status === 'TIMEOUT';
   const currentStep = currentAgent?.steps.find(step => step.status === 'active');
   const selectedLive = selectedEntry?.dispatchId === currentEntry?.dispatchId && currentAgent !== null;
-  const actionAttempt = [...(attentionAgent?.steps.flatMap(step => step.attempts ?? []) ?? [])]
-    .filter(attempt => attempt.dispatchId === defaultEntry?.dispatchId && !['COMMENT_INTERACTION', 'SIDE_INTERACTION', 'CANONICAL_INTERACTION'].includes(attempt.resumeMode ?? ''))
-    .sort((a, b) => b.dispatchId - a.dispatchId)
-    .find(attempt => currentAgent ? attempt.canPause : attempt.canContinue || attempt.canPause);
+  const actionAttempt = defaultEntry?.attempt ?? null;
+  const stopWarning = actionAttempt && actionAttempt.stopPending
+    ? actionAttempt.status === 'TIMEOUT'
+      ? t('delivery.timeoutStopUnconfirmed', { id: actionAttempt.dispatchId })
+      : t('delivery.stopUnconfirmed', { id: actionAttempt.dispatchId })
+    : null;
   const [handoffId, setHandoffId] = useState<number | null>(null);
   const previousCurrent = useRef(currentEntry?.dispatchId ?? null);
   useEffect(() => {
@@ -943,48 +867,59 @@ function DeliveryWorkbench({ agents, progress, artifacts, artifactsLoading, onCo
   const open = (nextTab: string) => { setTab(nextTab); setExpanded(true); };
   const selectEntry = (entry: ExecutionEntry) => { setPinnedDispatch(entry.dispatchId); setPinnedAgent(null); setSelectedStepId(null); };
   const returnToCurrent = () => { setPinnedDispatch(null); setPinnedAgent(null); setSelectedStepId(null); setHandoffId(null); };
-  const attentionLabel = attentionAgent?.steps.some(stepIsPausing) ? { text: t('delivery.pausing'), color: 'warning' } : attentionAgent?.steps.some(step => step.attempts?.some(attempt => attempt.error?.startsWith('CANCEL_REQUESTED:'))) ? { text: t('delivery.cancelling'), color: 'warning' } : attentionAgent ? statusLabel(attentionAgent.status, currentEntry?.attempt.status ?? attentionAgent.executionStatus, currentEntry?.attempt.waitingReason ?? attentionAgent.waitingReason) : { text: t('workbench.noExecution'), color: 'default' };
-  const stageStatus = currentStep ? [currentStep.planStatus === 'RUN' ? t('delivery.rerun') : null, attentionLabel.text, formatDuration(currentStep.durationMs)].filter(Boolean).join(' · ') : null;
+  const attentionCancelling = attentionAgent?.steps.some(step => step.attempts?.some(attempt =>
+    attempt.cancelRequested && attempt.status === 'PAUSING'));
+  const attentionLabel = attentionCancelling ? { text: t('delivery.ending'), color: 'warning' } : attentionAgent?.steps.some(stepIsPausing) ? { text: t('delivery.pausing'), color: 'warning' } : attentionAgent?.steps.some(step => step.attempts?.some(attempt => attempt.error?.startsWith('CANCEL_REQUESTED:'))) ? { text: t('delivery.ending'), color: 'warning' } : attentionAgent ? statusLabel(attentionAgent.status, currentEntry?.attempt.status ?? attentionAgent.executionStatus, currentEntry?.attempt.waitingReason ?? attentionAgent.waitingReason) : defaultEntry ? statusLabel(defaultEntry.agent.status, defaultEntry.attempt.status, defaultEntry.attempt.waitingReason) : { text: t('workbench.noExecution'), color: 'default' };
+  const stageStatus = currentStep ? [currentStep.planStatus === 'RUN' ? t('delivery.rerun') : null, formatDuration(currentStep.durationMs)].filter(Boolean).join(' · ') : null;
   const summary = <section className="delivery-workbench-current" data-testid="delivery-current-execution">
     <div className="delivery-workbench-heading">
       <div className="delivery-workbench-identity">
         {currentAgent && !currentAgent.steps.some(stepIsPausing) && <LoadingOutlined aria-hidden="true" className="delivery-workbench-active" />}
         <div>
-          <Text strong data-testid="current-agent-name">{attentionAgent?.agentName ?? t('workbench.noActiveAgent')}</Text>
+          <Text strong data-testid="current-agent-name">{attentionAgent?.agentName ?? defaultEntry?.agent.agentName ?? t('workbench.noActiveAgent')}</Text>
           <Tag color={attentionLabel.color}>{attentionLabel.text}</Tag>
-          {currentStep && <div>{currentStep.name}</div>}
+          {defaultEntry && <div className="delivery-workbench-meta">{t('workbench.sessionDuration', { id: defaultEntry.dispatchId, duration: formatDuration(defaultEntry.attempt.durationMs) })}{defaultEntry.attempt.executorName && <span>{t('delivery.runner', { name: defaultEntry.attempt.executorName })}</span>}</div>}
+          {currentStep && <div className="delivery-workbench-step">{currentStep.name}</div>}
           {stageStatus && <Text type="secondary" style={{ fontSize: 12 }}>{stageStatus}</Text>}
         </div>
       </div>
       <Space wrap>
         {!expanded && <Button type="primary" onClick={() => open('terminal')}>{t('workbench.openTerminal')}</Button>}
-        {actionAttempt && <AttemptActionButton attempt={actionAttempt} onContinue={onContinue} continuingDispatchId={continuingDispatchId} onPause={onPause} pausingDispatchId={pausingDispatchId} />}
+        {actionAttempt && onExecutionAction && (
+          <ExecutionActionBar
+            attempt={actionAttempt}
+            pending={pendingExecutionAction}
+            onAction={(action) => onExecutionAction(actionAttempt, action)}
+          />
+        )}
       </Space>
     </div>
-    {attentionAgent?.currentActivity && <Text type="secondary" data-testid="agent-current-activity">{attentionAgent.currentActivity}</Text>}
+    {stopWarning && <Text style={{ display: 'block', fontSize: 12, color: 'var(--aw-warning)' }}>{stopWarning}</Text>}
+    {attentionAgent?.currentActivity && <Text type="secondary" ellipsis={{ tooltip: attentionAgent.currentActivity }} data-testid="agent-current-activity">{attentionAgent.currentActivity}</Text>}
     {currentEntry && <div className="delivery-workbench-activity"><LiveActivityPanel key={currentEntry.dispatchId} dispatchId={currentEntry.dispatchId} enabled summaryOnly /></div>}
+    {defaultEntry && renderControlTimeline?.(defaultEntry.dispatchId, true)}
   </section>;
   const recentEntries = [...entries].reverse().slice(0, 3);
-  if (currentEntry && !recentEntries.some(entry => entry.dispatchId === currentEntry.dispatchId)) recentEntries[recentEntries.length - 1] = currentEntry;
-  const sidebarEntries = selectedEntry && !recentEntries.some(entry => entry.dispatchId === selectedEntry.dispatchId) ? [selectedEntry, ...recentEntries] : recentEntries;
+  if (defaultEntry && !recentEntries.some(entry => entry.dispatchId === defaultEntry.dispatchId)) recentEntries[recentEntries.length - 1] = defaultEntry;
+  const sidebarEntries = showAllExecutions ? [...entries].reverse() : selectedEntry && !recentEntries.some(entry => entry.dispatchId === selectedEntry.dispatchId) ? [selectedEntry, ...recentEntries] : recentEntries;
   const executionStatusColor = (status: string | null) => status === 'SUCCEEDED' ? 'success' : status === 'FAILED' || status === 'TIMEOUT' ? 'error' : status === 'PAUSED' || status === 'PAUSING' || status === 'PAUSE_FAILED' ? 'warning' : status === 'CANCELED' || !status ? 'default' : 'processing';
   const executionTimes = (attempt: DispatchAttempt) => <div className="delivery-workbench-entry-meta">
     <div>{t('workbench.startedAt', { time: attempt.startedAt ? formatDateTime(attempt.startedAt) : t('workbench.unknownTime') })}</div>
     <div>{t('workbench.endedAt', { time: attempt.endedAt ? formatDateTime(attempt.endedAt) : attempt.status && ['SUCCEEDED', 'FAILED', 'TIMEOUT', 'CANCELED'].includes(attempt.status) ? t('workbench.unknownTime') : t('workbench.notEnded') })}</div>
   </div>;
   const timeline = (visibleEntries: ExecutionEntry[], showPending = false) => <div className="delivery-workbench-timeline" aria-label={t('workbench.handoffs')}>
-    {visibleEntries.map(entry => <div key={entry.dispatchId}>
+    {visibleEntries.map(entry => <div key={entry.dispatchId} className="delivery-workbench-entry-card">
       <button type="button" className={`delivery-workbench-entry ${selectedEntry?.dispatchId === entry.dispatchId ? 'is-selected' : ''}`}
         aria-pressed={selectedEntry?.dispatchId === entry.dispatchId} onClick={() => { selectEntry(entry); open('terminal'); }}>
-        <Tag color={executionStatusColor(entry.attempt.status)}>{dispatchExecutionLabel(entry.attempt.status, entry.attempt.waitingReason)}</Tag>
         <span className="delivery-workbench-entry-name" data-testid="agent-progress-name">{entry.agent.agentName}</span>
+        <Tag color={executionStatusColor(entry.attempt.status)}>{dispatchExecutionLabel(entry.attempt.status, entry.attempt.waitingReason)}</Tag>
         <span className="delivery-workbench-entry-meta">{t('workbench.sessionDuration', { id: entry.dispatchId, duration: formatDuration(entry.attempt.durationMs) })}</span>
         {entry.attempt.executorName && <span className="delivery-workbench-entry-meta">{t('delivery.runner', { name: entry.attempt.executorName })}</span>}
-        {expanded && executionTimes(entry.attempt)}
       </button>
+      {!expanded && renderControlTimeline?.(entry.dispatchId, true)}
     </div>)}
     {showPending && agents.filter(agent => !entries.some(entry => entry.agent.agentId === agent.agentId)).slice(0, 3).map(agent => <button key={agent.agentId} type="button" className="delivery-workbench-entry" onClick={() => { setPinnedAgent(agent.agentId); setPinnedDispatch(null); setSelectedStepId(null); if (!expanded) open('details'); }}>
-      <span>{statusLabel(agent.status, agent.executionStatus, agent.waitingReason).text}</span><span className="delivery-workbench-entry-name" data-testid="agent-progress-name">{agent.agentName}</span><span className="delivery-workbench-entry-meta">{formatDuration(agent.durationMs)}</span>
+      <span className="delivery-workbench-entry-name" data-testid="agent-progress-name">{agent.agentName}</span><span>{statusLabel(agent.status, agent.executionStatus, agent.waitingReason).text}</span><span className="delivery-workbench-entry-meta">{formatDuration(agent.durationMs)}</span>
     </button>)}
   </div>;
   const stagePlanLabel = (step: ConvergedDeliveryStep) => step.planStatus === 'REUSED' || step.status === 'reused' ? t('delivery.reusedPrevious') : step.planStatus === 'RUN' ? t('delivery.rerun') : null;
@@ -1003,23 +938,23 @@ function DeliveryWorkbench({ agents, progress, artifacts, artifactsLoading, onCo
     {selectedEntry?.attempt.error && <DispatchFailureDetails dispatchId={selectedEntry.dispatchId} error={selectedEntry.attempt.error} status={selectedEntry.attempt.status} />}
     {selectedEntry && selectedEntry.steps.length === 0 ? <>
       <DispatchActivityFeed dispatchId={selectedEntry.dispatchId} status={selectedEntry.attempt.status} />
-    </> : <StepList steps={selectedStep ? [selectedStep] : progress?.executions?.length ? selectedEntry?.steps ?? selectedAgent.steps : selectedAgent.steps} onContinue={onContinue} continuingDispatchId={continuingDispatchId} onPause={onPause} pausingDispatchId={pausingDispatchId} />}
+    </> : <StepList steps={selectedStep ? [selectedStep] : progress?.executions?.length ? selectedEntry?.steps ?? selectedAgent.steps : selectedAgent.steps} />}
   </>;
   return <>
     {!expanded && summary}
-    <div className="delivery-workbench-section-heading"><Text strong>{t('workbench.handoffs')}</Text><Space wrap><Button type="text" onClick={() => open('history')}>{t('workbench.historyCount', { count: entries.length })}</Button><Button type="text" onClick={() => open('details')}>{t('workbench.viewDetails')}</Button></Space></div>
-    {!expanded && timeline(recentEntries, true)}
+    <div className="delivery-workbench-section-heading"><Text strong>{t('workbench.historyExecutions')}</Text><Space wrap><Button type="text" onClick={() => { setShowAllExecutions(true); open('terminal'); }}>{t('workbench.historyCount', { count: entries.length })}</Button><Button type="text" onClick={() => open('details')}>{t('workbench.viewDetails')}</Button></Space></div>
+    {!expanded && timeline(recentEntries.filter(entry => entry.dispatchId !== defaultEntry?.dispatchId), true)}
     <Space wrap className="delivery-workbench-footer"><Button onClick={() => open('timing')}>{t('stepTiming.title')}</Button><Button onClick={() => open('activity')}>{t('workbench.activity')}</Button><Button onClick={() => open('artifacts')}>{t('artifacts.agentCount', { count: artifacts.length })}</Button><Button onClick={() => open('graph')}>{t('workbench.graph')}</Button></Space>
     <Modal open={expanded} onCancel={() => setExpanded(false)} footer={null} width="calc(100vw - 32px)" style={{ top: 16 }} className="delivery-workbench-modal"
       title={<div className="delivery-workbench-heading"><span>{t('delivery.title')}</span><Button icon={<CompressOutlined aria-hidden="true" />} onClick={() => setExpanded(false)}>{t('workbench.exit')}</Button></div>}>
       <div className="delivery-workbench-expanded" data-testid="delivery-workbench">
-        {expanded && summary}
         {handoffId !== null && <Alert showIcon type="info" message={t(followCurrent ? 'workbench.handoffFollowing' : 'workbench.handoffPinned', { name: currentAgent?.agentName ?? '' })} closable onClose={() => setHandoffId(null)} />}
         <div className={`delivery-workbench-layout ${railVisible ? '' : 'without-rail'}`} style={{ '--delivery-rail-width': `${railWidth}px` } as React.CSSProperties}>
           <aside className="delivery-workbench-rail" hidden={!railVisible}>
             <div className="delivery-workbench-section-heading"><Text strong>{t('workbench.handoffs')}</Text></div>
             {timeline(sidebarEntries, true)}
-            <Button type="text" onClick={() => setTab('history')}>{t('workbench.historyCount', { count: entries.length })}</Button>
+            <Button type="text" onClick={() => setShowAllExecutions(value => !value)}>{t('workbench.historyCount', { count: entries.length })}</Button>
+            {restartHistory}
             <div className="delivery-workbench-section-heading"><Text strong>{t('workbench.stages')}</Text></div>
             {stageList}
             <label className="delivery-workbench-width">{t('workbench.sidebarWidth')}<input type="range" min={200} max={400} step={20} value={railWidth} onChange={event => setRailWidth(Number(event.target.value))} /></label>
@@ -1027,16 +962,35 @@ function DeliveryWorkbench({ agents, progress, artifacts, artifactsLoading, onCo
           <main className="delivery-workbench-main">
             <div className="delivery-workbench-session">
               <Button size="small" onClick={() => setRailVisible(!railVisible)}>{t(railVisible ? 'workbench.hideSidebar' : 'workbench.showSidebar')}</Button>
-              <Text>{selectedAgent?.agentName}</Text>
+              <Text strong data-testid="selected-agent-name">{selectedAgent?.agentName}</Text>
+              {selectedEntry && <Tag color={executionStatusColor(selectedEntry.attempt.status)}>{dispatchExecutionLabel(selectedEntry.attempt.status, selectedEntry.attempt.waitingReason)}</Tag>}
               {entries.length > 0 && <Select aria-label={t('workbench.executionSession')} data-testid="live-activity-dispatch-select" value={selectedEntry?.dispatchId} onChange={id => { const entry = entries.find(value => value.dispatchId === id); if (entry) selectEntry(entry); }} options={entries.map(entry => ({ value: entry.dispatchId, label: t('delivery.dispatchOption', { id: entry.dispatchId, latest: entry.dispatchId === defaultEntry?.dispatchId ? t('delivery.latest') : '' }) }))} />}
               <Text type="secondary">{t(followCurrent ? currentEntry ? 'workbench.following' : 'workbench.latestSession' : 'workbench.history')}</Text>
               {!followCurrent && <Button onClick={returnToCurrent}>{t('workbench.returnCurrent')}</Button>}
+              {selectedEntry && onExecutionAction && (
+                <ExecutionActionBar
+                  attempt={selectedEntry.attempt}
+                  pending={pendingExecutionAction}
+                  onAction={(action) => onExecutionAction(selectedEntry.attempt, action)}
+                />
+              )}
             </div>
-            {selectedEntry && renderRecovery?.(selectedEntry.dispatchId)}
+            {selectedEntry && <div className="delivery-workbench-meta">
+              {selectedEntry.attempt.executorName && <span>{t('delivery.runner', { name: selectedEntry.attempt.executorName })}</span>}
+              <span>{formatDuration(selectedEntry.attempt.durationMs)}</span>
+            </div>}
+            {selectedEntry?.attempt.stopPending && (
+              <Text style={{ display: 'block', color: 'var(--aw-warning)', fontSize: 12 }}>
+                {selectedIsTimeout
+                  ? t('delivery.timeoutStopUnconfirmed', { id: selectedEntry.dispatchId })
+                  : t('delivery.stopUnconfirmed', { id: selectedEntry.dispatchId })}
+              </Text>
+            )}
+            <div key={`execution-${selectedEntry?.dispatchId ?? 'none'}`}>{selectedEntry && renderRecovery?.(selectedEntry.dispatchId)}</div>
             <Tabs activeKey={tab} onChange={setTab} items={[
               { key: 'terminal', label: t('runtimeLog.terminal'), children: selectedEntry ? <RuntimeLogPanel key={selectedEntry.dispatchId} dispatchId={selectedEntry.dispatchId} terminal embedded enabled={expanded && tab === 'terminal'} /> : <Empty description={t('workbench.noSession')} /> },
               { key: 'activity', label: t('workbench.activity'), children: selectedEntry ? <LiveActivityPanel key={selectedEntry.dispatchId} dispatchId={selectedEntry.dispatchId} enabled={selectedLive && expanded && tab === 'activity'} /> : <Empty description={t('workbench.noSession')} /> },
-              { key: 'history', label: t('workbench.historyCount', { count: entries.length }), children: <>{restartHistory}{timeline([...entries].reverse())}</> },
+              ...(renderControlTimeline ? [{ key: 'controls', label: t('executionControl.timeline'), children: selectedEntry && renderControlTimeline(selectedEntry.dispatchId) }] : []),
               { key: 'details', label: t('workbench.details'), children: details },
               { key: 'timing', label: t('stepTiming.title'), children: selectedEntry ? <StepDurationChart key={selectedEntry.dispatchId} dispatchId={selectedEntry.dispatchId} steps={selectedEntry.attempt.stepTimings} /> : <Empty description={t('workbench.noSession')} /> },
               { key: 'artifacts', label: t('artifacts.agentCount', { count: selectedAgent ? artifactsForAgent(selectedAgent, artifacts, progress?.executions).length : artifacts.length }), children: <ArtifactGroup key={selectedAgent?.agentId ?? 'all'} executions={progress?.executions?.filter(attempt => !selectedAgent || attempt.agentId === selectedAgent.agentId)} steps={selectedAgent?.steps ?? []} artifacts={selectedAgent ? artifactsForAgent(selectedAgent, artifacts, progress?.executions) : artifacts} loading={artifactsLoading} onPreview={setPreviewArtifact} /> },
@@ -1054,8 +1008,12 @@ function DeliveryWorkbench({ agents, progress, artifacts, artifactsLoading, onCo
   </>;
 }
 
-export function DeliveryProgress({ showWorkflowPlan = true, steps = [], progress, artifacts = [], artifactsLoading, loading, terminalStatus, onContinue, continuingDispatchId, onPause, pausingDispatchId, renderRecovery, restartHistory }: DeliveryProgressProps) {
+export function DeliveryProgress({ showWorkflowPlan = true, steps = [], progress, artifacts = [], artifactsLoading, loading, terminalStatus, onContinue, onPause, onExecutionAction, pendingExecutionAction, renderRecovery, renderControlTimeline, restartHistory }: DeliveryProgressProps) {
   const { t } = useTranslation('workitem');
+  const handleExecutionAction = onExecutionAction ?? ((attempt: DispatchAttempt, action: ExecutionActionKind) => {
+    if (action === 'pause') onPause?.(attempt.dispatchId);
+    if (action === 'resume') onContinue?.(attempt.dispatchId);
+  });
 
   const agents = useMemo(() => {
     const terminal = normalizeTerminalStatus(terminalStatus);
@@ -1102,6 +1060,9 @@ export function DeliveryProgress({ showWorkflowPlan = true, steps = [], progress
   }
 
   const displaySteps = agents.length > 0 ? [] : convergeStepsForTerminalStatus(progress?.steps ?? steps, terminalStatus);
+  const stepActionAttempt = agents.length === 0
+    ? displaySteps.flatMap(step => step.attempts ?? []).find(attempt => attempt.canContinue || attempt.canPause) ?? null
+    : null;
   const cardTitle = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ flex: 1 }}>{t('delivery.title')}</span>
@@ -1119,9 +1080,10 @@ export function DeliveryProgress({ showWorkflowPlan = true, steps = [], progress
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
         {showWorkflowPlan && progress?.workflowPlan && <WorkflowPlanSummary plan={progress.workflowPlan} />}
+        {progress?.closed && <Alert showIcon type="warning" message={t('recovery.deliveryClosed')} description={t('recovery.closeHint')} />}
         <Card size="small" title={cardTitle} data-testid="delivery-progress-card" styles={{ body: { padding: '6px 8px' } }}>
-          <DeliveryWorkbench renderRecovery={renderRecovery} restartHistory={restartHistory} agents={agents} progress={progress} artifacts={artifacts} artifactsLoading={artifactsLoading}
-            onContinue={onContinue} continuingDispatchId={continuingDispatchId} onPause={onPause} pausingDispatchId={pausingDispatchId} />
+          <DeliveryWorkbench renderControlTimeline={renderControlTimeline} renderRecovery={renderRecovery} restartHistory={restartHistory} agents={agents} progress={progress} artifacts={artifacts} artifactsLoading={artifactsLoading}
+            onExecutionAction={handleExecutionAction} pendingExecutionAction={pendingExecutionAction} />
         </Card>
         <AuthoritativeExecutionProcessGraph processGraph={progress?.processGraph} />
       </Space>
@@ -1131,8 +1093,18 @@ export function DeliveryProgress({ showWorkflowPlan = true, steps = [], progress
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={8}>
       {showWorkflowPlan && progress?.workflowPlan && <WorkflowPlanSummary plan={progress.workflowPlan} />}
+      {progress?.closed && <Alert showIcon type="warning" message={t('recovery.deliveryClosed')} description={t('recovery.closeHint')} />}
       <Card size="small" title={cardTitle} data-testid="delivery-progress-card" styles={{ body: { padding: '6px 8px' } }}>
-        <StepList steps={displaySteps} onContinue={onContinue} continuingDispatchId={continuingDispatchId} onPause={onPause} pausingDispatchId={pausingDispatchId} />
+        {stepActionAttempt && (
+          <div style={{ marginBottom: 6 }}>
+            <ExecutionActionBar
+              attempt={stepActionAttempt}
+              pending={pendingExecutionAction}
+              onAction={(action) => handleExecutionAction(stepActionAttempt, action)}
+            />
+          </div>
+        )}
+        <StepList steps={displaySteps} renderControlTimeline={renderControlTimeline} />
       </Card>
     </Space>
   );

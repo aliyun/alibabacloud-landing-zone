@@ -156,6 +156,10 @@ describe('ScheduledTaskRunDetailPage', () => {
     renderPage();
     expect(await screen.findByTestId('delivery-current-execution')).toBeInTheDocument();
     expect(screen.getByTestId('current-agent-name')).toHaveTextContent('缺陷分析数字人');
+    expect(await screen.findByText('命令执行')).toBeInTheDocument();
+    expect(screen.queryByText('正在运行测试')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '近期动作' }));
+    expect(screen.queryByRole('tab', { name: '控制记录' })).not.toBeInTheDocument();
     expect(await screen.findByText('正在运行测试')).toBeInTheDocument();
   });
 
@@ -195,7 +199,7 @@ describe('ScheduledTaskRunDetailPage', () => {
       http.get('/api/dispatches/12238/guidance', () => HttpResponse.json({ success: true, code: '0', data: [] })),
     );
     renderPage();
-    fireEvent.click(await screen.findByRole('button', { name: '打开终端' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看执行' }));
     const workbench = await screen.findByTestId('delivery-workbench');
     fireEvent.click(within(workbench).getByRole('tab', { name: '执行详情' }));
     expect(within(workbench).getByTestId('delivery-step-10088')).toHaveTextContent(/已完成/);

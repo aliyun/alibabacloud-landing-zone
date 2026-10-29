@@ -113,6 +113,15 @@ public class PlatformConversationController {
         return Result.ok(PlatformEventProjection.events(turnEventService.listEventsByTurn(tenantId, conversationId, turnId)));
     }
 
+    @GetMapping("/{conversationId}/turns/{turnId}/events/page")
+    public Result<ConversationTurnEventService.EventPage> turnEventPage(
+            @PathVariable Long conversationId, @PathVariable Long turnId,
+            @RequestParam(defaultValue = "0") long afterId, @RequestParam(defaultValue = "500") int limit) {
+        long tenantId = currentWorkspaceId();
+        service.verifyReadable(tenantId, conversationId, currentUserId());
+        return Result.ok(turnEventService.listPlatformEventsByTurnPage(tenantId, conversationId, turnId, afterId, limit));
+    }
+
     @PostMapping("/{conversationId}/images")
     public Result<PlatformConversationImageService.Image> uploadImage(@PathVariable Long conversationId,
             @RequestParam("file") org.springframework.web.multipart.MultipartFile file) throws java.io.IOException {

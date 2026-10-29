@@ -9,9 +9,6 @@ import com.aliyun.autowonder.executor.ExecutorService;
 import com.aliyun.autowonder.executor.dto.CreateExecutorRequest;
 import com.aliyun.autowonder.mcp.PlatformSkillCatalog;
 import com.aliyun.autowonder.skill.SkillDao;
-import com.aliyun.autowonder.skill.SkillService;
-import com.aliyun.autowonder.skill.dto.CreateSkillRequest;
-import com.aliyun.autowonder.agent.dto.SkillRequest;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,8 +23,7 @@ public class ChiefOfStaffSetupService {
     private final AgentEnvironmentVariableRefDao environmentRefs;
     private final SkillDao skills;
     private final PlatformSkillCatalog catalog;
-    private final SkillService skillService;
-    private final AgentService agentService;
+    private final ChiefEffectiveConfigResolver chiefConfig;
     private final PlatformAgentSeeder seeder;
     private final ExecutorDao executors;
     private final ExecutorService executorService;
@@ -36,13 +32,13 @@ public class ChiefOfStaffSetupService {
     private final com.aliyun.autowonder.executor.ExecutorLaunchConfigService launchConfigs;
     private final com.aliyun.autowonder.executor.ExecutorLaunchOptionsService launchOptions;
     public ChiefOfStaffSetupService(AgentDao agents, AgentSkillDao bindings, SkillDao skills,
-            PlatformSkillCatalog catalog, SkillService skillService, AgentService agentService,
+            PlatformSkillCatalog catalog,
             PlatformAgentSeeder seeder, ExecutorDao executors, ExecutorService executorService,
             ConversationRuntimePresence presence, WorkspaceDao workspaces,
             com.aliyun.autowonder.executor.ExecutorLaunchConfigService launchConfigs,
             com.aliyun.autowonder.executor.ExecutorLaunchOptionsService launchOptions, AgentEnvironmentVariableRefDao environmentRefs) {
         this.environmentRefs=environmentRefs; this.agents=agents; this.bindings=bindings; this.skills=skills; this.catalog=catalog;
-        this.skillService=skillService; this.agentService=agentService; this.seeder=seeder;
+        this.chiefConfig=new ChiefEffectiveConfigResolver(catalog); this.seeder=seeder;
         this.executors=executors; this.executorService=executorService; this.presence=presence; this.workspaces=workspaces; this.launchConfigs=launchConfigs; this.launchOptions=launchOptions;
     }
     public record Status(Long agentId, Long executorId, boolean agentConfigured, boolean skillsConfigured,
@@ -55,11 +51,15 @@ public class ChiefOfStaffSetupService {
                     catalog.list().stream().map(s -> s.getId()).toList());
         var attached = bindings.listByVersion(agent.getOnlineVersionId());
         List<String> missing = new ArrayList<>();
-        for (var template : catalog.list()) {
-            var skill = skills.findByTypeAndName(workspaceId, "SKILL", template.getName());
-            if (skill == null || !sameSpec(template.getInstallSpec(),skill.getInstallSpec())
-                    || attached.stream().noneMatch(b -> b.getSkillId().equals(skill.getId()))) missing.add(template.getId());
+        var capabilities = com.aliyun.autowonder.dispatch.PackageContextAssembler.buildCapabilities(
+                bindings, skills, workspaceId, agent.getOnlineVersionId());
+        for (var binding : attached) {
+            if (capabilities.stream().noneMatch(c -> java.util.Objects.equals(c.get("id"), binding.getSkillId()))) {
+                missing.add("skill:" + binding.getSkillId());
+            }
         }
+        try { chiefConfig.resolve(capabilities); }
+        catch (IllegalArgumentException conflict) { missing.add("workspace-capabilities"); }
         var registered = executors.listByAgent(workspaceId, agent.getId());
         boolean requiresEnvironment = !environmentRefs.listByVersion(workspaceId,agent.getOnlineVersionId()).isEmpty();
         var online = registered.stream().filter(e -> completeLaunch(e)
@@ -85,10 +85,6 @@ public class ChiefOfStaffSetupService {
                     && config.getContextWindow()!=null && !config.getContextWindow().isBlank());
         } catch (BizException invalid) { return false; }
     }
-    private boolean sameSpec(String expected,String actual) {
-        try { return com.aliyun.autowonder.json.JSON.parse(expected).equals(com.aliyun.autowonder.json.JSON.parse(actual)); }
-        catch (RuntimeException invalid) { return false; }
-    }
     @Transactional
     public Status complete(long workspaceId, long userId, CreateExecutorRequest executor) {
         if (workspaces.findByIdForUpdate(workspaceId) == null) throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
@@ -96,38 +92,6 @@ public class ChiefOfStaffSetupService {
         var agent = agents.findPlatformAgent(workspaceId);
         Status before = inspect(workspaceId);
         if (!before.agentConfigured()) throw new BizException(ErrorCode.PLATFORM_CONVERSATION_NOT_READY);
-        if (!before.missingSkills().isEmpty()) {
-            java.util.Set<Long> builtinIds = new java.util.HashSet<>();
-            for (var template : catalog.list()) {
-                var installed = skills.findByTypeAndName(workspaceId, "SKILL", template.getName());
-                if (installed != null && sameSpec(template.getInstallSpec(), installed.getInstallSpec())) builtinIds.add(installed.getId());
-            }
-            String draftStatus = agentService.validateChiefSetupDraft(agent.getId(), workspaceId, builtinIds);
-            if ("PENDING_REVIEW".equals(draftStatus)) {
-                // Frozen versions cannot be edited. Approve the validated clone, then supplement a new draft.
-                agentService.approve(agent.getId(), workspaceId, userId, "Chief of Staff deterministic setup recovery");
-                before = inspect(workspaceId);
-            }
-            for (String id : before.missingSkills()) {
-                var template = catalog.get(id);
-                var existing = skills.findByTypeAndName(workspaceId, "SKILL", template.getName());
-                if (existing != null && !sameSpec(template.getInstallSpec(),existing.getInstallSpec()))
-                    throw BizException.keyed(ErrorCode.CONFLICT, "chief.setup.skill_conflict", new Object[]{template.getName()},
-                            "An existing skill differs from the built-in template: " + template.getName());
-                Long skillId;
-                if (existing == null) {
-                    var request = new CreateSkillRequest(); request.setType("SKILL"); request.setName(template.getName());
-                    request.setDescription(template.getDescription()); request.setInstallSpec(template.getInstallSpec());
-                    skillId = skillService.create(request, workspaceId, userId).getId();
-                } else skillId = existing.getId();
-                var binding = new SkillRequest(); binding.setSkillId(skillId);
-                agentService.addSkill(agent.getId(), binding, workspaceId, userId);
-            }
-            if (!before.missingSkills().isEmpty()) {
-                agentService.submit(agent.getId(), workspaceId, userId);
-                agentService.approve(agent.getId(), workspaceId, userId, "Chief of Staff deterministic setup");
-            }
-        }
         if (!before.executorConfigured()) {
             executor.setName(PlatformAgentSeeder.PLATFORM_AGENT_NAME);
             executorService.create(agent.getId(), executor, workspaceId, userId);

@@ -13,6 +13,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,6 +29,7 @@ public class AuditLogService {
     private static final int MAX_DETAIL_JSON_CHARS = 4000;
     // audit_log.module / action / target_type are VARCHAR(64); longer values lose the whole row.
     private static final int MAX_COLUMN_CHARS = 64;
+    private static final ZoneId AUDIT_WALL_CLOCK_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final AuditLogDao auditLogDao;
     private final UserDao userDao;
@@ -61,10 +66,13 @@ public class AuditLogService {
         int p = Math.max(page, 1);
         int sz = Math.min(Math.max(size, 1), 100);
         int offset = (p - 1) * sz;
+        LocalDateTime startTime = toShanghaiWallClock(query.getStartTime());
+        LocalDateTime endTime = toShanghaiWallClock(query.getEndTime());
         List<AuditLogVO> result = new ArrayList<>();
         for (AuditLogDO log : auditLogDao.search(tenantId, query.getModule(), query.getAction(),
-                query.getActorType(), query.getActorId(), query.getTargetType(), query.getTargetId(),
-                query.getStartTime(), query.getEndTime(), query.getKeyword(), offset, sz)) {
+                query.getRiskLevel(), query.getActorType(), query.getActorId(),
+                query.getTargetType(), query.getTargetId(),
+                startTime, endTime, query.getKeyword(), offset, sz)) {
             result.add(toVO(log));
         }
         return result;
@@ -72,8 +80,27 @@ public class AuditLogService {
 
     public int count(AuditLogQuery query, long tenantId) {
         return auditLogDao.countSearch(tenantId, query.getModule(), query.getAction(),
-                query.getActorType(), query.getActorId(), query.getTargetType(), query.getTargetId(),
-                query.getStartTime(), query.getEndTime(), query.getKeyword());
+                query.getRiskLevel(), query.getActorType(), query.getActorId(),
+                query.getTargetType(), query.getTargetId(),
+                toShanghaiWallClock(query.getStartTime()), toShanghaiWallClock(query.getEndTime()),
+                query.getKeyword());
+    }
+
+    // 入参是 ISO instant，而 gmt_create 存上海墙钟 DATETIME；直接比较会让 MySQL 丢弃 Z/偏移并整体偏移。
+    static LocalDateTime toShanghaiWallClock(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return OffsetDateTime.parse(value).atZoneSameInstant(AUDIT_WALL_CLOCK_ZONE).toLocalDateTime();
+        } catch (DateTimeParseException offsetFailure) {
+            try {
+                return LocalDateTime.parse(value);
+            } catch (DateTimeParseException invalid) {
+                log.warn("audit log time filter ignored, unparseable value={}", value);
+                return null;
+            }
+        }
     }
 
     private AuditLogDO toLogDO(AuditLogRecord record) {
@@ -148,6 +175,7 @@ public class AuditLogService {
         vo.setActorName(resolveActorName(actorType, log.getActorId()));
         vo.setModule(log.getModule());
         vo.setAction(log.getAction());
+        vo.setRiskLevel(log.getRiskLevel());
         vo.setTargetType(log.getTargetType());
         vo.setTargetId(log.getTargetId());
         vo.setDetailJson(log.getDetailJson());

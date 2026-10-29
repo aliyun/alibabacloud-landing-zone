@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next';
 import { PageHeading } from '@/shared/ui/PageHeading';
-import { useMemo } from 'react';
-import { Empty, Result, Segmented, Select, Spin } from 'antd';
+import { useEffect, useMemo } from 'react';
+import { Navigate } from 'react-router-dom';
+import { Result, Segmented, Select, Spin } from 'antd';
 import { useInsightAudit, useInsightMetrics, useInsightWorkers } from './hooks';
 import { buildInsightModel } from './insightModel';
 import { MetricCards } from './components/MetricCards';
@@ -9,22 +10,28 @@ import { SummaryCards } from './components/SummaryCards';
 import { KeyInsights } from './components/KeyInsights';
 import { SdlcLinkIssues } from './components/SdlcLinkIssues';
 import { Recommendations } from './components/Recommendations';
-import { AuditTable } from './components/AuditTable';
 import { MemberDeliveryTab } from './components/MemberDeliveryTab';
 import { ParticipationTab } from './components/ParticipationTab';
-import { RequirementDeliveryTab } from './components/RequirementDeliveryTab';
+import { StageDurationTab } from './components/StageDurationTab';
 import RealtimeDashboard from './realtime/RealtimeDashboard';
 import type { TimeRange } from './types';
 import './InsightsPage.css';
 import { useInsightPreference } from './useInsightPreference';
+import { buildAuditLogRedirect } from '@/features/audit/redirect';
 
 // 标签页 id 是技术值，提到模块作用域声明，避免 check:i18n 把它当作 JSX 里的硬编码 UI 文案。
-const DELIVERY_TAB_ID = 'delivery';
+const LEGACY_DELIVERY_TAB_ID = 'delivery';
+const STAGES_TAB_ID = 'stages';
 
 export function InsightsPage() {
   const { t } = useTranslation('insights');
-  const [tab, setTab] = useInsightPreference<'realtime' | 'metrics' | 'audit' | 'participation' | 'members' | 'delivery'>('tab', 'realtime', v => typeof v === 'string' && ['realtime', 'audit', 'participation', 'members', DELIVERY_TAB_ID].includes(v));
-  const [riskFilter, setRiskFilter] = useInsightPreference('audit.risk', '', v => typeof v === 'string' && ['', 'high', 'medium', 'low'].includes(v));
+  const [tab, setTab] = useInsightPreference<'realtime' | 'metrics' | 'audit' | 'participation' | 'members' | 'delivery' | 'stages'>('tab', 'realtime', v => typeof v === 'string' && ['realtime', 'audit', 'participation', 'members', LEGACY_DELIVERY_TAB_ID, STAGES_TAB_ID].includes(v));
+  // 需求交付 tab 已下线：旧偏好按工单交付渲染，并把偏好一次性纠正为 members。
+  const effectiveTab = tab === LEGACY_DELIVERY_TAB_ID ? 'members' : tab;
+  useEffect(() => {
+    if (tab === LEGACY_DELIVERY_TAB_ID) setTab('members');
+  }, [tab, setTab]);
+  const [riskFilter] = useInsightPreference('audit.risk', '', v => typeof v === 'string' && ['', 'high', 'medium', 'low'].includes(v));
   const [workerId, setWorkerId] = useInsightPreference<number | undefined>('audit.worker', undefined, v => typeof v === 'number' && Number.isSafeInteger(v) && v > 0);
   const [timeRange, setTimeRange] = useInsightPreference<TimeRange>('audit.range', '30d', v => typeof v === 'string' && ['7d', '30d', '90d'].includes(v));
 
@@ -66,53 +73,43 @@ export function InsightsPage() {
     </div>
   );
 
+  const tabOptions = [
+    { label: t('analytics.realtime'), value: 'realtime' },
+    { label: t('analytics.participation'), value: 'participation' },
+    { label: t('analytics.members'), value: 'members' },
+    { label: t('stages.title'), value: STAGES_TAB_ID },
+  ];
+
+  // 执行审计 tab 已下线，带 audit 偏好的旧入口按等价筛选重定向到审计日志页。
+  if (tab === 'audit') {
+    return <Navigate replace to={buildAuditLogRedirect({ workerId, timeRange, riskLevel: riskFilter })} />;
+  }
+
   return (
     <div className="insights-page">
       <PageHeading title={t('analytics.title')} description={t('analytics.description')}
         extra={<Segmented
-          value={tab}
-          onChange={(v) => { setTab(v as 'realtime' | 'metrics' | 'audit' | 'participation' | 'members' | 'delivery'); }}
-          options={[
-            { label: t('analytics.realtime'), value: 'realtime' },
-            { label: t('analytics.audit'), value: 'audit' },
-            { label: t('analytics.participation'), value: 'participation' },
-            { label: t('analytics.members'), value: 'members' },
-            { label: t('analytics.delivery'), value: DELIVERY_TAB_ID },
-          ]}
+          value={effectiveTab}
+          onChange={(v) => { setTab(v as typeof tab); }}
+          options={tabOptions}
         />} />
 
-      {(tab === 'metrics' || tab === 'audit') && (
+      {effectiveTab === 'metrics' && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
           {auditFilters}
-          {tab === 'audit' && <Segmented
-            aria-label={t('analytics.risk')}
-            options={[
-              { label: t('analytics.all'), value: '' }, { label: t('analytics.high'), value: 'high' },
-              { label: t('analytics.medium'), value: 'medium' }, { label: t('analytics.low'), value: 'low' },
-            ]}
-            value={riskFilter}
-            onChange={(value) => setRiskFilter(value as string)}
-          />}
-        </div>
-      )}
-
-      {tab !== 'realtime' && tab !== 'participation' && tab !== 'members' && tab !== DELIVERY_TAB_ID && workersQuery.isError && (
-        <div style={{ marginBottom: 16 }}>
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('analytics.workersFailure')} />
         </div>
       )}
 
       {/* Realtime Tab */}
-      {tab === 'realtime' && <RealtimeDashboard />}
+      {effectiveTab === 'realtime' && <RealtimeDashboard />}
 
       {/* Participation Tab */}
-      {tab === 'participation' && <ParticipationTab />}
-      {tab === 'members' && <MemberDeliveryTab />}
-      {tab === DELIVERY_TAB_ID && <RequirementDeliveryTab />}
+      {effectiveTab === 'participation' && <ParticipationTab />}
+      {effectiveTab === 'members' && <MemberDeliveryTab />}
+      {effectiveTab === STAGES_TAB_ID && <StageDurationTab />}
 
-      {/* Metrics / Audit Tabs */}
-      {tab === 'audit' && <AuditTable workerId={workerId} workerName={selectedWorkerName} timeRange={timeRange} riskFilter={riskFilter} />}
-      {tab === 'metrics' &&
+      {/* Metrics Tab */}
+      {effectiveTab === 'metrics' &&
         (metricsLoading ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
             <Spin aria-label={t('analytics.loading')} />

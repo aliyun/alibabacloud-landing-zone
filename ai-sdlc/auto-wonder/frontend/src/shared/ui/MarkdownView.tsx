@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import { isValidElement, memo, useMemo } from 'react';
 import type { ComponentProps } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
@@ -9,6 +9,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Artifact } from '@/shared/types/workitem';
 import { findArtifactForPath, splitArtifactPathSegments } from '@/shared/lib/artifactLinking';
+import { MermaidDiagram } from './MermaidDiagram';
 
 interface MarkdownViewProps {
   content: string;
@@ -22,7 +23,7 @@ export const markdownAllowedElements = [
   'article', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'ul', 'ol', 'li', 'a', 'strong', 'em', 'code', 'pre',
   'blockquote', 'hr', 'br', 'table', 'thead', 'tbody',
-  'tr', 'th', 'td', 'del', 'span', 'input',
+  'tr', 'th', 'td', 'del', 'span', 'input', 'img',
 ];
 
 export const markdownSanitizeSchema = {
@@ -92,12 +93,42 @@ function childrenText(children: unknown): string {
   return String(children ?? '');
 }
 
+// mermaid 围栏在 @mention 高亮与产物路径替换前用占位符保护，保证图形源码原样交给解析器。
+const mermaidFencePattern = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)\r?\n {0,3}\1[ \t]*(?=\r?\n|$)/gm;
+// Use one explicit NUL delimiter for generated tokens and their matcher.
+const mermaidTokenDelimiter = String.fromCharCode(0);
+const mermaidBlockToken = new RegExp(`${mermaidTokenDelimiter}AWMERMAID(\\d+)${mermaidTokenDelimiter}`, 'g');
+
+function protectMermaidBlocks(content: string): { content: string; blocks: string[] } {
+  const blocks: string[] = [];
+  const protectedContent = content.replace(mermaidFencePattern, (block) => {
+    const token = `${mermaidTokenDelimiter}AWMERMAID${blocks.length}${mermaidTokenDelimiter}`;
+    blocks.push(block);
+    return token;
+  });
+  return { content: protectedContent, blocks };
+}
+
+function restoreMermaidBlocks(content: string, blocks: string[]): string {
+  if (blocks.length === 0) return content;
+  return content.replace(mermaidBlockToken, (token, index: string) => blocks[Number(index)] ?? token);
+}
+
+function mermaidSource(children: unknown): string | null {
+  if (!isValidElement(children)) return null;
+  const props = children.props as { className?: unknown; children?: unknown };
+  const className = typeof props.className === 'string' ? props.className : '';
+  if (!className.split(/\s+/).includes('language-mermaid')) return null;
+  return childrenText(props.children).replace(/\r?\n$/, '');
+}
+
 export const MarkdownView = memo(function MarkdownView({ content, className, mentionNames, artifacts, onArtifactClick }: MarkdownViewProps) {
   const { t } = useTranslation('shared');
-  const renderedContent = useMemo(
-    () => highlightMentions(linkArtifacts(content ?? '', artifacts), mentionNames),
-    [content, artifacts, mentionNames],
-  );
+  const renderedContent = useMemo(() => {
+    const protectedContent = protectMermaidBlocks(content ?? '');
+    const processed = highlightMentions(linkArtifacts(protectedContent.content, artifacts), mentionNames);
+    return restoreMermaidBlocks(processed, protectedContent.blocks);
+  }, [content, artifacts, mentionNames]);
   const artifactsById = useMemo(
     () => new Map((artifacts ?? []).map((artifact) => [String(artifact.id), artifact])),
     [artifacts],
@@ -147,9 +178,15 @@ export const MarkdownView = memo(function MarkdownView({ content, className, men
           input: ({ node: _node, checked }) => <input type="checkbox" checked={checked} disabled aria-label={checked ? t('markdown.completed') : t('markdown.todo')} />,
           // pre 的 UA 默认 white-space:pre 会关闭折行，外层 div 的 overflowWrap/wordBreak
           // 因此对代码块整体失效，超长行会溢出正文右边界。这里只把溢出收敛成块内横向滚动。
-          pre: ({ node: _node, ...props }) => (
-            <pre {...props} style={{ maxWidth: '100%', overflowX: 'auto' }} />
-          ),
+          pre: ({ node: _node, children, ...props }) => {
+            const diagram = mermaidSource(children);
+            if (diagram != null) {
+              return <MermaidDiagram code={diagram} />;
+            }
+            return (
+              <pre {...props} style={{ maxWidth: '100%', overflowX: 'auto' }}>{children}</pre>
+            );
+          },
           code: ({ node: _node, className, children, ...props }) => {
             const label = childrenText(children);
             const artifact = label.includes('\n') ? null : findArtifactForPath(label.trim(), artifacts ?? []);

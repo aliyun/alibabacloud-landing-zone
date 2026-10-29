@@ -335,6 +335,7 @@
     "deleteError": "Could not delete the agent. Please try again later.",
     "bindingLabel": "{{name}} ({{label}})",
     "close": "Close",
-    "createAction": "Create an agent"
+    "createAction": "Create an agent",
+    "officialCapabilities": "Platform capabilities (read-only)"
   }
 }

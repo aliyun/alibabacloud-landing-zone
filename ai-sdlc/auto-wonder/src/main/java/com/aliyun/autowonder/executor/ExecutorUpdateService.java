@@ -152,6 +152,11 @@ public class ExecutorUpdateService {
         return presence.supportsProtocolFeature(executorId, PROTOCOL_FEATURE);
     }
 
+    /** Same check as {@link #supportsUpgrade(long)} for callers that already batched the features. */
+    public boolean supportsUpgrade(java.util.Set<String> protocolFeatures) {
+        return protocolFeatures != null && protocolFeatures.contains(PROTOCOL_FEATURE);
+    }
+
     /** Read-only panel state: the switch is configured in {@code application.yml}, not toggled here. */
     public RuntimeAutoUpdateVO runtimeAutoUpdateView() {
         return new RuntimeAutoUpdateVO(executorAutoUpdateEnabled, targetVersion());

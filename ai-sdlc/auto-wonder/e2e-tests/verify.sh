@@ -453,7 +453,9 @@ run_check() {
   local app_start=0 file_start=0
   load_current
   aw_e2e_init_runtime
-  if [[ "$with_runtime" == 1 ]] && ! python3 "$AW_PROJECT_ROOT/e2e-tests/runtime_dispatch.py" --preflight; then
+  if [[ "$with_runtime" == 1 ]] && ! python3 "$AW_PROJECT_ROOT/e2e-tests/runtime_dispatch.py" --preflight \
+    --project-root "$AW_PROJECT_ROOT" --state-dir "$AW_RUN_DIR" \
+    --base-url "http://127.0.0.1:$RESOLVED_APP_PORT"; then
     print_failure CHECK_RUNTIME RUNTIME_PREFLIGHT_FAILED "Real runtime prerequisites are not satisfied"
     return 1
   fi
@@ -480,7 +482,7 @@ run_check() {
     return 1
   fi
   if [[ "$with_runtime" == 1 ]] && ! python3 "$AW_PROJECT_ROOT/e2e-tests/runtime_dispatch.py" \
-    --run --state-dir "$AW_RUN_DIR" --base-url "http://127.0.0.1:$RESOLVED_APP_PORT" \
+    --run --project-root "$AW_PROJECT_ROOT" --state-dir "$AW_RUN_DIR" --base-url "http://127.0.0.1:$RESOLVED_APP_PORT" \
     --storage-origin "http://127.0.0.1:$RESOLVED_MINIO_PORT"; then
     print_failure CHECK_RUNTIME RUNTIME_CHECK_FAILED "Real executor dispatch check failed"
     return 1

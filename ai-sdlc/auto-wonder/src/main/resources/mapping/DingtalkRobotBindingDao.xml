@@ -6,6 +6,9 @@
     <resultMap id="BaseResultMap" type="com.aliyun.autowonder.integration.dingtalk.DingtalkRobotBindingDO">
         <id column="id" property="id"/>
         <result column="tenant_id" property="tenantId"/>
+        <result column="binding_mode" property="bindingMode"/>
+        <result column="platform_config_id" property="platformConfigId"/>
+        <result column="group_id" property="groupId"/>
         <result column="app_key" property="appKey"/>
         <result column="credential_ref" property="credentialRef"/>
         <result column="robot_code" property="robotCode"/>
@@ -15,6 +18,7 @@
         <result column="base_url" property="baseUrl"/>
         <result column="region_id" property="regionId"/>
         <result column="stream_env" property="streamEnv"/>
+        <result column="route_version" property="routeVersion"/>
         <result column="last_success_at" property="lastSuccessAt"/>
         <result column="last_error" property="lastError"/>
         <result column="status" property="status"/>
@@ -27,19 +31,22 @@
     </resultMap>
 
     <sql id="Base_Column_List">
-        id, tenant_id, app_key, credential_ref, robot_code, agent_id, transport_mode,
-        callback_token, base_url, region_id, stream_env, last_success_at, last_error, status,
-        gmt_create, gmt_modified, creator_id, modifier_id, is_deleted, version
+        id, tenant_id, binding_mode, platform_config_id, group_id, app_key, credential_ref,
+        robot_code, agent_id, transport_mode, callback_token, base_url, region_id, stream_env,
+        route_version, last_success_at,
+        last_error, status, gmt_create, gmt_modified, creator_id, modifier_id, is_deleted, version
     </sql>
 
     <insert id="insert" parameterType="com.aliyun.autowonder.integration.dingtalk.DingtalkRobotBindingDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO dingtalk_robot_binding
-        (tenant_id, app_key, credential_ref, robot_code, agent_id, transport_mode,
-         callback_token, base_url, region_id, stream_env, status, creator_id, modifier_id, is_deleted, version)
+        (tenant_id, binding_mode, platform_config_id, group_id, app_key, credential_ref, robot_code,
+         agent_id, transport_mode, callback_token, base_url, region_id, stream_env, route_version,
+         status, creator_id, modifier_id, is_deleted, version)
         VALUES
-        (#{tenantId}, #{appKey}, #{credentialRef}, #{robotCode}, #{agentId}, #{transportMode},
-         #{callbackToken}, #{baseUrl}, #{regionId}, #{streamEnv}, #{status}, #{creatorId}, #{modifierId}, 0, 0)
+        (#{tenantId}, #{bindingMode}, #{platformConfigId}, #{groupId}, #{appKey}, #{credentialRef},
+         #{robotCode}, #{agentId}, #{transportMode}, #{callbackToken}, #{baseUrl}, #{regionId},
+         #{streamEnv}, #{routeVersion}, #{status}, #{creatorId}, #{modifierId}, 0, 0)
     </insert>
 
     <select id="findById" resultMap="BaseResultMap">
@@ -48,16 +55,45 @@
         WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
     </select>
 
+    <select id="findByIdForUpdate" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+        FOR UPDATE
+    </select>
+
+    <select id="findByIdGlobal" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
     <select id="findByRobotCode" resultMap="BaseResultMap">
         SELECT <include refid="Base_Column_List"/>
         FROM dingtalk_robot_binding
-        WHERE tenant_id = #{tenantId} AND robot_code = #{robotCode} AND is_deleted = 0
+        WHERE tenant_id = #{tenantId} AND robot_code = #{robotCode}
+          AND binding_mode = 'LEGACY' AND is_deleted = 0
     </select>
 
     <select id="findByRobotCodeGlobal" resultMap="BaseResultMap">
         SELECT <include refid="Base_Column_List"/>
         FROM dingtalk_robot_binding
-        WHERE robot_code = #{robotCode} AND is_deleted = 0
+        WHERE robot_code = #{robotCode} AND binding_mode = 'LEGACY' AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findLegacyByAppKeyGlobal" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE app_key = #{appKey} AND binding_mode = 'LEGACY' AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findSharedByConfigAndGroup" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE platform_config_id = #{platformConfigId} AND group_id = #{groupId}
+          AND binding_mode = 'SHARED' AND is_deleted = 0
         LIMIT 1
     </select>
 
@@ -71,7 +107,8 @@
     <select id="listEnabledByTransportMode" resultMap="BaseResultMap">
         SELECT <include refid="Base_Column_List"/>
         FROM dingtalk_robot_binding
-        WHERE transport_mode = #{transportMode} AND status = 'ENABLED' AND is_deleted = 0
+        WHERE transport_mode = #{transportMode} AND status = 'ENABLED'
+          AND binding_mode = 'LEGACY' AND is_deleted = 0
         ORDER BY id DESC
     </select>
 
@@ -80,8 +117,17 @@
         SET app_key = #{appKey}, credential_ref = #{credentialRef}, robot_code = #{robotCode},
             agent_id = #{agentId}, transport_mode = #{transportMode}, callback_token = #{callbackToken},
             base_url = #{baseUrl}, region_id = #{regionId}, stream_env = #{streamEnv}, status = #{status},
-            modifier_id = #{modifierId}, version = version + 1
-        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+            route_version = #{routeVersion}, modifier_id = #{modifierId}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+          AND binding_mode = 'LEGACY' AND is_deleted = 0
+    </update>
+
+    <update id="updateShared" parameterType="com.aliyun.autowonder.integration.dingtalk.DingtalkRobotBindingDO">
+        UPDATE dingtalk_robot_binding
+        SET group_id = #{groupId}, agent_id = #{agentId}, status = #{status},
+            route_version = #{routeVersion}, modifier_id = #{modifierId}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+          AND binding_mode = 'SHARED' AND is_deleted = 0 AND version = #{version}
     </update>
 
     <update id="updateHealth">

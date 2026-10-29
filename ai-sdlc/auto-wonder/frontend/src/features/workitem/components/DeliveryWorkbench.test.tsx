@@ -14,7 +14,7 @@ const agent = (id: number, name: string, dispatches: number[], status: AgentDeli
 });
 const initial = (): Progress => ({ steps: [], agents: [agent(1, 'PM', [10], 'finished'), agent(2, 'RD', [20, 40], 'active'), agent(3, 'QA', [30], 'finished')] });
 const handedOff = (): Progress => ({ steps: [], agents: [agent(1, 'PM', [10], 'finished'), agent(2, 'RD', [20, 40], 'finished'), agent(3, 'QA', [30, 50], 'active')] });
-const open = () => fireEvent.click(screen.getByRole('button', { name: '打开终端' }));
+const open = () => fireEvent.click(screen.getByRole('button', { name: '查看执行' }));
 afterEach(async () => { await act(async () => { await i18n.changeLanguage('zh-CN'); }); });
 
 describe('Delivery workbench', () => {
@@ -27,7 +27,7 @@ describe('Delivery workbench', () => {
     fireEvent.click(within(workbench).getByText('Dispatch 20 · 1秒'));
     expect(within(workbench).getByTestId('selected-terminal')).toHaveTextContent('20');
     expect(within(workbench).getByTestId('selected-recovery')).toHaveTextContent('20');
-    fireEvent.click(within(workbench).getByRole('tab', { name: '全部执行记录（4）' }));
+    fireEvent.click(within(workbench).getByRole('button', { name: '全部执行记录（4）' }));
     expect(await within(workbench).findByText('Restart records')).toBeVisible();
   });
   it('shows step timings only inside the workbench and keeps historical execution timings separate', async () => {
@@ -56,21 +56,22 @@ describe('Delivery workbench', () => {
     render(<DeliveryProgress progress={initial()} />);
     expect(screen.getByTestId('current-agent-name')).toHaveTextContent('RD');
     const entries = [...document.querySelectorAll('.delivery-workbench-entry-meta')].map(element => element.textContent);
-    expect(entries).toEqual(['Dispatch 40 · 1秒', 'Dispatch 30 · 1秒', 'Dispatch 20 · 1秒']);
+    expect(entries).toEqual(['Dispatch 30 · 1秒', 'Dispatch 20 · 1秒']);
+    expect(within(screen.getByTestId('delivery-current-execution')).getByText('Dispatch 40 · 1秒')).toBeInTheDocument();
   });
   it('bounds a long compact trail while keeping every historical session selectable', async () => {
     render(<DeliveryProgress progress={{ steps: [], agents: [agent(1, 'RD', Array.from({ length: 20 }, (_, index) => index + 1), 'active')] }} />);
     const card = within(screen.getByTestId('delivery-progress-card'));
-    expect(card.getAllByTestId('agent-progress-name')).toHaveLength(3);
+    expect(card.getAllByTestId('agent-progress-name')).toHaveLength(2);
     expect(card.getByText('Dispatch 20 · 1秒')).toBeInTheDocument();
     expect(card.queryByText('Dispatch 1 · 1秒')).not.toBeInTheDocument();
     fireEvent.click(card.getByRole('button', { name: '全部执行记录（20）' }));
-    const history = await screen.findByRole('tabpanel', { name: '全部执行记录（20）' });
+    const history = (await screen.findByTestId('delivery-workbench')).querySelector('.delivery-workbench-rail') as HTMLElement;
     expect(within(history).getAllByTestId('agent-progress-name')).toHaveLength(20);
     fireEvent.click(within(history).getByText('Dispatch 1 · 1秒'));
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('1');
     await act(async () => { await i18n.changeLanguage('en-US'); });
-    expect(screen.getByRole('tab', { name: 'Execution history (20)' })).toBeInTheDocument();
+    expect(within(screen.getByTestId('delivery-workbench')).getByRole('button', { name: 'Execution history (20)' })).toBeInTheDocument();
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('1');
   });
   it('includes a comment dispatch missing from step attempts, with status tags and lifetime timestamps', async () => {
@@ -82,7 +83,7 @@ describe('Delivery workbench', () => {
     render(<DeliveryProgress progress={progress} />);
     const card = screen.getByTestId('delivery-progress-card');
     expect(within(card).getByText('Dispatch 11280 · 1分')).toBeInTheDocument();
-    const latest = card.querySelector('.delivery-workbench-entry')!;
+    const latest = within(card).getByTestId('delivery-current-execution');
     expect(latest.querySelector('.ant-tag')).toHaveTextContent('失败');
     open();
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('11280');
@@ -100,6 +101,7 @@ describe('Delivery workbench', () => {
     expect(screen.getByTestId('current-agent-name')).toHaveTextContent('Comment agent');
     open();
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('11281');
+    fireEvent.click(screen.getByRole('tab', { name: '执行详情' }));
     expect(screen.getAllByText('结束时间：尚未结束').length).toBeGreaterThan(0);
     expect(screen.getAllByText('派发时间：未记录').length).toBeGreaterThan(0);
   });
@@ -113,17 +115,18 @@ describe('Delivery workbench', () => {
     open();
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('11593');
     await act(async () => { await i18n.changeLanguage('en-US'); });
-    expect(screen.getByTestId('current-agent-name')).toHaveTextContent('PD');
+    expect(screen.getByTestId('selected-agent-name')).toHaveTextContent('PD');
     expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
     rerender(<DeliveryProgress progress={progress} terminalStatus="SUCCEEDED" />);
-    expect(screen.getByTestId('current-agent-name')).toHaveTextContent('No agent is currently executing');
+    expect(screen.getByTestId('selected-agent-name')).toHaveTextContent('PD');
+    await waitFor(() => expect(screen.getByText('Latest execution session')).toBeVisible());
   });
   it('opens the current terminal directly and follows a handoff', async () => {
     const { rerender } = render(<DeliveryProgress progress={initial()} />);
     open();
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('40');
     rerender(<DeliveryProgress progress={handedOff()} />);
-    expect(screen.getByTestId('current-agent-name')).toHaveTextContent('QA');
+    expect(screen.getByTestId('selected-agent-name')).toHaveTextContent('QA');
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('50');
     await waitFor(() => expect(screen.getByText('已交接给 QA，终端已跟随切换。')).toBeVisible());
   });
@@ -131,11 +134,11 @@ describe('Delivery workbench', () => {
     const { rerender } = render(<DeliveryProgress progress={initial()} />);
     open();
     const workbench = within(screen.getByTestId('delivery-workbench'));
-    fireEvent.click(workbench.getByRole('tab', { name: '全部执行记录（4）' }));
+    fireEvent.click(workbench.getByRole('button', { name: '全部执行记录（4）' }));
     fireEvent.click(workbench.getByText('PM', { selector: '[data-testid="agent-progress-name"]' }));
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('10');
     rerender(<DeliveryProgress progress={handedOff()} />);
-    expect(screen.getByTestId('current-agent-name')).toHaveTextContent('QA');
+    expect(screen.getByTestId('selected-agent-name')).toHaveTextContent('PM');
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('10');
     await waitFor(() => expect(screen.getByText('已交接给 QA，当前保留所查看的历史会话。')).toBeVisible());
     fireEvent.click(screen.getByRole('button', { name: '回到当前执行' }));
@@ -144,7 +147,7 @@ describe('Delivery workbench', () => {
   it('retains the selected session and sidebar setting after exit and locale changes', async () => {
     render(<DeliveryProgress progress={initial()} />);
     open();
-    fireEvent.click(screen.getByRole('tab', { name: '全部执行记录（4）' }));
+    fireEvent.click(within(screen.getByTestId('delivery-workbench')).getByRole('button', { name: '全部执行记录（4）' }));
     fireEvent.click(within(screen.getByTestId('delivery-workbench')).getByText('PM', { selector: '[data-testid="agent-progress-name"]' }));
     fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }));
     fireEvent.click(screen.getByRole('button', { name: '退出放大' }));
@@ -153,7 +156,7 @@ describe('Delivery workbench', () => {
     await act(async () => { await i18n.changeLanguage('en-US'); });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Show sidebar' })).toBeVisible());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Return to current execution' })).toBeVisible());
-    expect(screen.getByTestId('current-agent-name')).toHaveTextContent('RD');
+    expect(screen.getByTestId('selected-agent-name')).toHaveTextContent('PM');
   });
   it('keeps stages compact and opens the selected stage in the shared details panel', async () => {
     render(<DeliveryProgress progress={initial()} />);
@@ -163,20 +166,31 @@ describe('Delivery workbench', () => {
     expect(screen.getByRole('tab', { name: '执行详情' })).toHaveAttribute('aria-selected', 'true');
     await waitFor(() => expect(screen.getByTestId('delivery-step-2')).toBeVisible());
   });
-  it('targets the current pause action instead of an older failed retry', () => {
+  it('shows ending instead of pausing once a cancel intent exists', () => {
+    const progress = initial();
+    const rd = progress.agents![1];
+    rd.steps[0].attempts![1].status = 'PAUSING';
+    rd.steps[0].attempts![1].cancelRequested = true;
+    render(<DeliveryProgress progress={progress} />);
+    expect(screen.getAllByText(/正在结束/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/暂停中/)).not.toBeInTheDocument();
+  });
+
+  it('shows the pausing state without offering a duplicate pause action', () => {
     const progress = initial();
     const rd = progress.agents![1];
     rd.steps[0].attempts![0] = { ...rd.steps[0].attempts![0], canPause: false, canContinue: true, status: 'FAILED' };
     rd.steps[0].attempts![1].status = 'PAUSING';
-    const onPause = vi.fn();
-    render(<DeliveryProgress progress={progress} onPause={onPause} onContinue={vi.fn()} />);
+    render(<DeliveryProgress progress={progress} />);
     expect(screen.queryByRole('button', { name: '继续执行' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '暂停中' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '暂停中' })).not.toBeInTheDocument();
     expect(screen.getAllByText(/暂停中/).length).toBeGreaterThan(0);
   });
   it('does not claim live work after terminal convergence and keeps old sessions reachable', () => {
     render(<DeliveryProgress progress={initial()} terminalStatus="SUCCEEDED" />);
-    expect(screen.getByTestId('current-agent-name')).toHaveTextContent('当前没有数字人执行');
+    expect(screen.getByTestId('current-agent-name')).toHaveTextContent('RD');
+    expect(within(screen.getByTestId('delivery-current-execution')).queryByText('执行中')).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('delivery-current-execution')).getByText('已完成')).toBeVisible();
     open();
     expect(screen.getByTestId('selected-terminal')).toHaveTextContent('40');
   });

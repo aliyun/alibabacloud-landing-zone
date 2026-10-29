@@ -40,9 +40,28 @@ public class ConversationTurnEventService {
         this.conversationElicitationService = conversationElicitationService;
     }
 
+    @org.springframework.transaction.annotation.Transactional
+    public void persistReliableEvent(long tenantId, long executorId, long conversationId,
+            long turnId, int dispatchAttempt, long eventSeq, int chunkIndex, int chunkCount,
+            String eventType, String payloadFragment) {
+        // Serialize critical side effects against cancellation/re-dispatch of this turn.
+        AgentConversationTurnDO turn = turnDao.findByConversationTurnForUpdate(tenantId, conversationId, turnId);
+        if (turn == null || !"PROCESSING".equals(turn.getStatus())
+                || dispatchAttempt <= 0 || !Integer.valueOf(dispatchAttempt).equals(turn.getDispatchAttempt())) return;
+        persistEvent(tenantId, executorId, conversationId, turnId, dispatchAttempt, eventSeq,
+                chunkIndex, chunkCount, eventType, payloadFragment, true);
+    }
+
     public void persistEvent(long tenantId, long executorId, long conversationId,
             long turnId, int dispatchAttempt, long eventSeq, int chunkIndex, int chunkCount,
             String eventType, String payloadFragment) {
+        persistEvent(tenantId, executorId, conversationId, turnId, dispatchAttempt, eventSeq,
+                chunkIndex, chunkCount, eventType, payloadFragment, false);
+    }
+
+    private void persistEvent(long tenantId, long executorId, long conversationId,
+            long turnId, int dispatchAttempt, long eventSeq, int chunkIndex, int chunkCount,
+            String eventType, String payloadFragment, boolean reliable) {
         AgentConversationDO conv = convDao.findById(tenantId, conversationId);
         if (conv == null || conv.getExecutorId() == null
                 || conv.getExecutorId() != executorId) {
@@ -56,6 +75,14 @@ public class ConversationTurnEventService {
         if (turn == null || turn.getId() != turnId) {
             log.warn("conversation event rejected: no active turn tenantId={} conversationId={} turnId={}",
                     tenantId, conversationId, turnId);
+            return;
+        }
+
+        // Old runtimes omit attempt (0); keep their existing behavior during rolling upgrades.
+        if (dispatchAttempt > 0 && turn.getDispatchAttempt() != null
+                && turn.getDispatchAttempt() > 0 && dispatchAttempt != turn.getDispatchAttempt()) {
+            log.warn("conversation event rejected: stale attempt conversationId={} turnId={} attempt={}",
+                    conversationId, turnId, dispatchAttempt);
             return;
         }
 
@@ -77,12 +104,21 @@ public class ConversationTurnEventService {
             if ("status".equals(eventType) && assembled != null) {
                 updateCliSessionRefIfPresent(tenantId, conversationId, assembled);
             }
-            dispatchElicitationEvent(tenantId, conversationId, turnId, eventType, assembled);
+            String questionStatus;
+            if (reliable && conversationElicitationService != null && assembled != null
+                    && eventType != null && eventType.startsWith(ConversationElicitationService.EVENT_TYPE_PREFIX)) {
+                // Database failures must roll back and suppress the receiver ACK, allowing retry.
+                questionStatus = conversationElicitationService.onEvent(tenantId, conversationId, turnId, eventType, assembled);
+            } else {
+                questionStatus = dispatchElicitationEvent(tenantId, conversationId, turnId, eventType, assembled);
+            }
+            // A late question is retained as settled; do not reopen it after the resolved push.
+            if ("acp_elicitation".equals(eventType) && "CANCELED".equals(questionStatus)) return;
             String publicPayload=PlatformConversationChannel.CHANNEL.equals(conv.getChannel())
                     ? PlatformEventProjection.payload(eventType,assembled):assembled;
             String publicType=PlatformConversationChannel.CHANNEL.equals(conv.getChannel())
                     && ("thinking".equals(eventType)||"thinking_delta".equals(eventType))?"status":eventType;
-            publishToBrowser(tenantId, conversationId, turnId, eventSeq, publicType, publicPayload);
+            publishToBrowser(tenantId, conversationId, turnId, dispatchAttempt, eventSeq, publicType, publicPayload);
         }
     }
 
@@ -92,19 +128,20 @@ public class ConversationTurnEventService {
      *
      * <p>分派失败只记 warn —— 卡片落库出问题不该让整条事件流断掉，浏览器仍要收到这条事件。
      */
-    private void dispatchElicitationEvent(long tenantId, long conversationId, long turnId,
+    private String dispatchElicitationEvent(long tenantId, long conversationId, long turnId,
             String eventType, String assembled) {
         if (conversationElicitationService == null || assembled == null || eventType == null
                 || !eventType.startsWith(ConversationElicitationService.EVENT_TYPE_PREFIX)) {
-            return;
+            return null;
         }
         try {
-            conversationElicitationService.onEvent(tenantId, conversationId, turnId, eventType,
+            return conversationElicitationService.onEvent(tenantId, conversationId, turnId, eventType,
                     assembled);
         } catch (RuntimeException e) {
             log.warn("acp elicitation event handling failed conversationId={} turnId={} type={}: {}",
                     conversationId, turnId, eventType, e.getMessage());
         }
+        return null;
     }
 
     public List<AgentConversationTurnEventDO> listEventsAfter(long tenantId, long conversationId,
@@ -122,6 +159,36 @@ public class ConversationTurnEventService {
     public List<AgentConversationTurnEventDO> listEventsByTurn(long tenantId, long conversationId,
             long turnId) {
         return eventDao.listByTurn(tenantId, conversationId, turnId, MAX_TURN_EVENTS);
+    }
+
+    public record EventPage(List<AgentConversationTurnEventDO> rows, long nextAfterId, boolean hasMore) {}
+
+    public EventPage listEventsByTurnPage(long tenantId, long conversationId, long turnId,
+            long afterId, int requestedLimit) {
+        int limit = Math.max(1, Math.min(500, requestedLimit));
+        long cursor = Math.max(0, afterId);
+        List<AgentConversationTurnEventDO> rows = eventDao.listByTurnAfter(
+                tenantId, conversationId, turnId, cursor, limit + 1);
+        boolean more = rows.size() > limit;
+        List<AgentConversationTurnEventDO> page = List.copyOf(rows.subList(0, Math.min(rows.size(), limit)));
+        return new EventPage(page, page.isEmpty() ? cursor : page.get(page.size() - 1).getId(), more);
+    }
+
+    public EventPage listPlatformEventsByTurnPage(long tenantId, long conversationId, long turnId,
+            long afterId, int limit) {
+        EventPage raw = listEventsByTurnPage(tenantId, conversationId, turnId, afterId, limit);
+        java.util.Map<String, List<AgentConversationTurnEventDO>> groups = new java.util.LinkedHashMap<>();
+        for (var row : raw.rows()) groups.computeIfAbsent(row.getDispatchAttempt() + ":" + row.getEventSeq(),
+                ignored -> new java.util.ArrayList<>()).add(row);
+        java.util.List<AgentConversationTurnEventDO> complete = new java.util.ArrayList<>();
+        for (var chunks : groups.values()) {
+            var head = chunks.get(0);
+            complete.addAll(chunks.size() < head.getChunkCount()
+                    ? eventDao.listLogicalEventChunks(tenantId, turnId, head.getDispatchAttempt(), head.getEventSeq())
+                    : chunks);
+        }
+        // Cursor follows raw rows, not projected ids: a fragmented event may straddle pages.
+        return new EventPage(PlatformEventProjection.events(complete), raw.nextAfterId(), raw.hasMore());
     }
 
     private boolean allChunksPresent(long tenantId, long turnId, int dispatchAttempt,
@@ -163,11 +230,11 @@ public class ConversationTurnEventService {
     }
 
     private void publishToBrowser(long tenantId, long conversationId, long turnId,
-            long eventSeq, String eventType, String payloadJson) {
+            int dispatchAttempt, long eventSeq, String eventType, String payloadJson) {
         if (browserEventPublisher == null) {
             return;
         }
-        browserEventPublisher.publish(tenantId, conversationId, turnId, eventSeq,
+        browserEventPublisher.publish(tenantId, conversationId, turnId, dispatchAttempt, eventSeq,
                 eventType, payloadJson);
     }
 }

@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.notification;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.im.PlatformImChannelConfigDao;
@@ -44,7 +45,7 @@ class NotificationImPreferenceTest {
     private NotificationController controller(NotifyPrefDao prefs) {
         AutoWonderContext.get().setCurrentWorkspaceId(1L); AutoWonderContext.get().setUserId(2L);
         var dao = mock(PlatformImChannelConfigDao.class); when(dao.selectedProvider()).thenReturn("FEISHU");
-        var configs = new PlatformImChannelConfigService(dao, mock(SecretCrypto.class));
+        var configs = new PlatformImChannelConfigService(dao, mock(SecretCrypto.class), new ObjectMapper());
         return new NotificationController(mock(NotificationDao.class), prefs, mock(NotifyService.class), configs);
     }
 }

@@ -1,7 +1,6 @@
 package com.aliyun.autowonder.scheduledtask;
 
 import com.aliyun.autowonder.redis.RedisManager;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
@@ -32,7 +31,6 @@ public class ScheduledTaskScheduler {
         this.taskDao=taskDao; this.triggerService=triggerService; this.schedule=schedule; this.redis=redis;
         this.properties=properties; this.clock=clock; this.capabilityGuard=capabilityGuard;
     }
-    @Scheduled(fixedDelayString = "${autowonder.scheduled-task.scan-fixed-delay-ms:10000}")
     @Transactional(rollbackFor = Exception.class)
     public void scan() { if (!capabilityGuard.isScannerEnabled()) return; String owner = UUID.randomUUID().toString(); if (!redis.tryAcquireLock(LOCK_KEY, owner, properties.getLockTtlSeconds() * 1000L)) return; try { scanDue(); } finally { redis.releaseLock(LOCK_KEY, owner); } }
     void scanDue() { Instant now=clock.instant(); List<ScheduledTaskDO> due=taskDao.findDue(Date.from(now), Math.max(1, properties.getScanBatchSize())); if(due==null)return; for(ScheduledTaskDO task:due) claimAndFire(task, now); }

@@ -32,7 +32,7 @@ public class DispatchAssignmentListener {
         }
         log.info("workitem assigned workitemId={} agentId={} sdlcStepId={}", e.getWorkitemId(), e.getAgentId(), e.getSdlcStepId());
         DispatchDO d = dispatchService.enqueueAssignment(e.getTenantId(), e.getWorkitemId(),
-                e.getSdlcStepId(), e.getAgentId(), e.getAssignmentVersion(), e.getUserId());
+                e.getSdlcStepId(), e.getAgentId(), e.getAssignmentVersion(), e.getUserId(), e.getActor());
         dispatchService.runPending(d.getId());
     }
 }

@@ -6,9 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { i18n } from '@/shared/i18n';
-import { createAppRoutes } from '@/app/router';
 import { MemberDeliveryTab } from './components/MemberDeliveryTab';
-import { AuditTable } from './components/AuditTable';
+import { InsightsPage } from './InsightsPage';
 import { MetricCards } from './components/MetricCards';
 import { KeyInsights } from './components/KeyInsights';
 import { Recommendations } from './components/Recommendations';
@@ -21,38 +20,29 @@ function routed(element: React.ReactNode, client = new QueryClient({ defaultOpti
 }
 beforeEach(async () => { localStorage.clear(); await i18n.changeLanguage('zh-CN'); });
 afterEach(async () => { cleanup(); vi.useRealTimers(); await i18n.changeLanguage('zh-CN'); });
-it('updates the actual cached insights route while retaining audit selections, raw data and query identities', async () => {
- const requests: string[] = [];
- server.use(http.get('/api/dashboard/realtime', () => ok(null)), http.get('/api/insights/metrics', () => ok(metrics)), http.get('/api/insights/workers', () => ok([{ id: 12, name: '<em>成员</em>' }])), http.get('/api/insights/audit', ({ request }) => { requests.push(new URL(request.url).search); return ok({ items: [{ timestamp: '2026-09-30T12:30:00', worker: '<em>成员</em>', eventType: 'REJECT', detail: '<b>驳回原文</b>', riskLevel: 'medium' }], total: 1 }); }));
- const route = createAppRoutes().flatMap(r => r.children ?? []).find(r => r.path === '/insights')!;
- const { container, client } = routed(route.element);
- const user = userEvent.setup();
- await user.click(screen.getByText('执行审计'));
- await screen.findByText('<b>驳回原文</b>');
- await user.click(screen.getByRole('combobox', { name: '数字员工' }));
- const options = await screen.findAllByText('<em>成员</em>'); await user.click(options.at(-1)!);
- await user.click(screen.getByText('近7天')); await user.click(screen.getByText('高危', { selector: '.ant-segmented-item-label' }));
- await waitFor(() => expect(requests.at(-1)).toContain('risk_level=high'));
- const table = container.querySelector('table'); const select = screen.getByRole('combobox', { name: '数字员工' });
- const keys = client.getQueryCache().getAll().map(q => q.queryKey); const count = requests.length;
+it('translates the four insight tabs without retired execution audit and requirement delivery entries', async () => {
+ server.use(http.get('/api/dashboard/realtime', () => ok(null)), http.get('/api/dashboard/overview', () => ok(null)), http.get('/api/dashboard/pipeline-health', () => ok(null)), http.get('/api/insights/metrics', () => ok(metrics)), http.get('/api/insights/workers', () => ok([])), http.get('/api/insights/audit', () => ok({ items: [], total: 0 })));
+ routed(<InsightsPage />);
+ const zh = ['实时看板', '人机协作', '工单交付', '阶段耗时'];
+ await screen.findByRole('radio', { name: zh[0] });
+ for (const label of zh) expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+ expect(screen.queryByRole('radio', { name: '执行审计' })).toBeNull();
+ expect(screen.queryByRole('radio', { name: '需求交付' })).toBeNull();
  await act(async () => { await i18n.changeLanguage('en-US'); });
- expect(screen.getByText('Insights')).toBeInTheDocument(); expect(screen.getByRole('radio', { name: 'Execution audit' })).toBeChecked();
- expect(screen.getByRole('radio', { name: 'Last 7 days' })).toBeChecked(); expect(screen.getByRole('radio', { name: 'High risk' })).toBeChecked();
- expect(screen.getByRole('combobox', { name: 'Agent' })).toBe(select); expect(container.querySelector('table')).toBe(table);
- expect(screen.getByText('Reject')).toBeInTheDocument(); expect(screen.getByText('<b>驳回原文</b>')).toBeInTheDocument(); expect(screen.getByText('1 record')).toBeInTheDocument();
- expect(container.querySelector('em, b')).toBeNull(); expect(requests).toHaveLength(count); expect(client.getQueryCache().getAll().map(q => q.queryKey)).toEqual(keys);
- expect(localStorage.getItem('aw:insights:v1:anonymous:none:audit.worker')).toBe('12');
+ for (const label of ['Realtime dashboard', 'Human–Agent participation', 'Work item delivery', 'Stage duration']) expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+ expect(screen.queryByRole('radio', { name: 'Execution audit' })).toBeNull();
+ expect(screen.queryByRole('radio', { name: 'Requirement delivery' })).toBeNull();
 });
-it('keeps member search, selected metric and dates on a cached independent consumer', async () => {
+it('keeps member search and dates on a cached independent consumer', async () => {
  const requests: string[] = [];
- server.use(http.get('/api/insights/member-delivery', ({ request }) => { requests.push(new URL(request.url).search); return ok({ summary: { total: 8, completed: 5, inProgress: 3, requirements: 4 }, weekRequirements: 4, members: [{ memberId: 1, memberName: '<em>成员甲</em>', total: 8, completed: 5, inProgress: 3, requirements: 4 }, { memberId: 2, memberName: '成员乙', total: 0, completed: 0, inProgress: 0, requirements: 0 }] }); }));
+ server.use(http.get('/api/insights/member-delivery', ({ request }) => { requests.push(new URL(request.url).search); return ok({ summary: { created: 4, total: 8, completed: 5, inProgress: 3, notStarted: 0, pendingDecision: 0, requirements: 4 }, members: [{ memberId: 1, memberName: '<em>成员甲</em>', created: 4, total: 8, completed: 5, inProgress: 3, notStarted: 0, pendingDecision: 0, requirements: 4 }, { memberId: 2, memberName: '成员乙', created: 0, total: 0, completed: 0, inProgress: 0, notStarted: 0, pendingDecision: 0, requirements: 0 }] }); }));
  const { container, client } = routed(<MemberDeliveryTab />); await screen.findByText('<em>成员甲</em>'); const user = userEvent.setup();
- await user.click(screen.getByText('进行中', { selector: '.ant-segmented-item-label' })); await user.type(screen.getByPlaceholderText('搜索项目成员'), '成员甲');
+ await user.type(screen.getByPlaceholderText('搜索项目成员'), '成员甲');
  const input = screen.getByPlaceholderText('搜索项目成员'); const table = container.querySelector('table'); const dates = container.querySelectorAll('.ant-picker-input input'); const values = [...dates].map(n => (n as HTMLInputElement).value);
  const keys = client.getQueryCache().getAll().map(q => q.queryKey);
  await act(async () => { await i18n.changeLanguage('en-US'); });
- expect(screen.getByPlaceholderText('Search project members')).toBe(input); expect(input).toHaveValue('成员甲'); expect(screen.getByRole('radio', { name: 'In progress' })).toBeChecked();
- expect(screen.getByText('1 member')).toBeInTheDocument(); expect(screen.getByRole('img', { name: 'In progress: 3 tasks; current maximum: 3 tasks' })).toBeInTheDocument();
+ expect(screen.getByPlaceholderText('Search project members')).toBe(input); expect(input).toHaveValue('成员甲');
+ expect(screen.getByText('1 member')).toBeInTheDocument(); expect(screen.getByRole('img', { name: 'Completed: 5 tasks; current maximum: 5 tasks' })).toBeInTheDocument();
  expect(container.querySelector('table')).toBe(table); expect([...dates].map(n => (n as HTMLInputElement).value)).toEqual(values); expect(requests).toHaveLength(1); expect(client.getQueryCache().getAll().map(q => q.queryKey)).toEqual(keys);
  expect(container.querySelector('em')).toBeNull(); await user.clear(input); await user.type(input, 'missing'); expect(screen.getByText('No matching members. Adjust your search.')).toBeInTheDocument();
 });
@@ -62,57 +52,38 @@ it('translates independent metric and analytical panel labels and hides decorati
  for (const text of ['Efficiency', 'Stability', 'Security', 'Key insights', 'Recommended actions', 'Updates with filters', 'SDLC workflow issues', 'issue; impact', '30min']) expect(screen.getByText(text)).toBeInTheDocument();
  expect(container.querySelectorAll('[role="img"]:not([aria-hidden="true"])')).toHaveLength(0); expect(container.querySelector('em')).toBeNull();
 });
-it('preserves unknown prototype-like audit codes as raw text', async () => {
- server.use(http.get('/api/insights/audit', () => ok({ items: [{ timestamp: '', worker: 'raw', eventType: 'toString', detail: 'raw detail', riskLevel: 'constructor' }], total: 1 })));
- routed(<AuditTable workerName="" riskFilter="" timeRange="30d" />);
- await act(async () => { await i18n.changeLanguage('en-US'); });
- expect(await screen.findByText('toString')).toBeInTheDocument(); expect(screen.getByText('constructor')).toBeInTheDocument();
-});
-
-it('uses singular units for measured one and keeps the Shanghai week across an English locale', async () => {
+it('uses singular units for measured one and keeps the last thirty days across an English locale', async () => {
  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-27T17:00:00Z'));
  const requests: string[] = [];
- server.use(http.get('/api/insights/member-delivery', ({ request }) => { requests.push(new URL(request.url).search); return ok({ summary: { total: 3, completed: 1, inProgress: 2, requirements: 1 }, weekRequirements: 1, members: [{ memberId: 1, memberName: 'raw', total: 3, completed: 1, inProgress: 2, requirements: 1 }] }); }));
+ server.use(http.get('/api/insights/member-delivery', ({ request }) => { requests.push(new URL(request.url).search); return ok({ summary: { created: 1, total: 3, completed: 1, inProgress: 2, notStarted: 0, pendingDecision: 0, requirements: 1 }, members: [{ memberId: 1, memberName: 'raw', created: 1, total: 3, completed: 1, inProgress: 2, notStarted: 0, pendingDecision: 0, requirements: 1 }] }); }));
  const { container } = routed(<MemberDeliveryTab />);
- await screen.findByText('所选周期需求交付：1 项');
+ await screen.findByText('所选周期 · 已完成');
+ await waitFor(() => expect(container.querySelectorAll('.ant-statistic-content-suffix')).toHaveLength(4));
  expect([...container.querySelectorAll('.ant-statistic-content-suffix')].map(n => n.textContent)).toEqual(['项', '项', '项', '项']);
  await act(async () => { await i18n.changeLanguage('en-US'); });
- expect(requests).toEqual(['?start_date=2026-09-28&end_date=2026-09-28']);
+ expect(requests).toEqual(['?start_date=2026-08-30&end_date=2026-09-28']);
  const suffixes = [...container.querySelectorAll('.ant-statistic-content-suffix')].map(n => n.textContent);
- expect(suffixes).toEqual(['task', 'tasks', 'tasks', 'requirement']);
- expect(screen.getByText('Selected period: 1 requirement delivered')).toBeInTheDocument();
+ expect(suffixes).toEqual(['task', 'task', 'tasks', 'tasks']);
  expect(screen.getByRole('img', { name: 'Completed: 1 task; current maximum: 1 task' })).toBeInTheDocument();
  vi.useRealTimers();
 });
 
-it('uses the current locale for an in-flight audit error and retry empty state', async () => {
- let resolve!: () => void; let calls = 0;
- server.use(http.get('/api/insights/audit', async () => { calls++; if (calls === 1) { await new Promise<void>(r => { resolve = r; }); return HttpResponse.json({ success: false, message: 'raw backend failure' }, { status: 500 }); } return ok({ items: [], total: 0 }); }));
- routed(<AuditTable workerName="" riskFilter="" timeRange="30d" />);
- await waitFor(() => expect(resolve).toBeTypeOf('function'));
- await act(async () => { await i18n.changeLanguage('en-US'); });
- expect(screen.getByText('Loading execution audit…')).toBeInTheDocument();
- await act(async () => { resolve(); });
- expect(await screen.findByText('Failed to load execution audit')).toBeInTheDocument();
- await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
- expect(await screen.findByText('No execution audit records')).toBeInTheDocument(); expect(calls).toBe(2);
-});
 it('uses the current locale for member loading, error and retry empty state', async () => {
  let resolve!: () => void; let calls = 0;
- server.use(http.get('/api/insights/member-delivery', async () => { calls++; if (calls === 1) { await new Promise<void>(r => { resolve = r; }); return HttpResponse.json({ success: false, message: 'raw backend failure' }, { status: 500 }); } return ok({ summary: { total: 0, completed: 0, inProgress: 0, requirements: 0 }, weekRequirements: 0, members: [] }); }));
+ server.use(http.get('/api/insights/member-delivery', async () => { calls++; if (calls === 1) { await new Promise<void>(r => { resolve = r; }); return HttpResponse.json({ success: false, message: 'raw backend failure' }, { status: 500 }); } return ok({ summary: { created: 0, total: 0, completed: 0, inProgress: 0, notStarted: 0, pendingDecision: 0, requirements: 0 }, members: [] }); }));
  const { container } = routed(<MemberDeliveryTab />); await waitFor(() => expect(resolve).toBeTypeOf('function'));
  await act(async () => { await i18n.changeLanguage('en-US'); }); expect(screen.getByText('Loading member data…')).toBeInTheDocument();
- await act(async () => { resolve(); }); expect(await screen.findByText('Failed to load member statistics. Retry; the date range may span at most 366 days.')).toBeInTheDocument();
+ await act(async () => { resolve(); }); expect(await screen.findByText('Failed to load member statistics. Retry; the date range may span at most 180 days.')).toBeInTheDocument();
  const suffixes = () => [...container.querySelectorAll('.ant-statistic-content-suffix')].map(n => n.textContent);
  const values = () => [...container.querySelectorAll('.ant-statistic-content-value')].map(n => n.textContent);
  expect(values()).toEqual(['—', '—', '—', '—']);
- expect(suffixes()).toEqual(['tasks', 'tasks', 'tasks', 'requirements']);
+ expect(suffixes()).toEqual(['tasks', 'tasks', 'tasks', 'tasks']);
  await act(async () => { await i18n.changeLanguage('zh-CN'); });
- expect(screen.getByText('成员统计加载失败，请重试；日期跨度最多 366 天。')).toBeInTheDocument();
+ expect(screen.getByText('成员统计加载失败，请重试；日期范围最多 180 天。')).toBeInTheDocument();
  expect(suffixes()).toEqual(['项', '项', '项', '项']); expect(values()).toEqual(['—', '—', '—', '—']);
  await act(async () => { await i18n.changeLanguage('en-US'); });
- await userEvent.click(screen.getByRole('button', { name: 'Retry' })); expect(await screen.findByText('No member delivery data in the selected period')).toBeInTheDocument(); expect(calls).toBe(2);
- expect(values()).toEqual(['0', '0', '0', '0']); expect(suffixes()).toEqual(['tasks', 'tasks', 'tasks', 'requirements']);
+ await userEvent.click(screen.getByRole('button', { name: 'Retry' })); expect(await screen.findByText('No work item delivery data in the selected period')).toBeInTheDocument(); expect(calls).toBe(2);
+ expect(values()).toEqual(['0', '0', '0', '0']); expect(suffixes()).toEqual(['tasks', 'tasks', 'tasks', 'tasks']);
  await act(async () => { await i18n.changeLanguage('zh-CN'); });
  expect(values()).toEqual(['0', '0', '0', '0']); expect(suffixes()).toEqual(['项', '项', '项', '项']);
 });
@@ -125,9 +96,9 @@ it('projects only actual member origins on cached zh-en-zh data and searches dis
   { memberId: 2, memberName: '成员 #123456789' },
   { memberId: 3, memberName: '<b>历史成员 #8</b>', memberNameKind: 'FUTURE' },
   { memberId: 4, memberName: '未归属成员' },
- ].map(m => ({ ...m, total: 1, completed: 1, inProgress: 0, requirements: 0 }));
+ ].map(m => ({ ...m, created: 1, total: 1, completed: 1, inProgress: 0, notStarted: 0, pendingDecision: 0, requirements: 0 }));
  let calls = 0;
- server.use(http.get('/api/insights/member-delivery', () => { calls++; return ok({ summary: { total: 6, completed: 6, inProgress: 0, requirements: 0 }, weekRequirements: 0, members }); }));
+ server.use(http.get('/api/insights/member-delivery', () => { calls++; return ok({ summary: { created: 6, total: 6, completed: 6, inProgress: 0, notStarted: 0, pendingDecision: 0, requirements: 0 }, members }); }));
  const { client, container } = routed(<MemberDeliveryTab />);
  await screen.findByText('<b>历史成员 #8</b>');
  const cache = client.getQueryCache().getAll().map(q => q.queryKey); const table = container.querySelector('table');
@@ -157,7 +128,7 @@ it.each(['zh-CN', 'en-US'])('hides the installed member error glyph in %s withou
 
 it.each(['zh-CN', 'en-US'])('final widget member search and nonempty clear preserve live raw filtering in %s', async locale => {
  let calls = 0;
- server.use(http.get('/api/insights/member-delivery', () => { calls++; return ok({ summary: { total: 1, completed: 1, inProgress: 0, requirements: 0 }, weekRequirements: 0, members: [{ memberId: 1, memberName: '<raw>成员', total: 1, completed: 1, inProgress: 0, requirements: 0 }] }); }));
+ server.use(http.get('/api/insights/member-delivery', () => { calls++; return ok({ summary: { created: 1, total: 1, completed: 1, inProgress: 0, notStarted: 0, pendingDecision: 0, requirements: 0 }, members: [{ memberId: 1, memberName: '<raw>成员', created: 1, total: 1, completed: 1, inProgress: 0, notStarted: 0, pendingDecision: 0, requirements: 0 }] }); }));
  await i18n.changeLanguage(locale); routed(<MemberDeliveryTab />);
  await screen.findByText('<raw>成员');
  const label = locale === 'en-US' ? 'Search project members' : '搜索项目成员';
@@ -172,7 +143,7 @@ it.each(['zh-CN', 'en-US'])('final widget member search and nonempty clear prese
 });
 it.each(['zh-CN', 'en-US'])('final widget pending member refresh keeps its own current name in %s', async locale => {
  let finish!: () => void;
- server.use(http.get('/api/insights/member-delivery', async () => { await new Promise<void>(resolve => { finish = resolve; }); return ok({ summary: { total: 0, completed: 0, inProgress: 0, requirements: 0 }, weekRequirements: 0, members: [] }); }));
+ server.use(http.get('/api/insights/member-delivery', async () => { await new Promise<void>(resolve => { finish = resolve; }); return ok({ summary: { created: 0, total: 0, completed: 0, inProgress: 0, notStarted: 0, pendingDecision: 0, requirements: 0 }, members: [] }); }));
  await i18n.changeLanguage(locale); routed(<MemberDeliveryTab />);
  await waitFor(() => expect(finish).toBeTypeOf('function'));
  try {

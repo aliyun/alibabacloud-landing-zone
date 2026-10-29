@@ -660,40 +660,30 @@ describe('ExecutorListPage', () => {
     expect(screen.getByText('上下文窗口')).toBeInTheDocument();
   });
 
-  function mockAgent(id: number, name: string) {
+  function mockAgent(id: number, name: string, squadNames: string[] | null = null) {
     return {
       id, name, avatarUrl: null, status: 'ONLINE', onlineVersionId: null,
       editingVersionId: null, latestVersionNo: 1, version: 1, gmtCreate: '2026-07-01',
+      squadNames,
     };
   }
 
-  // GET /api/squads returns memberAgentIds as null, so membership comes from the detail endpoint.
+  // 归属标签来自 GET /api/agents 的 squadNames，GET /api/squads 只提供筛选下拉，
+  // 因此这里不再需要为每个小队打桩详情接口。
   function mockSquadApis() {
-    const squad = (id: number, name: string, memberAgentIds: number[] | null) => ({
+    const squad = (id: number, name: string) => ({
       id, name, description: '', ownerId: 1, version: 0,
       gmtCreate: '2026-07-11T08:45:10.909+00:00',
-      memberAgentIds, memberCount: memberAgentIds?.length ?? 0,
+      memberAgentIds: null, memberCount: 0,
     });
     return [
       http.get('/api/squads', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: [
-          squad(40131, '独立开发者小队', null),
-          squad(40132, '开发+评审双人组', null),
-          squad(40133, '质量保障小队', null),
+          squad(40131, '独立开发者小队'),
+          squad(40132, '开发+评审双人组'),
+          squad(40133, '质量保障小队'),
         ],
-      })),
-      http.get('/api/squads/40131', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null,
-        data: squad(40131, '独立开发者小队', [40169]),
-      })),
-      http.get('/api/squads/40132', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null,
-        data: squad(40132, '开发+评审双人组', [40170, 40171]),
-      })),
-      http.get('/api/squads/40133', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null,
-        data: squad(40133, '质量保障小队', [40171]),
       })),
     ];
   }
@@ -702,9 +692,9 @@ describe('ExecutorListPage', () => {
     return http.get('/api/agents', () => HttpResponse.json({
       success: true, code: '0', message: '', traceId: null,
       data: [
-        mockAgent(40169, '全栈开发'),
-        mockAgent(40170, '全栈开发'),
-        mockAgent(40171, '代码评审'),
+        mockAgent(40169, '全栈开发', ['独立开发者小队']),
+        mockAgent(40170, '全栈开发', ['开发+评审双人组']),
+        mockAgent(40171, '代码评审', ['开发+评审双人组', '质量保障小队']),
         mockAgent(40172, '测试工程师'),
       ],
     }));
@@ -814,7 +804,7 @@ describe('ExecutorListPage', () => {
     expect(commandRequests).toBe(0);
   });
 
-  it('keeps plain agent names when squad membership cannot be loaded', async () => {
+  it('keeps agent squad suffixes from the agent list when the squad list request fails', async () => {
     const user = userEvent.setup();
     server.use(
       mockSameNameAgents(),
@@ -825,9 +815,10 @@ describe('ExecutorListPage', () => {
 
     await openAgentDropdownInCreateModal(user);
 
-    expect(await screen.findAllByText('全栈开发')).toHaveLength(2);
-    expect(screen.getByText('代码评审')).toBeInTheDocument();
-    expect(screen.queryByText(/未编队/)).not.toBeInTheDocument();
+    // 标签只依赖 /api/agents 的 squadNames，筛选下拉挂了也不该退化成同名不可区分。
+    expect(await screen.findByText('全栈开发（独立开发者小队）')).toBeInTheDocument();
+    expect(screen.getByText('全栈开发（开发+评审双人组）')).toBeInTheDocument();
+    expect(screen.getByText('代码评审（开发+评审双人组，质量保障小队）')).toBeInTheDocument();
   });
 
   it('loads separate dynamic catalogs for Qoder and QoderCN in the create modal', async () => {
@@ -2685,7 +2676,7 @@ describe('ExecutorListPage', () => {
     return within(select as HTMLElement).getByRole('combobox');
   }
 
-  // listSquadsWithMembers 会为每个小队再拉一次详情，所以列表与详情都要打桩。
+  // 小队筛选下拉只读 GET /api/squads；每个 Agent 的归属标签由调用方通过 mockAgent 的 squadNames 提供。
   function mockSquadFilterApis(
     executors: Record<string, unknown>[],
     agents: Record<string, unknown>[] = [],
@@ -2708,12 +2699,6 @@ describe('ExecutorListPage', () => {
       http.get('/api/squads', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: [squad(7, 'Squad A', [1]), squad(8, 'Squad B', [2])],
-      })),
-      http.get('/api/squads/7', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: squad(7, 'Squad A', [1]),
-      })),
-      http.get('/api/squads/8', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: squad(8, 'Squad B', [2]),
       })),
     );
   }
@@ -2824,7 +2809,10 @@ describe('ExecutorListPage', () => {
     server.use(
       http.get('/api/agents', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
-        data: [mockAgent(40169, '全栈开发'), mockAgent(40170, '全栈开发')],
+        data: [
+          mockAgent(40169, '全栈开发', ['独立开发者小队']),
+          mockAgent(40170, '全栈开发', ['开发+评审双人组']),
+        ],
       })),
       ...mockSquadApis(),
       http.get('/api/executors', () => HttpResponse.json({
@@ -2974,7 +2962,11 @@ describe('ExecutorListPage', () => {
       mockGroupedExecutor({ id: 10, agentId: 1, agentName: 'Alpha', name: 'a-runner', squadIds: [7], squadNames: ['Squad A'] }),
       mockGroupedExecutor({ id: 11, agentId: 2, agentName: 'Beta', name: 'b-runner', squadIds: [8], squadNames: ['Squad B'] }),
       mockGroupedExecutor({ id: 12, agentId: 3, agentName: 'Gamma', name: 'loose-runner', squadIds: null, squadNames: null }),
-    ], [mockAgent(1, 'Alpha'), mockAgent(2, 'Beta'), mockAgent(3, 'Gamma')]);
+    ], [
+      mockAgent(1, 'Alpha', ['Squad A']),
+      mockAgent(2, 'Beta', ['Squad B']),
+      mockAgent(3, 'Gamma'),
+    ]);
     renderPage();
 
     await screen.findByText('Gamma（未编队）');
@@ -3025,6 +3017,79 @@ describe('ExecutorListPage', () => {
     expect(seen.some((query) => query.includes('squadIds%5B%5D'))).toBe(false);
   });
 
+  it('loads squad labels and filter options without requesting every squad detail', async () => {
+    const user = userEvent.setup();
+    const detailRequests: string[] = [];
+    mockSquadFilterApis([
+      mockGroupedExecutor({ id: 10, agentId: 1, agentName: 'Alpha', name: 'a-runner', squadIds: [7], squadNames: ['Squad A'] }),
+    ], [mockAgent(1, 'Alpha', ['Squad A'])]);
+    server.use(http.get('/api/squads/:id', ({ request }) => {
+      detailRequests.push(new URL(request.url).pathname);
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: {} });
+    }));
+    renderPage();
+
+    // 归属标签来自 /api/agents 的 squadNames，筛选下拉来自单次 GET /api/squads。
+    await screen.findByText('Alpha（Squad A）');
+    await user.click(screen.getByRole('combobox', { name: '按小队筛选' }));
+    await screen.findByText('Squad A', { selector: '.ant-select-item-option-content' });
+
+    expect(detailRequests).toEqual([]);
+  });
+
+  it('keeps the previous executor rows while the new squad filter is loading', async () => {
+    const user = userEvent.setup();
+    const squad = (id: number, name: string, memberAgentIds: number[]) => ({
+      id, name, description: '', ownerId: 1, version: 0, gmtCreate: '2026-07-01T00:00:00Z',
+      memberAgentIds, memberCount: memberAgentIds.length,
+    });
+    const seen: string[] = [];
+    let releaseSecond: (() => void) | null = null;
+    const secondPending = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    const response = (data: Record<string, unknown>[]) => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data,
+    });
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [mockAgent(1, 'Alpha', ['Squad A'])],
+      })),
+      http.get('/api/squads', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [squad(7, 'Squad A', [1])],
+      })),
+      http.get('/api/executors', async ({ request }) => {
+        seen.push(new URL(request.url).search);
+        if (seen.length === 1) {
+          return response([mockGroupedExecutor({
+            id: 10, agentId: 1, agentName: 'Alpha', name: 'a-runner', squadIds: [7], squadNames: ['Squad A'],
+          })]);
+        }
+        await secondPending;
+        return response([mockGroupedExecutor({
+          id: 11, agentId: 1, agentName: 'Alpha', name: 'b-runner', squadIds: [7], squadNames: ['Squad A'],
+        })]);
+      }),
+    );
+    renderPage();
+
+    const group = await expandAgentGroup(user, 'Alpha（Squad A）');
+    expect(within(group).getByText('a-runner')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: '按小队筛选' }));
+    await user.click(await screen.findByText('Squad A', { selector: '.ant-select-item-option-content' }));
+
+    await waitFor(() => expect(seen.some((query) => query.includes('squadIds=7'))).toBe(true));
+    // keepPreviousData：筛选请求还没返回时，上一份列表继续挂在页面上，不会先闪回空表
+    expect(screen.getByText('Alpha（Squad A）')).toBeInTheDocument();
+    expect(within(collapseItemOf('Alpha（Squad A）')).getByText('a-runner')).toBeInTheDocument();
+    expect(screen.queryByText('b-runner')).not.toBeInTheDocument();
+
+    await act(async () => { releaseSecond!(); });
+
+    expect(await screen.findByText('b-runner')).toBeInTheDocument();
+    expect(screen.queryByText('a-runner')).not.toBeInTheDocument();
+  });
+
   it('narrows the per-agent executor endpoint client side because it takes no squad parameter', async () => {
     const user = userEvent.setup();
     const seenAgentScope: string[] = [];
@@ -3039,7 +3104,7 @@ describe('ExecutorListPage', () => {
     ];
     server.use(
       http.get('/api/agents', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [mockAgent(1, 'Alpha')],
+        success: true, code: '0', message: '', traceId: null, data: [mockAgent(1, 'Alpha', ['Squad A'])],
       })),
       http.get('/api/executors', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: runners,
@@ -3053,12 +3118,6 @@ describe('ExecutorListPage', () => {
       http.get('/api/squads', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: [squad(7, 'Squad A', [1]), squad(8, 'Squad B', [])],
-      })),
-      http.get('/api/squads/7', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: squad(7, 'Squad A', [1]),
-      })),
-      http.get('/api/squads/8', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: squad(8, 'Squad B', []),
       })),
     );
     renderPage();
@@ -3092,7 +3151,7 @@ describe('ExecutorListPage', () => {
       localStorage.removeItem('autowonder.executors.view');
       mockSquadFilterApis([
         mockGroupedExecutor({ id: 10, agentId: 1, agentName: 'Alpha', name: 'a-runner', squadIds: [7], squadNames: ['Squad A'] }),
-      ], [mockAgent(1, 'Alpha')]);
+      ], [mockAgent(1, 'Alpha', ['Squad A'])]);
       renderPage();
 
       await screen.findByText('Squad A');
@@ -3114,7 +3173,7 @@ describe('ExecutorListPage', () => {
       localStorage.setItem('autowonder.executors.view', 'agent');
       mockSquadFilterApis([
         mockGroupedExecutor({ id: 10, agentId: 1, agentName: 'Alpha', name: 'a-runner', squadIds: [7], squadNames: ['Squad A'] }),
-      ], [mockAgent(1, 'Alpha')]);
+      ], [mockAgent(1, 'Alpha', ['Squad A'])]);
       renderPage();
 
       await screen.findByText('Alpha（Squad A）');
@@ -3125,7 +3184,7 @@ describe('ExecutorListPage', () => {
       localStorage.setItem('autowonder.executors.view', 'bogus');
       mockSquadFilterApis([
         mockGroupedExecutor({ id: 10, agentId: 1, agentName: 'Alpha', name: 'a-runner', squadIds: [7], squadNames: ['Squad A'] }),
-      ], [mockAgent(1, 'Alpha')]);
+      ], [mockAgent(1, 'Alpha', ['Squad A'])]);
       renderPage();
 
       await screen.findByText('Squad A');
@@ -3631,7 +3690,6 @@ describe('routed squad grouping localization', () => {
     localStorage.removeItem('autowonder.executors.view');
     server.use(
       http.get('/api/squads', () => HttpResponse.json({ success: true, data: [{ id: 7, name: '<b>自定义小队</b>', memberAgentIds: [] }] })),
-      http.get('/api/squads/7', () => HttpResponse.json({ success: true, data: { id: 7, name: '<b>自定义小队</b>', memberAgentIds: [] } })),
       http.get('/api/executors', () => HttpResponse.json({ success: true, data: [{ id: 1, agentId: 1, agentName: '<b>自定义资源</b>', name: '<b>自定义资源</b>', status: 'ONLINE', squadIds: [], squadNames: [] }, { id: 2, agentId: 1, name: 'Known', status: 'ONLINE', squadIds: [7], squadNames: ['<b>自定义小队</b>'] }, { id: 3, agentId: 1, name: 'Missing', status: 'ONLINE', squadIds: [42] }] })),
     );
     const router = createMemoryRouter([{ path: '/', element: <ExecutorListPage /> }]);

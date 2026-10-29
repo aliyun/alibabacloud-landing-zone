@@ -17,6 +17,7 @@ const ARTIFACT_EXTENSIONS = [
 
 const ARTIFACT_ROOT_PREFIXES = [
   'artifacts/output/',
+  'output/',
   'observability/',
   'result/',
 ];
@@ -73,6 +74,9 @@ function candidateVariants(path: string): string[] {
     if (prefix === 'artifacts/output/') {
       variants.add(normalized.slice(index + prefix.length));
     }
+    if (prefix === 'output/') {
+      variants.add(`artifacts/${normalized.slice(index)}`);
+    }
   }
   return Array.from(variants);
 }
@@ -86,15 +90,18 @@ function newestById(matches: Artifact[]): Artifact | null {
 
 export function findArtifactForPath(path: string, artifacts: Artifact[]): Artifact | null {
   const variants = candidateVariants(path);
-  const matches = artifacts.filter((artifact) => variants.includes(artifact.name));
+  const matches = artifacts.filter((artifact) => variants.some((variant) => (
+    variant === artifact.name || variant.endsWith(`/${artifact.name}`)
+  )));
   const exactNames = new Set(matches.map((artifact) => artifact.name));
   if (exactNames.size === 1) return newestById(matches);
   if (matches.length > 1) {
     return null;
   }
 
-  const candidateBase = basename(path);
-  const basenameMatches = artifacts.filter((artifact) => basename(artifact.name) === candidateBase);
+  const normalized = path.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  if (normalized.includes('/')) return null;
+  const basenameMatches = artifacts.filter((artifact) => basename(artifact.name) === normalized);
   return basenameMatches.length === 1 ? basenameMatches[0] : null;
 }
 

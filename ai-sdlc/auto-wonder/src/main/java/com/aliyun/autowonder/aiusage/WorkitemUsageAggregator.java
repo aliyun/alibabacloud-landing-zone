@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 /**
  * 工单级 credits 汇总：同一数字人被 CR 打回后重跑会产生多个 dispatch，
  * 这里按 dispatch 的时间顺序为每个数字人编号 run，明细与总计口径一致。
+ * 需求澄清会话的用量按数字人合并为一条 CLARIFICATION 明细，排在执行轮次之后。
  */
 public final class WorkitemUsageAggregator {
 
@@ -26,14 +27,22 @@ public final class WorkitemUsageAggregator {
     private WorkitemUsageAggregator() {
     }
 
+    public static WorkitemUsageSummaryVO summarize(List<DispatchAiUsageDO> usageRows,
+                                                   List<DispatchDO> dispatches,
+                                                   Function<Long, String> agentNameResolver) {
+        return summarize(usageRows, dispatches, null, agentNameResolver);
+    }
+
     /**
      * @param usageRows         dispatch_ai_usage 行
      * @param dispatches        本工单的派发列表，run 轮次按其时间顺序编号
+     * @param clarificationRows 绑定本工单的需求澄清会话用量行，按数字人合并
      * @param agentNameResolver agentId -> 展示名，可为 null
      * @return 没有任何正数 credits 时返回 null，调用方据此不展示
      */
     public static WorkitemUsageSummaryVO summarize(List<DispatchAiUsageDO> usageRows,
                                                    List<DispatchDO> dispatches,
+                                                   List<AgentConversationUsageDO> clarificationRows,
                                                    Function<Long, String> agentNameResolver) {
         Map<Long, BigDecimal> creditsByDispatchId = new LinkedHashMap<>();
         Map<Long, Long> agentByDispatchId = new HashMap<>();
@@ -45,9 +54,6 @@ public final class WorkitemUsageAggregator {
             if (row.getAgentId() != null) {
                 agentByDispatchId.putIfAbsent(row.getDispatchId(), row.getAgentId());
             }
-        }
-        if (creditsByDispatchId.isEmpty()) {
-            return null;
         }
 
         List<DispatchDO> ordered = orderDispatches(dispatches);
@@ -72,6 +78,8 @@ public final class WorkitemUsageAggregator {
             addRun(runs, agentId, runIndex, entry.getValue(), agentNameResolver);
         }
 
+        total = total.add(addClarificationRuns(runs, clarificationRows, agentNameResolver));
+
         if (total.compareTo(BigDecimal.ZERO) <= 0 || runs.isEmpty()) {
             return null;
         }
@@ -79,6 +87,37 @@ public final class WorkitemUsageAggregator {
         summary.setCredits(total);
         summary.setRuns(runs);
         return summary;
+    }
+
+    /** 澄清用量按数字人合并成一条明细；返回实际计入明细的总额，保证总计等于明细之和。 */
+    private static BigDecimal addClarificationRuns(List<WorkitemUsageRunVO> runs,
+                                                   List<AgentConversationUsageDO> clarificationRows,
+                                                   Function<Long, String> agentNameResolver) {
+        Map<Long, BigDecimal> creditsByAgent = new HashMap<>();
+        for (AgentConversationUsageDO row : clarificationRows == null
+                ? List.<AgentConversationUsageDO>of() : clarificationRows) {
+            if (row == null || row.getCredits() == null) {
+                continue;
+            }
+            creditsByAgent.merge(agentKey(row.getAgentId()), row.getCredits(), BigDecimal::add);
+        }
+        BigDecimal total = BigDecimal.ZERO;
+        for (Map.Entry<Long, BigDecimal> entry : new TreeMap<>(creditsByAgent).entrySet()) {
+            if (entry.getValue().compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            Long agentId = NO_AGENT_KEY.equals(entry.getKey()) ? null : entry.getKey();
+            String agentName = agentNameResolver == null || agentId == null
+                    ? null : agentNameResolver.apply(agentId);
+            WorkitemUsageRunVO run = new WorkitemUsageRunVO();
+            run.setAgentId(agentId);
+            run.setAgentName(agentName);
+            run.setLabelKind("CLARIFICATION");
+            run.setCredits(entry.getValue());
+            runs.add(run);
+            total = total.add(entry.getValue());
+        }
+        return total;
     }
 
     private static void addRun(List<WorkitemUsageRunVO> runs, Long agentId, int runIndex,

@@ -5,6 +5,8 @@
   "history": "Conversation history",
   "newConversation": "New conversation",
   "collapse": "Collapse conversation",
+  "expandWide": "Wide view",
+  "exitWide": "Exit wide view",
   "open": "Open Chief of Staff",
   "dock": "Collapse to edge",
   "undock": "Expand",

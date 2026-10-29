@@ -802,15 +802,17 @@ export function AgentEditPage() {
               onKeyDown={handleRoleCodeKeyDown}
             />
           </Form.Item>
-          <Form.Item label="SOUL.md" name="businessBackground">
+          <Form.Item label="SOUL.md" name={isPlatform ? undefined : "businessBackground"}>
             <TextArea
+              readOnly={isPlatform}
+              value={isPlatform ? agent?.officialConfiguration?.businessBackground ?? versionDetail?.businessBackground : undefined}
               ref={businessBackgroundRef}
               rows={4}
               placeholder={t('placeholders.background')}
             />
           </Form.Item>
-          <Form.Item label="AGENT.md" name="responsibilities">
-            <TextArea rows={4} placeholder={t('placeholders.responsibilities')} />
+          <Form.Item label="AGENT.md" name={isPlatform ? undefined : "responsibilities"}>
+            <TextArea readOnly={isPlatform} value={isPlatform ? agent?.officialConfiguration?.responsibilities ?? versionDetail?.responsibilities : undefined} rows={4} placeholder={t('placeholders.responsibilities')} />
           </Form.Item>
           {!isPlatform && (
             <Form.Item label={t('fields.sdlc')} name="sdlcId">
@@ -885,7 +887,7 @@ export function AgentEditPage() {
         <Table rowKey="skillId" columns={skillColumns} dataSource={skills} pagination={false} size="small" />
       </Card>
 
-      {/* Environment variables are metadata-only here; values remain confined to the library reveal flow. */}
+      {/* Environment variables are metadata-only here; saved values are never returned to the browser. */}
       <Card title={t('environment.title')} style={{ marginTop: 16 }}
         extra={canManageEnvironmentVariables ? (
           <Button

@@ -12,6 +12,10 @@
     <select id="findById" resultType="com.aliyun.autowonder.sdlc.SdlcDO">
         SELECT * FROM sdlc WHERE id = #{id} AND is_deleted = 0 LIMIT 1
     </select>
+    <select id="findByIdForUpdate" resultType="com.aliyun.autowonder.sdlc.SdlcDO" useCache="false" flushCache="true">
+        SELECT * FROM sdlc WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+        LIMIT 1 FOR UPDATE
+    </select>
     <select id="listByIds" resultType="com.aliyun.autowonder.sdlc.SdlcDO">
         SELECT * FROM sdlc
         WHERE is_deleted = 0 AND id IN

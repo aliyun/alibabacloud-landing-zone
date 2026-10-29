@@ -58,6 +58,9 @@ public class AuthFilter extends OncePerRequestFilter {
             Pattern.compile("^/api/mcp/awmcp_[A-Za-z0-9_-]{43}(?:/(?:rpc/?)?)?$");
     private static final String PERSONAL_MCP_TOKEN_PREFIX = "/api/mcp/tokens";
     private static final String PERSONAL_USER_API_PREFIX = "/api/users/me/";
+    // 空间级看板按调用者可管理的空间集合统计，与 token 绑定的当前空间无关；当前空间被停用或删除时
+    // 若仍校验，看板会以 ORG_DELETED_OR_DISABLED 拒绝，而它并不依赖该空间。
+    private static final String SPACE_DASHBOARD_PREFIX = "/api/space-dashboard/";
     private static final List<String> WHITELIST_PREFIXES = List.of(
             "/api/auth/", "/api/hello", "/api/daemon/", "/api/mcp/rpc", "/api/mcp/tools");
 
@@ -185,7 +188,8 @@ public class AuthFilter extends OncePerRequestFilter {
     private boolean isWhitelisted(HttpServletRequest request) {
         String path = request.getRequestURI();
         if ("POST".equalsIgnoreCase(request.getMethod())
-                && "/api/integrations/feishu/callback".equals(path)) {
+                && ("/api/integrations/feishu/callback".equals(path)
+                    || "/api/integrations/feishu/group-callback".equals(path))) {
             return true;
         }
         if (WHITELIST_EXACTS.contains(path) || DINGTALK_CALLBACK_PATH.equals(path)) {
@@ -229,6 +233,9 @@ public class AuthFilter extends OncePerRequestFilter {
             return true;
         }
         if ("GET".equalsIgnoreCase(method) && WORKSPACE_RECYCLE_BIN_PATH.equals(path)) {
+            return true;
+        }
+        if ("GET".equalsIgnoreCase(method) && path.startsWith(SPACE_DASHBOARD_PREFIX)) {
             return true;
         }
         if (("PUT".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method))

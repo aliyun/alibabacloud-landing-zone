@@ -4,77 +4,83 @@ import { describe, expect, it, vi } from 'vitest';
 import KpiRow from './KpiRow';
 
 const sampleKpi = {
-  runningDispatches: 4,
+  todayCreatedWorkitems: 9,
+  runningWorkitems: 4,
   todayCompletedTasks: 12,
   weekCompletedTasks: 57,
-  avgTaskDurationMinutes: 34,
-  inProgressWorkitems: 9,
-  queuedDispatches: 3,
-  activeSquads: 2,
-  onlineAgents: 6,
-  avgLoad: 0.67,
 };
 
+function kpiCard(label: string): HTMLElement {
+  return screen.getByText(label).parentElement!;
+}
+
 describe('KpiRow', () => {
-  it('renders all KPI metrics', () => {
-    render(<KpiRow kpi={sampleKpi} />);
+  it('renders the four workitem-level KPIs with labels, values and hints in order', () => {
+    const { container } = render(<KpiRow kpi={sampleKpi} />);
 
-    expect(screen.getByText('今日完成')).toBeInTheDocument();
-    expect(screen.getByText('本周完成')).toBeInTheDocument();
-    expect(screen.getByText('平均耗时')).toBeInTheDocument();
-    expect(screen.getByText('12')).toBeInTheDocument();
-    expect(screen.getByText('57')).toBeInTheDocument();
-    expect(screen.getByText('34m')).toBeInTheDocument();
+    const labels = Array.from(container.querySelectorAll('.insight-kpi-label')).map((node) => node.textContent);
+    expect(labels).toEqual(['今日新建', '正在运行', '今日完成', '本周完成']);
+
+    const values = Array.from(container.querySelectorAll('.insight-kpi-value')).map((node) => node.textContent);
+    expect(values).toEqual(['9', '4', '12', '57']);
+
+    const hints = Array.from(container.querySelectorAll('.insight-kpi-hint')).map((node) => node.textContent);
+    expect(hints).toEqual(['今日创建工单', '执行中工单', '工单', '工单']);
   });
 
-  it('converts 平均耗时 to hours when >= 60 minutes', () => {
-    render(<KpiRow kpi={{ ...sampleKpi, avgTaskDurationMinutes: 90 }} />);
+  it('makes only the three drill-down KPIs clickable', () => {
+    render(<KpiRow kpi={sampleKpi} onKpiClick={() => {}} />);
 
-    expect(screen.getByText('1h 30m')).toBeInTheDocument();
+    for (const label of ['正在运行', '今日完成', '本周完成']) {
+      expect(kpiCard(label)).toHaveAttribute('role', 'button');
+      expect(kpiCard(label)).toHaveStyle({ cursor: 'pointer' });
+    }
+    expect(kpiCard('今日新建')).not.toHaveAttribute('role');
+    expect(kpiCard('今日新建')).toHaveStyle({ cursor: 'default' });
   });
 
-  it('clickable KPIs have button role and cursor pointer', () => {
-    render(<KpiRow kpi={sampleKpi} />);
-
-    const running = screen.getByText('正在运行').parentElement!;
-    const todayCompleted = screen.getByText('今日完成').parentElement!;
-    const weekCompleted = screen.getByText('本周完成').parentElement!;
-
-    expect(running).toHaveAttribute('role', 'button');
-    expect(todayCompleted).toHaveAttribute('role', 'button');
-    expect(weekCompleted).toHaveAttribute('role', 'button');
-    expect(running).toHaveStyle({ cursor: 'pointer' });
-  });
-
-  it('non-clickable KPIs have no button role', () => {
-    render(<KpiRow kpi={sampleKpi} />);
-
-    const avgDuration = screen.getByText('平均耗时').parentElement!;
-    expect(avgDuration).not.toHaveAttribute('role');
-    expect(avgDuration).toHaveStyle({ cursor: 'default' });
-  });
-
-  it('calls onKpiClick with correct key when clicking clickable KPI', async () => {
+  it('calls onKpiClick with the matching detail key', async () => {
     const handleClick = vi.fn();
     render(<KpiRow kpi={sampleKpi} onKpiClick={handleClick} />);
 
     const user = userEvent.setup();
-    await user.click(screen.getByText('今日完成').parentElement!);
+    await user.click(screen.getByText('今日完成'));
     expect(handleClick).toHaveBeenCalledWith('todayCompletedTasks');
 
-    await user.click(screen.getByText('本周完成').parentElement!);
+    await user.click(screen.getByText('本周完成'));
     expect(handleClick).toHaveBeenCalledWith('weekCompletedTasks');
 
-    await user.click(screen.getByText('正在运行').parentElement!);
-    expect(handleClick).toHaveBeenCalledWith('runningDispatches');
+    await user.click(screen.getByText('正在运行'));
+    expect(handleClick).toHaveBeenCalledWith('runningWorkitems');
   });
 
-  it('does not fire click for non-clickable KPIs', async () => {
+  it('opens the drill-down from the keyboard with Enter and Space', async () => {
     const handleClick = vi.fn();
     render(<KpiRow kpi={sampleKpi} onKpiClick={handleClick} />);
 
     const user = userEvent.setup();
-    await user.click(screen.getByText('平均耗时').parentElement!);
+    kpiCard('正在运行').focus();
+    await user.keyboard('{Enter} ');
+    expect(handleClick).toHaveBeenCalledTimes(2);
+    expect(handleClick).toHaveBeenNthCalledWith(1, 'runningWorkitems');
+    expect(handleClick).toHaveBeenNthCalledWith(2, 'runningWorkitems');
+    await user.keyboard('{a}');
+    expect(handleClick).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not fire for the non drill-down KPI', async () => {
+    const handleClick = vi.fn();
+    render(<KpiRow kpi={sampleKpi} onKpiClick={handleClick} />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('今日新建'));
     expect(handleClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps every KPI static when no drill-down owner is provided', () => {
+    render(<KpiRow kpi={sampleKpi} />);
+
+    expect(kpiCard('正在运行')).not.toHaveAttribute('role');
+    expect(kpiCard('正在运行')).toHaveStyle({ cursor: 'default' });
   });
 });

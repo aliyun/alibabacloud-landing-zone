@@ -2,6 +2,7 @@ package com.aliyun.autowonder.dispatch;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import com.aliyun.autowonder.workitem.AssignmentActor;
 
 import static org.mockito.Mockito.*;
 
@@ -20,11 +21,12 @@ class DispatchAssignmentListenerTest {
     void enqueuesAndRunsWhenStepAndAgentPresent() {
         DispatchDO d = new DispatchDO();
         d.setId(9001L);
-        when(dispatchService.enqueueAssignment(7L, 100L, 5L, 42L, 8, 3L)).thenReturn(d);
+        var actor = AssignmentActor.agent(12L, "Terraform PD");
+        when(dispatchService.enqueueAssignment(7L, 100L, 5L, 42L, 8, 3L, actor)).thenReturn(d);
 
-        listener.onWorkitemAssigned(new WorkitemAssignedEvent(7L, 100L, 5L, 42L, 8, 3L));
+        listener.onWorkitemAssigned(new WorkitemAssignedEvent(7L, 100L, 5L, 42L, 8, 3L, actor));
 
-        verify(dispatchService).enqueueAssignment(7L, 100L, 5L, 42L, 8, 3L);
+        verify(dispatchService).enqueueAssignment(7L, 100L, 5L, 42L, 8, 3L, actor);
         verify(dispatchService).runPending(9001L);
     }
 

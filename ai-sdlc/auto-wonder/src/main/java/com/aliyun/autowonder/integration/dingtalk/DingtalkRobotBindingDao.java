@@ -12,16 +12,28 @@ public interface DingtalkRobotBindingDao {
 
     DingtalkRobotBindingDO findById(@Param("tenantId") Long tenantId, @Param("id") Long id);
 
+    /** Row-locking read used by the delivery fence: blocks binding edits until the send ends. */
+    DingtalkRobotBindingDO findByIdForUpdate(@Param("tenantId") Long tenantId, @Param("id") Long id);
+
     DingtalkRobotBindingDO findByRobotCode(@Param("tenantId") Long tenantId,
             @Param("robotCode") String robotCode);
 
     DingtalkRobotBindingDO findByRobotCodeGlobal(@Param("robotCode") String robotCode);
+
+    DingtalkRobotBindingDO findByIdGlobal(@Param("id") Long id);
+
+    DingtalkRobotBindingDO findLegacyByAppKeyGlobal(@Param("appKey") String appKey);
+
+    DingtalkRobotBindingDO findSharedByConfigAndGroup(@Param("platformConfigId") Long platformConfigId,
+            @Param("groupId") String groupId);
 
     List<DingtalkRobotBindingDO> listByTenant(@Param("tenantId") Long tenantId);
 
     List<DingtalkRobotBindingDO> listEnabledByTransportMode(@Param("transportMode") String transportMode);
 
     int update(DingtalkRobotBindingDO row);
+
+    int updateShared(DingtalkRobotBindingDO row);
 
     int updateHealth(@Param("tenantId") Long tenantId, @Param("id") Long id,
             @Param("lastSuccessAt") Date lastSuccessAt, @Param("lastError") String lastError);

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { WorkitemClarificationPanel } from './WorkitemClarificationPanel';
+import { useAuthStore } from '@/shared/auth/store';
 import { clearClarificationPrefill, writeClarificationPrefill } from './prefill';
 
 type RealtimeCallback = (event: { type: string; payload: unknown }) => void;
@@ -34,6 +35,8 @@ interface PanelConversation {
   processingTurnId?: number | null;
   cancelSupported?: boolean;
   pendingElicitations?: Array<Record<string, unknown>>;
+  answerDeliveries?: Array<Record<string, unknown>>;
+  questionHistory?: Array<Record<string, unknown>>;
   turns?: Array<{ id: number; direction: string; content: string; status: string }>;
   /** 详情接口带回的命令快照种子（打开会话即秒显 `/` 候选） */
   availableCommands?: Array<Record<string, unknown>> | null;
@@ -54,6 +57,8 @@ function payloadOf(conv: PanelConversation) {
     processingStatus: conv.processingStatus ?? null,
     processingTurnId: conv.processingTurnId ?? null,
     pendingElicitations: conv.pendingElicitations ?? [],
+    answerDeliveries: conv.answerDeliveries ?? [],
+    questionHistory: conv.questionHistory,
     lastTurnAt: null,
     gmtCreate: '2026-01-01T00:00:00',
     turns: (conv.turns ?? []).map((t) => ({ ...t, error: null, gmtCreate: '2026-01-01T00:00:00' })),
@@ -217,6 +222,16 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
     expect(screen.queryByTestId('elicitation-wizard-req-1')).toBeNull();
     expect(screen.queryByText('不该出现的问题')).toBeNull();
     expect(await screen.findByPlaceholderText('输入消息...')).toBeInTheDocument();
+  });
+
+  it('restores saved answers without reopening the stale question wizard', async () => {
+    const card = { requestId: 'req-saved', turnId: 3, mode: 'form', message: 'saved question', requestedSchema: SELECT_SCHEMA, status: 'ANSWERED', gmtCreate: '', answerId: 'answer-1', answerJson: '{"q0":"nextjs"}', deliveryStatus: 'SAVED' };
+    await renderPanel({ acpInteractionSupported: true, processingStatus: 'PROCESSING', processingTurnId: 3,
+      pendingElicitations: [{ ...card, status: 'PENDING' }], answerDeliveries: [card],
+      turns: [{ id: 3, direction: 'INBOUND', content: '请给方案', status: 'PROCESSING' }] });
+    expect(await screen.findByText('回答已保存，等待送达执行器')).toBeInTheDocument();
+    expect(screen.queryByTestId('elicitation-wizard-req-saved')).toBeNull();
+    expect(screen.getByText(/nextjs/)).toBeInTheDocument();
   });
 
   // F13：提交走 POST .../elicitations/{requestId}/reply，answer 以字符串原样透传。
@@ -944,4 +959,76 @@ describe('WorkitemClarificationPanel 问题卡片收起/展开（工单 56330）
     expect(nextToggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.queryByTestId('elicitation-collapsed-req-B')).toBeNull();
   });
+});
+
+
+describe('durable clarification history', () => {
+  beforeEach(() => useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'Test', description: '' }, 'ADMIN'));
+  afterEach(() => { clearClarificationPrefill('100'); realtime.callback = null; useAuthStore.getState().clear(); });
+  const rows = (count: number, turnId: number) => Array.from({ length: count }, (_, i) => ({
+    requestId: `q-${turnId}-${i}`, turnId, mode: 'form', message: `Question ${turnId}/${i}`,
+    requestedSchema: SELECT_SCHEMA, status: 'ANSWERED', gmtCreate: `2026-01-01T00:00:0${i}`,
+    answerJson: JSON.stringify({ q0: `Exact answer ${turnId}/${i}` }), deliveryStatus: 'WRITTEN',
+  }));
+  it('keeps seven and two answers once beside their original IN across live snapshots and reload', async () => {
+    const cards = [...rows(7, 3), ...rows(2, 5)];
+    const conv = { acpInteractionSupported: true, questionHistory: cards, answerDeliveries: cards,
+      turns: [{ id: 3, direction: 'IN', content: 'First IN', status: 'SUCCESS' },
+        { id: 4, direction: 'OUT', content: 'First result', status: 'SUCCESS' },
+        { id: 5, direction: 'IN', content: 'Second IN', status: 'SUCCESS' }] };
+    const { view, queryClient } = await renderPanel(conv);
+    expect(await screen.findByText('Exact answer 3/0')).toBeInTheDocument();
+    emit(1, 'acp_elicitation_resolved', { data: { requestId: cards[0].requestId, action: 'accept', content: { q0: 'old live answer' } } });
+    emit(2, 'acp_elicitation', { data: { requestId: cards[0].requestId, message: cards[0].message, requestedSchema: JSON.parse(SELECT_SCHEMA) } });
+    for (const card of cards) expect(screen.getAllByText(JSON.parse(card.answerJson).q0)).toHaveLength(1);
+    expect(screen.queryByText(/回答已写入执行器，等待后续进展/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId(`elicitation-wizard-${cards[0].requestId}`)).not.toBeInTheDocument();
+    view.unmount(); queryClient.clear();
+    await renderPanel(conv);
+    for (const card of cards) expect(await screen.findAllByText(JSON.parse(card.answerJson).q0)).toHaveLength(1);
+  });
+  it('links uncertain delivery to its preserved answer and restores expired context only into the draft', async () => {
+    let sends = 0; let replies = 0;
+    server.use(http.post('/api/workitems/:workitemId/clarification-conversations/:conversationId/turns', () => { sends++; return ok(null); }),
+      http.post('/api/workitems/:workitemId/clarification-conversations/:conversationId/elicitations/:requestId/reply', () => { replies++; return ok(null); }));
+    const uncertain = { ...rows(1, 3)[0], deliveryStatus: 'UNKNOWN' };
+    const expired = { ...rows(1, 5)[0], status: 'EXPIRED', deliveryStatus: null, answerJson: null };
+    await renderPanel({ acpInteractionSupported: true, questionHistory: [uncertain, expired],
+      pendingElicitations: [{ ...expired, status: 'PENDING' }],
+      turns: [{ id: 3, direction: 'IN', content: 'Earlier request', status: 'SUCCESS' },
+        { id: 5, direction: 'IN', content: 'Original request for fresh session', status: 'CANCELED' }] });
+    const history = await screen.findByTestId('question-history-3-q-3-0');
+    expect(screen.queryByTestId('elicitation-wizard-q-5-0')).not.toBeInTheDocument();
+    expect(history).toHaveTextContent('Exact answer 3/0');
+    expect(history).toHaveTextContent('回答的处理状态无法确认，已保留答案，请查看本轮结果');
+    await typeComposer('Keep my draft');
+    fireEvent.click(screen.getByRole('button', { name: '继续回答' }));
+    fireEvent.click(screen.getByRole('button', { name: '继续回答' }));
+    const input = screen.getByPlaceholderText('输入消息...') as HTMLTextAreaElement;
+    expect(input.value).toContain('Keep my draft');
+    expect(input.value).toContain('Original request for fresh session');
+    expect(input.value).toContain('Question 5/0');
+    expect(input.value).toContain('首选技术栈');
+    expect(input.value.match(/Original request for fresh session/g)).toHaveLength(1);
+    expect(sends).toBe(0); expect(replies).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    await waitFor(() => expect(sends).toBe(1));
+    expect(replies).toBe(0);
+  });
+});
+
+
+it('keeps expired draft restoration disabled during processing and for read-only workitems', async () => {
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'Test', description: '' }, 'READ_ONLY');
+  const conv = { acpInteractionSupported: true, questionHistory: [{ requestId: 'expired-idle', turnId: 3, mode: 'form', message: 'Expired question context', requestedSchema: SELECT_SCHEMA, status: 'EXPIRED', gmtCreate: '' }],
+    turns: [{ id: 3, direction: 'IN', content: 'Original request', status: 'CANCELED' }] };
+  const { view, queryClient } = await renderPanel(conv);
+  const button = await screen.findByRole('button', { name: '继续回答' });
+  expect(button).toBeDisabled();
+  act(() => useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'Test', description: '' }, 'ADMIN'));
+  expect(button).toBeEnabled();
+  mockPanel({ ...conv, processingStatus: 'PROCESSING', processingTurnId: 4 });
+  refetchConversation(queryClient);
+  await waitFor(() => expect(button).toBeDisabled());
+  view.unmount(); queryClient.clear(); useAuthStore.getState().clear(); clearClarificationPrefill('100'); realtime.callback = null;
 });

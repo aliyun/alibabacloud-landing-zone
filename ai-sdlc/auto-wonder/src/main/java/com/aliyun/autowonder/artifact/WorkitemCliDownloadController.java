@@ -50,13 +50,20 @@ public class WorkitemCliDownloadController {
     public ResponseEntity<Result<List<ArtifactVO>>> index(
             @PathVariable("workitemId") long workitemId,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
+        com.aliyun.autowonder.mcp.McpAccessTokenService.Principal principal = null;
         try {
-            WorkitemDO workitem = authorizedWorkitem(workitemId, authorization);
-            return ResponseEntity.ok(Result.ok(
-                    requirementDocumentService.list(workitemId, workitem.getTenantId())));
+            principal = authenticate(authorization, workitemId);
+            WorkitemDO workitem = authorizedWorkitem(workitemId, principal.userId());
+            var result = requirementDocumentService.list(workitemId, workitem.getTenantId());
+            tokenService.auditUse(principal, workitemId, "CLI_DOWNLOAD_INDEX", null);
+            return ResponseEntity.ok(Result.ok(result));
         } catch (BizException ex) {
+            tokenService.auditUse(principal, workitemId, "CLI_DOWNLOAD_INDEX", ex);
             return ResponseEntity.status(statusFor(ex.getCode()))
                     .body(Result.fail(ex));
+        } catch (RuntimeException ex) {
+            tokenService.auditUse(principal, workitemId, "CLI_DOWNLOAD_INDEX", ex);
+            throw ex;
         }
     }
 
@@ -65,8 +72,10 @@ public class WorkitemCliDownloadController {
             @PathVariable("workitemId") long workitemId,
             @PathVariable("artifactId") long artifactId,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
+        com.aliyun.autowonder.mcp.McpAccessTokenService.Principal principal = null;
         try {
-            WorkitemDO workitem = authorizedWorkitem(workitemId, authorization);
+            principal = authenticate(authorization, workitemId);
+            WorkitemDO workitem = authorizedWorkitem(workitemId, principal.userId());
             RequirementDocumentService.DocumentContent content =
                     requirementDocumentService.readDocument(workitemId, artifactId, workitem.getTenantId());
             ContentDisposition disposition = ContentDisposition.attachment()
@@ -76,19 +85,23 @@ public class WorkitemCliDownloadController {
             headers.setContentDisposition(disposition);
             headers.setContentType(MediaType.valueOf(content.contentType()));
             headers.set("X-Content-Type-Options", "nosniff");
+            tokenService.auditUse(principal, workitemId, "CLI_DOWNLOAD_CONTENT", null);
             return new ResponseEntity<>(content.bytes(), headers, HttpStatus.OK);
         } catch (BizException ex) {
+            tokenService.auditUse(principal, workitemId, "CLI_DOWNLOAD_CONTENT", ex);
             byte[] body = JSON.toJSONString(Result.fail(ex))
                     .getBytes(StandardCharsets.UTF_8);
             return ResponseEntity.status(statusFor(ex.getCode()))
                     .contentType(MediaType.APPLICATION_JSON)
                     .header("X-Content-Type-Options", "nosniff")
                     .body(body);
+        } catch (RuntimeException ex) {
+            tokenService.auditUse(principal, workitemId, "CLI_DOWNLOAD_CONTENT", ex);
+            throw ex;
         }
     }
 
-    private WorkitemDO authorizedWorkitem(long workitemId, String authorization) {
-        long userId = authenticate(authorization);
+    private WorkitemDO authorizedWorkitem(long workitemId, long userId) {
         WorkitemDO workitem = workitemDao.findById(workitemId);
         if (workitem == null || workitem.getTenantId() == null) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
@@ -97,13 +110,13 @@ public class WorkitemCliDownloadController {
         return workitem;
     }
 
-    private long authenticate(String authorization) {
+    private com.aliyun.autowonder.mcp.McpAccessTokenService.Principal authenticate(String authorization, long workitemId) {
         String scheme = "Bearer ";
         if (authorization == null || authorization.length() < scheme.length()
                 || !authorization.regionMatches(true, 0, scheme, 0, scheme.length())) {
             throw new BizException(ErrorCode.UNAUTHORIZED);
         }
-        return tokenService.authenticate(authorization.substring(scheme.length()).trim());
+        return tokenService.authenticateForWorkitem(authorization.substring(scheme.length()).trim(), workitemId);
     }
 
     private HttpStatus statusFor(String code) {

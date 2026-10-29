@@ -11,7 +11,7 @@ import { useTemplateDetail } from '@/features/statemachine/hooks';
 import {
   useWorkitem, useUnifiedTimeline, useParticipants,
   useDeliveryProgress, useClarification, useArtifacts, useRequirementDocuments, useTransitionWorkitem, useSyncExternalWorkitem,
-  useUpdateWorkitemContent, useDeleteWorkitem, useToggleWatch,
+  useUpdateWorkitemContent, useDeleteWorkitem, useToggleWatch, useUpdateWorkitemTags, useWorkitemTagOptions,
 } from './hooks';
 import { WorkitemHeader } from './components/WorkitemHeader';
 import { WorkitemMeta } from './components/WorkitemMeta';
@@ -24,6 +24,7 @@ import { AssignHumanModal } from './components/AssignHumanModal';
 import { OtherWorkspacePrompt } from './components/OtherWorkspacePrompt';
 import { readWorkitemOwningWorkspace } from './otherWorkspace';
 import { WorkitemContent } from './components/WorkitemContent';
+import { WorkitemTagsEditor } from './components/WorkitemTagsEditor';
 import { RequirementDocumentsCard } from './components/RequirementDocumentsCard';
 import { ClarificationResult } from './components/ClarificationResult';
 import { UnifiedTimeline } from './components/UnifiedTimeline';
@@ -36,6 +37,8 @@ import { isSameClarifyView, readClarifyView, writeClarifyView } from './clarifyV
 import type { ClarifyContext, ClarifyView } from './clarifyView';
 import { isClarifyReminderSuppressed, suppressClarifyReminder } from './clarifyReminderPreference';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { allows } from '@/shared/auth/access';
+import { useAuthStore } from '@/shared/auth/store';
 import { CLARIFICATION_THEME } from './clarification/theme';
 import type { Artifact, Participant, TimelineItem } from '@/shared/types/workitem';
 
@@ -52,6 +55,11 @@ export function WorkitemDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const accessCommand = useAccessCommand();
+  const accessLevel = useAuthStore((state) => state.accessLevel);
+  const readOnlyDomains = useAuthStore((state) => state.readOnlyDomains);
+  // 与后端一致：读写级即可编辑，角色勾选「工单」只读后收回入口。
+  const tagsEditable = accessLevel !== null && allows(accessLevel, 'READ_WRITE')
+    && (accessLevel === 'ADMIN' || !readOnlyDomains.includes('WORKITEM'));
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [clarifyReminderOpen, setClarifyReminderOpen] = useState(false);
   // localStorage 不是响应式的：挂载时读一次进 state，本次会话内勾选后立刻生效，不必刷新页面
@@ -59,6 +67,7 @@ export function WorkitemDetailPage() {
   const [assignHumanOpen, setAssignHumanOpen] = useState(false);
   const [transitionOpen, setTransitionOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   // Router 导航可以延后提交。同帧的全屏/会话上报必须累积到尚未提交的 URL，
@@ -103,6 +112,8 @@ export function WorkitemDetailPage() {
   const externalSyncMutation = useSyncExternalWorkitem();
   const deleteMutation = useDeleteWorkitem();
   const watchMutation = useToggleWatch();
+  const tagsMutation = useUpdateWorkitemTags(id || '');
+  const { data: tagOptions } = useWorkitemTagOptions();
   const { data: timelineData, isLoading: timelineLoading } = useUnifiedTimeline(id || '');
   const timeline = timelineData ?? EMPTY_TIMELINE;
   const { data: participantsData, isLoading: participantsLoading } = useParticipants(id || '');
@@ -234,6 +245,13 @@ export function WorkitemDetailPage() {
             creatorDisplayName={workitem.creatorDisplayName ?? null}
             sdlcName={workitem.sdlcName ?? null}
             tags={workitem.tags}
+            tagsEditable={tagsEditable}
+            onEditTags={() => accessCommand(
+              'READ_WRITE',
+              t('tags.editCommand'),
+              () => setTagsOpen(true),
+              'WORKITEM',
+            )}
           />
           <ScheduledStartControl
             workitemId={workitem.id}
@@ -329,6 +347,7 @@ export function WorkitemDetailPage() {
         <RightPanel
           key={id}
           workitemId={id}
+          timeline={timeline}
           participants={participants}
           participantsLoading={participantsLoading}
           externalCollaboration={workitem.externalCollaboration}
@@ -339,6 +358,7 @@ export function WorkitemDetailPage() {
           onRetryProgress={() => { void retryProgress(); }}
           terminalStatus={workitem.statusName}
           artifacts={artifacts}
+          clarificationArtifacts={timelineArtifacts}
           artifactsLoading={artifactsLoading}
           onClarifyConfirm={handleClarifyConfirm}
           initialMode={panelMode}
@@ -428,6 +448,27 @@ export function WorkitemDetailPage() {
         onCancel={() => setDeleteOpen(false)}
       >
         {t('detail.deleteDescription')}
+      </Modal>
+      <Modal
+        closeIcon={<CloseOutlined aria-hidden="true" />}
+        closable={{ 'aria-label': t('projection.close') }}
+        title={t('tags.edit')}
+        open={tagsOpen}
+        footer={null}
+        destroyOnHidden
+        onCancel={() => setTagsOpen(false)}
+      >
+        <WorkitemTagsEditor
+          initialTags={workitem.tags ?? []}
+          options={tagOptions ?? []}
+          saving={tagsMutation.isPending}
+          onSave={async (tags) => {
+            await tagsMutation.mutateAsync({ tags });
+            setTagsOpen(false);
+          }}
+          onCancel={() => setTagsOpen(false)}
+          autoFocus
+        />
       </Modal>
     </div>
   );

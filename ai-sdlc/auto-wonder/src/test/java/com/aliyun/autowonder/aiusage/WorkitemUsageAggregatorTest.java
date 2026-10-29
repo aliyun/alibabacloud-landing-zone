@@ -208,6 +208,89 @@ class WorkitemUsageAggregatorTest {
                 summary.getRuns().stream().map(WorkitemUsageRunVO::getLabel).toList());
     }
 
+    private AgentConversationUsageDO clarification(Long agentId, String credits) {
+        AgentConversationUsageDO row = new AgentConversationUsageDO();
+        row.setAgentId(agentId);
+        row.setCredits(credits == null ? null : new BigDecimal(credits));
+        return row;
+    }
+
+    private WorkitemUsageSummaryVO summarizeWithClarification(List<DispatchAiUsageDO> rows,
+                                                              List<DispatchDO> dispatches,
+                                                              List<AgentConversationUsageDO> clarifications) {
+        return WorkitemUsageAggregator.summarize(rows, dispatches, clarifications, AGENT_NAMES::get);
+    }
+
+    @Test
+    void returns_clarification_only_summary_when_no_dispatch_usage_exists() {
+        WorkitemUsageSummaryVO summary = summarizeWithClarification(List.of(), List.of(),
+                List.of(clarification(40L, "5.5"), clarification(40L, "2")));
+
+        assertCredits("7.5", summary.getCredits());
+        assertEquals(1, summary.getRuns().size());
+        WorkitemUsageRunVO run = summary.getRuns().get(0);
+        assertEquals("CLARIFICATION", run.getLabelKind());
+        assertEquals("DEV", run.getAgentName());
+        assertEquals(Long.valueOf(40L), run.getAgentId());
+        assertNull(run.getLabel());
+        assertNull(run.getRunIndex());
+        assertCredits("7.5", run.getCredits());
+    }
+
+    @Test
+    void appends_clarification_runs_after_dispatch_runs_and_sums_both() {
+        List<DispatchDO> dispatches = List.of(dispatch(30L, 40L, 1L));
+
+        WorkitemUsageSummaryVO summary = summarizeWithClarification(
+                List.of(usage(30L, 40L, "20")), dispatches,
+                List.of(clarification(40L, "5"), clarification(41L, "2")));
+
+        assertCredits("27", summary.getCredits());
+        assertEquals(List.of("AGENT_RUN", "CLARIFICATION", "CLARIFICATION"),
+                summary.getRuns().stream().map(WorkitemUsageRunVO::getLabelKind).toList());
+        assertEquals("DEV run-1", summary.getRuns().get(0).getLabel());
+        assertEquals("DEV", summary.getRuns().get(1).getAgentName());
+        assertEquals("CR", summary.getRuns().get(2).getAgentName());
+        assertCredits("5", summary.getRuns().get(1).getCredits());
+        assertCredits("2", summary.getRuns().get(2).getCredits());
+    }
+
+    @Test
+    void ignores_zero_and_null_clarification_credits() {
+        List<DispatchDO> dispatches = List.of(dispatch(30L, 40L, 1L));
+
+        WorkitemUsageSummaryVO summary = summarizeWithClarification(
+                List.of(usage(30L, 40L, "4")), dispatches,
+                java.util.Arrays.asList(clarification(40L, "0"), clarification(40L, null), null));
+
+        assertEquals(1, summary.getRuns().size());
+        assertEquals("AGENT_RUN", summary.getRuns().get(0).getLabelKind());
+        assertCredits("4", summary.getCredits());
+        assertNull(summarizeWithClarification(List.of(), List.of(),
+                List.of(clarification(40L, "0"))));
+    }
+
+    @Test
+    void merges_clarification_of_unknown_agent_under_null_agent() {
+        WorkitemUsageSummaryVO summary = summarizeWithClarification(List.of(), List.of(),
+                List.of(clarification(null, "3"), clarification(null, "2")));
+
+        assertEquals(1, summary.getRuns().size());
+        assertNull(summary.getRuns().get(0).getAgentId());
+        assertNull(summary.getRuns().get(0).getAgentName());
+        assertEquals("CLARIFICATION", summary.getRuns().get(0).getLabelKind());
+        assertCredits("5", summary.getCredits());
+    }
+
+    @Test
+    void omits_agent_name_for_clarification_when_no_resolver_is_given() {
+        WorkitemUsageSummaryVO summary = WorkitemUsageAggregator.summarize(
+                List.of(), List.of(), List.of(clarification(40L, "3")), null);
+
+        assertNull(summary.getRuns().get(0).getAgentName());
+        assertCredits("3", summary.getCredits());
+    }
+
     @Test void newOwnedRunOriginKeepsRawLabelNameAndOldDtoJson() {
         var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
         for(String name:List.of("  <b>DEV</b>  ","   ","\u3000", "\u00a0", "unknown", "agent-77")) {

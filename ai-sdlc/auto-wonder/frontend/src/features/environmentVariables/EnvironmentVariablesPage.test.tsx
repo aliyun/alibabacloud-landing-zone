@@ -57,58 +57,18 @@ describe('EnvironmentVariablesPage', () => {
     expect(await screen.findByText('暂无环境变量')).toBeInTheDocument();
   });
 
-  it('always starts masked and reveals only the requested row on demand', async () => {
-    const reveal = vi.fn(({ params }: { params: { id: string } }) => ok({ value: params.id === '11' ? 'top-secret-value' : 'other' }));
-    server.use(http.get('/api/environment-variables/:id/value', reveal));
+  it('masks every value and never requests plaintext', async () => {
+    const valueEndpoint = vi.fn(() => ok({ value: 'must-not-fetch' }));
+    server.use(http.get('/api/environment-variables/:id/value', valueEndpoint));
 
     renderPage();
     const tokenRow = await screen.findByRole('row', { name: /API_TOKEN/ });
     const emptyRow = screen.getByRole('row', { name: /EMPTY_SECRET/ });
     expect(within(tokenRow).getByText('**')).toBeInTheDocument();
     expect(within(emptyRow).getByText('**')).toBeInTheDocument();
-    expect(screen.queryByText('top-secret-value')).not.toBeInTheDocument();
-    expect(reveal).not.toHaveBeenCalled();
-
-    await userEvent.click(within(tokenRow).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-    expect(await within(tokenRow).findByText('top-secret-value')).toBeInTheDocument();
-    expect(within(emptyRow).getByText('**')).toBeInTheDocument();
-    expect(reveal).toHaveBeenCalledOnce();
-  });
-
-  it('copies only a revealed value and hiding clears it from component memory', async () => {
-    server.use(http.get('/api/environment-variables/11/value', () => ok({ value: 'copy-me' })));
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-
-    renderPage();
-    const row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    expect(within(row).queryByRole('button', { name: '复制 API_TOKEN 的值' })).not.toBeInTheDocument();
-    await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-    await userEvent.click(await within(row).findByRole('button', { name: '复制 API_TOKEN 的值' }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('copy-me'));
-    expect(await screen.findByText('已复制')).toBeInTheDocument();
-
-    await userEvent.click(within(row).getByRole('button', { name: '隐藏 API_TOKEN 的值' }));
-    expect(within(row).getByText('**')).toBeInTheDocument();
-    expect(screen.queryByText('copy-me')).not.toBeInTheDocument();
-  });
-
-  it('clears revealed values on refresh, unmount, and remount without query caching', async () => {
-    const reveal = vi.fn(() => ok({ value: 'memory-only' }));
-    server.use(http.get('/api/environment-variables/11/value', reveal));
-    const { client, unmount } = renderPage();
-    let row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-    expect(await within(row).findByText('memory-only')).toBeInTheDocument();
-    expect(client.getQueryCache().findAll().some((query) => JSON.stringify(query.state.data).includes('memory-only'))).toBe(false);
-
-    await userEvent.click(screen.getByRole('button', { name: '刷新' }));
-    await waitFor(() => expect(screen.queryByText('memory-only')).not.toBeInTheDocument());
-    unmount();
-    renderPage(client);
-    row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    expect(within(row).getByText('**')).toBeInTheDocument();
-    expect(reveal).toHaveBeenCalledOnce();
+    expect(within(tokenRow).queryByRole('button', { name: /API_TOKEN 的值/ })).not.toBeInTheDocument();
+    expect(within(emptyRow).queryByRole('button', { name: /EMPTY_SECRET 的值/ })).not.toBeInTheDocument();
+    expect(valueEndpoint).not.toHaveBeenCalled();
   });
 
   it('allows an admin to create a variable with an explicitly present empty value', async () => {
@@ -129,10 +89,10 @@ describe('EnvironmentVariablesPage', () => {
   });
 
   it('edits metadata without fetching plaintext and sends updateValue false', async () => {
-    const reveal = vi.fn(() => ok({ value: 'must-not-fetch' }));
+    const valueEndpoint = vi.fn(() => ok({ value: 'must-not-fetch' }));
     let body: Record<string, unknown> | undefined;
     server.use(
-      http.get('/api/environment-variables/:id/value', reveal),
+      http.get('/api/environment-variables/:id/value', valueEndpoint),
       http.put('/api/environment-variables/11', async ({ request }) => {
         body = await request.json() as Record<string, unknown>;
         return ok(variables[0]);
@@ -148,7 +108,7 @@ describe('EnvironmentVariablesPage', () => {
     await userEvent.type(screen.getByLabelText('说明'), '只改说明');
     await userEvent.click(screen.getByRole('button', { name: '保存' }));
     await waitFor(() => expect(body).toEqual({ name: 'API_TOKEN', description: '只改说明', updateValue: false }));
-    expect(reveal).not.toHaveBeenCalled();
+    expect(valueEndpoint).not.toHaveBeenCalled();
   });
 
   it('sends updateValue true with the replacement only after explicit selection', async () => {
@@ -208,40 +168,18 @@ describe('EnvironmentVariablesPage', () => {
     expectNoSecretCache(client, 'replacement-sensitive-input');
   });
 
-  it.each(['READ_WRITE', 'READ_ONLY'] as const)('keeps %s members read-only while allowing reveal and copy', async (level) => {
+  it.each(['READ_WRITE', 'READ_ONLY'] as const)('keeps %s members read-only without exposing values', async (level) => {
     useAuthStore.getState().setAccessLevel(level);
-    server.use(http.get('/api/environment-variables/11/value', () => ok({ value: 'readable' })));
+    const valueEndpoint = vi.fn(() => ok({ value: 'must-not-load' }));
+    server.use(http.get('/api/environment-variables/11/value', valueEndpoint));
     renderPage();
     const row = await screen.findByRole('row', { name: /API_TOKEN/ });
     expect(screen.queryByRole('button', { name: '新增环境变量' })).not.toBeInTheDocument();
     expect(within(row).queryByRole('button', { name: '编辑 API_TOKEN' })).not.toBeInTheDocument();
     expect(within(row).queryByRole('button', { name: '删除 API_TOKEN' })).not.toBeInTheDocument();
-    await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-    expect(await within(row).findByText('readable')).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: '复制 API_TOKEN 的值' })).toBeInTheDocument();
-  });
-
-  it('render-gates a revealed value and stale copy control immediately after an access downgrade', async () => {
-    server.use(http.get('/api/environment-variables/11/value', () => ok({ value: 'admin-boundary-secret' })));
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    renderPage();
-
-    const row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-    expect(await within(row).findByText('admin-boundary-secret')).toBeInTheDocument();
-    const staleCopy = within(row).getByRole('button', { name: '复制 API_TOKEN 的值' });
-
-    act(() => {
-      useAuthStore.getState().setAccessLevel('READ_ONLY');
-      // A control retained by the browser/event queue must not copy after the
-      // authorization boundary changes, even before React flushes effects.
-      staleCopy.click();
-      expect(writeText).not.toHaveBeenCalled();
-    });
-
-    expect(screen.queryByText('admin-boundary-secret')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '复制 API_TOKEN 的值' })).not.toBeInTheDocument();
+    expect(within(row).getByText('**')).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: /API_TOKEN 的值/ })).not.toBeInTheDocument();
+    expect(valueEndpoint).not.toHaveBeenCalled();
   });
 
   it('confirms deletion and surfaces the backend reference detail', async () => {
@@ -314,26 +252,6 @@ describe('EnvironmentVariablesPage', () => {
     await waitFor(() => expect(update).not.toHaveBeenCalled());
   });
 
-  it.each([
-    { outcome: 'success', response: ok({ value: 'workspace-a-value' }) },
-    { outcome: 'failure', response: HttpResponse.json({ success: false, code: '33001', message: '旧空间变量不存在', data: null }) },
-  ])('ignores a late reveal $outcome after switching workspaces', async ({ response }) => {
-    let finish: ((response: Response) => void) | undefined;
-    server.use(http.get('/api/environment-variables/11/value', async () =>
-      new Promise<Response>((resolve) => { finish = resolve; })));
-    renderPage();
-    const row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-    await waitFor(() => expect(finish).toBeTypeOf('function'));
-
-    act(() => useAuthStore.getState().setCurrentWorkspace({ id: 2, name: 'other', description: '' }, 'ADMIN'));
-    finish?.(response);
-
-    await waitFor(() => expect(screen.getByRole('row', { name: /API_TOKEN/ })).toBeInTheDocument());
-    expect(screen.queryByText('workspace-a-value')).not.toBeInTheDocument();
-    expect(screen.queryByText('旧空间变量不存在')).not.toBeInTheDocument();
-  });
-
   it('does not let late create success close or reset a form opened in the new workspace', async () => {
     let finish: ((response: Response) => void) | undefined;
     server.use(http.post('/api/environment-variables', async () =>
@@ -386,13 +304,10 @@ describe('EnvironmentVariablesPage', () => {
     expect(screen.queryByText('旧请求版本冲突')).not.toBeInTheDocument();
   }, 15_000);
 
-  it('isolates late delete success from the new workspace reveal and loading state', async () => {
+  it('isolates late delete success from the new workspace state', async () => {
     let finish: ((response: Response) => void) | undefined;
-    server.use(
-      http.delete('/api/environment-variables/11', async () =>
-        new Promise<Response>((resolve) => { finish = resolve; })),
-      http.get('/api/environment-variables/11/value', () => ok({ value: 'workspace-b-visible' })),
-    );
+    server.use(http.delete('/api/environment-variables/11', async () =>
+      new Promise<Response>((resolve) => { finish = resolve; })));
     renderPage();
     let row = await screen.findByRole('row', { name: /API_TOKEN/ });
     await userEvent.click(within(row).getByRole('button', { name: '删除 API_TOKEN' }));
@@ -401,13 +316,12 @@ describe('EnvironmentVariablesPage', () => {
 
     act(() => useAuthStore.getState().setCurrentWorkspace({ id: 2, name: 'other', description: '' }, 'ADMIN'));
     row = await screen.findByRole('row', { name: /API_TOKEN/ });
-    await userEvent.click(within(row).getByRole('button', { name: '显示 API_TOKEN 的值' }));
-    expect(await within(row).findByText('workspace-b-visible')).toBeInTheDocument();
+    expect(within(row).getByText('**')).toBeInTheDocument();
     await userEvent.click(within(row).getByRole('button', { name: '删除 API_TOKEN' }));
     expect(screen.getByRole('button', { name: '确认删除' })).toBeEnabled();
     await act(async () => { finish?.(ok(null)); });
 
-    await waitFor(() => expect(within(row).getByText('workspace-b-visible')).toBeInTheDocument());
+    await waitFor(() => expect(within(row).getByText('**')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: '确认删除' })).toBeEnabled();
     expect(screen.queryByText('环境变量已删除')).not.toBeInTheDocument();
   }, 15_000);

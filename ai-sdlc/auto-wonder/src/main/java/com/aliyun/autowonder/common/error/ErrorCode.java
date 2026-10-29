@@ -10,6 +10,10 @@ public enum ErrorCode {
     NOT_FOUND("10404", "资源不存在"),
     CONFLICT("10409", "数据冲突"),
     RATE_LIMITED("10429", "请求过于频繁"),
+    // 强制刷新抢锁失败：同一租户已有刷新在跑，提示稍后重试而不是笼统的系统错误。
+    RETRY_LATER("10430", "数据正在刷新中，请稍后再试"),
+    // 强制刷新排队被拒：服务端刷新队列已满。
+    SYSTEM_BUSY("10431", "系统繁忙，请稍后重试"),
     // 11xxx 工作空间
     WORKSPACE_NOT_MEMBER("11001", "非该工作空间成员"),
     WORKSPACE_NAME_REQUIRED("11002", "工作空间名不能为空"),
@@ -100,6 +104,7 @@ public enum ErrorCode {
     SDLC_NOT_ENABLED("16009", "流程未启用,无法停用"),
     SDLC_DELETE_IN_USE("16010", "流程被引用,无法删除"),
     SDLC_STEP_NOT_FOUND("16011", "步骤不存在"),
+    SDLC_STEP_ORDER_EXHAUSTED("16015", "没有可用的步骤序号。"),
     SDLC_STEP_ORDER_DUPLICATE("16012", "步骤序号重复"),
     SDLC_VERSION_CONFLICT("16013", "流程已被修改,请重试"),
     // 17xxx 执行器/产物/任务包
@@ -257,7 +262,23 @@ public enum ErrorCode {
     USER_ADMIN_READONLY("37007", "该账号为只读账号，无法执行此操作"),
     USER_ADMIN_USERNAME_RESERVED("37008", "该用户名为平台保留名称"),
     USER_ADMIN_PASSWORD_MISMATCH("37009", "两次输入的密码不一致"),
-    USER_ADMIN_DELETE_CONFLICT("37010", "删除失败：占位用户名已被其他账号占用，请先处理冲突账号后再试");
+    USER_ADMIN_DELETE_CONFLICT("37010", "删除失败：占位用户名已被其他账号占用，请先处理冲突账号后再试"),
+    // 38xxx 小队工作流图
+    SQUAD_WORKFLOW_EMPTY_SQUAD("38001", "小队暂无可分析的线上成员配置"),
+    SQUAD_WORKFLOW_INPUT_TOO_LARGE("38002", "小队线上配置过大，无法生成协作图"),
+    SQUAD_WORKFLOW_STALE_INPUT("38003", "小队线上配置已变化，请刷新后重试"),
+    SQUAD_WORKFLOW_BUSY("38004", "当前工作空间已有进行中的生成任务，请稍后重试"),
+    SQUAD_WORKFLOW_CHIEF_UNAVAILABLE("38005", "Chief 尚未就绪，暂时无法生成协作图"),
+    SQUAD_WORKFLOW_GENERATION_NOT_FOUND("38006", "生成任务不存在或已过期"),
+    SQUAD_WORKFLOW_SUBMISSION_CONFLICT("38007", "提交标识已用于不同内容，请使用新的提交标识"),
+    SQUAD_WORKFLOW_ATTEMPT_MISMATCH("38008", "提交不属于当前生成尝试"),
+    SQUAD_WORKFLOW_NOT_AVAILABLE("38009", "当前会话不能提交小队工作流结果"),
+    SQUAD_WORKFLOW_DEADLINE_EXCEEDED("38010", "生成已超时，请重新生成"),
+    SQUAD_WORKFLOW_RETRY_REQUIRED("38011", "上次生成已失败，请确认重试"),
+    SQUAD_WORKFLOW_VERSION_CONFLICT("38012", "生成状态已变化，请刷新后重试"),
+    SQUAD_WORKFLOW_INVALID_REQUEST("38013", "小队工作流请求参数不合法"),
+    SQUAD_WORKFLOW_SUBMISSION_LIMIT("38014", "提交次数已用尽，本次生成已失败"),
+    SQUAD_WORKFLOW_NOT_READY("38015", "小队工作流尚未生成完成");
 
 
     private final String code;

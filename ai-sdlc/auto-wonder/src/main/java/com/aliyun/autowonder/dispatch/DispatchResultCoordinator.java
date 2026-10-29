@@ -83,6 +83,7 @@ public class DispatchResultCoordinator {
             return persist(tenantId, executorId, input, hash, "REJECTED", "DISPATCH_CANCELED", null);
         }
         if (DispatchStatus.isTerminal(row.getStatus())) {
+            deferWaiterRelease(tenantId, id);
             return persist(tenantId, executorId, input, hash, "REJECTED", "DISPATCH_ALREADY_RESOLVED", null);
         }
         // A released execution stays resumable. A delayed result must not turn its pause
@@ -124,6 +125,7 @@ public class DispatchResultCoordinator {
         } else if (!success) {
             guidance.failForDispatch(tenantId, id, input.getString("error"));
         }
+        if (!failover) deferWaiterRelease(tenantId, id);
         if (success && input.getJSONObject("workflowPlan") != null)
             workflows.apply(tenantId, id, input.getJSONObject("workflowPlan"));
         JSONObject handoffReply = null;
@@ -155,7 +157,22 @@ public class DispatchResultCoordinator {
         if (!dispatches.rejectProtocolResult(tenantId, executorId, input.getLongValue("dispatchId"), reason))
             throw new IllegalStateException("RESULT_REJECTION_NOT_DURABLE");
         guidance.failForDispatch(tenantId, input.getLongValue("dispatchId"), reason);
+        deferWaiterRelease(tenantId, input.getLongValue("dispatchId"));
         return persist(tenantId, executorId, input, hash, "REJECTED", reason, null);
+    }
+
+    /**
+     * The result transaction is the first place a late terminal result becomes durable.
+     * Recheck inventory after commit instead of treating the platform status as stop proof.
+     */
+    private void deferWaiterRelease(long tenantId, long dispatchId) {
+        ResultCommitActions.defer("waiters:" + dispatchId, () -> {
+            // Most results have no rework barrier; avoid taking the workitem lock on
+            // the acknowledgement path unless a waiter actually references this row.
+            if (dao.existsWaitingForPredecessor(tenantId, dispatchId)) {
+                workflows.reconcileWaitersForPredecessor(tenantId, dispatchId);
+            }
+        });
     }
     private Outcome persist(long tenantId, long executorId, JSONObject input, String hash,
             String disposition, String reason, JSONObject handoff) {

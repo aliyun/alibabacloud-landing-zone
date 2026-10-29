@@ -85,6 +85,8 @@ import com.aliyun.autowonder.squad.SquadService;
 import com.aliyun.autowonder.squad.dto.CreateSquadRequest;
 import com.aliyun.autowonder.squad.dto.SquadVO;
 import com.aliyun.autowonder.statemachine.StatusTemplateService;
+import com.aliyun.autowonder.taskdata.TaskDataConflictException;
+import com.aliyun.autowonder.taskdata.TaskDataService;
 import com.aliyun.autowonder.workitem.AssignmentActor;
 import com.aliyun.autowonder.workitem.WorkitemService;
 import com.aliyun.autowonder.workitem.dto.AddCommentRequest;
@@ -120,6 +122,9 @@ public class McpToolService {
     private static final String LIST_WORKITEMS = "autowonder.list_workitems";
     private static final String GET_WORKITEM = "autowonder.get_workitem";
     private static final String UPDATE_WORKITEM = "autowonder.update_workitem";
+    private static final String LIST_TASK_DATA = "autowonder.list_task_data";
+    private static final String PUT_TASK_DATA = "autowonder.put_task_data";
+    private static final String UPDATE_WORKITEM_TAGS = "autowonder.update_workitem_tags";
     private static final String DELETE_WORKITEM = "autowonder.delete_workitem";
     private static final String ASSIGN_WORKITEM = "autowonder.assign_workitem";
     private static final String ADD_WORKITEM_COMMENT = "autowonder.add_workitem_comment";
@@ -204,6 +209,8 @@ public class McpToolService {
     private com.aliyun.autowonder.dispatch.DispatchRecoveryService recoveryService;
     @org.springframework.beans.factory.annotation.Autowired
     private com.aliyun.autowonder.dispatch.DispatchService recoveryDispatchService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.aliyun.autowonder.squad.workflow.SquadWorkflowSubmissionGuard squadWorkflowGuard;
     private static final String GET_DISPATCH_RUNTIME_TRACE = "autowonder.get_dispatch_runtime_trace";
     private static final String GET_DISPATCH_DIAGNOSTICS = "autowonder.get_dispatch_diagnostics";
     private static final String READ_DISPATCH_DIAGNOSTIC = "autowonder.read_dispatch_diagnostic";
@@ -278,6 +285,10 @@ public class McpToolService {
                     Map.entry(GET_WORKITEM,
                             workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_WORKITEM,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(LIST_TASK_DATA, workspaceTool(WorkspaceAccessLevel.ADMIN)),
+                    Map.entry(PUT_TASK_DATA, workspaceTool(WorkspaceAccessLevel.ADMIN)),
+                    Map.entry(UPDATE_WORKITEM_TAGS,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_WORKITEM,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
@@ -492,6 +503,9 @@ public class McpToolService {
                     Map.entry(LIST_WORKITEMS, WorkspaceDomain.WORKITEM),
                     Map.entry(GET_WORKITEM, WorkspaceDomain.WORKITEM),
                     Map.entry(UPDATE_WORKITEM, WorkspaceDomain.WORKITEM),
+                    Map.entry(LIST_TASK_DATA, WorkspaceDomain.WORKITEM),
+                    Map.entry(PUT_TASK_DATA, WorkspaceDomain.WORKITEM),
+                    Map.entry(UPDATE_WORKITEM_TAGS, WorkspaceDomain.WORKITEM),
                     Map.entry(DELETE_WORKITEM, WorkspaceDomain.WORKITEM),
                     Map.entry(ASSIGN_WORKITEM, WorkspaceDomain.WORKITEM),
                     Map.entry(ADD_WORKITEM_COMMENT, WorkspaceDomain.WORKITEM),
@@ -618,6 +632,10 @@ public class McpToolService {
 
     private final WorkspaceService workspaceService;
     private final WorkitemService workitemService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private TaskDataService taskDataService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.aliyun.autowonder.workitem.WorkitemDao taskDataOwners;
     @org.springframework.beans.factory.annotation.Autowired
     private com.aliyun.autowonder.workitem.WorkitemWatcherService workitemWatchers;
     private final GuidanceService guidanceService;
@@ -809,6 +827,28 @@ public class McpToolService {
                 tool(UPDATE_WORKITEM, "Update an AutoWonder workitem title or markdown content.",
                         schema(required("id"), prop("id", "integer"), prop("title", "string"),
                                 prop("contentMd", "string"))),
+                tool(LIST_TASK_DATA, "Page through one workspace task-data namespace for maintenance. "
+                        + "Requires a personal token and live workspace ADMIN access; dispatch and conversation credentials are rejected.",
+                        schema(required("namespace"), prop("namespace", "string"),
+                                prop("afterId", "integer", "Optional exclusive record id cursor; defaults to 0."),
+                                prop("limit", "integer", "Optional page size, 1–100; defaults to 50."))),
+                tool(PUT_TASK_DATA, "Create or update task data for an existing workitem in this workspace. "
+                        + "Requires a personal token and live workspace ADMIN access. Does not dispatch, reassign or transition the owner. "
+                        + "expectedVersion=0 creates; updates require the current version. Identical JSON is idempotent; record ownership cannot change.",
+                        schema(required("namespace", "key", "ownerWorkitemId", "value", "expectedVersion"),
+                                prop("namespace", "string"), prop("key", "string"),
+                                prop("ownerWorkitemId", "integer"),
+                                Map.of("name", "value", "description", "Required opaque JSON value, at most 64 KiB; never store credentials."),
+                                prop("expectedVersion", "integer", "Required non-negative record version; 0 for a new key."))),
+                tool(UPDATE_WORKITEM_TAGS, "Maintain tags on one workitem. action=replace sets the full list "
+                        + "(empty clears), add appends missing tags, remove drops listed tags. Tags are trimmed "
+                        + "and deduplicated; max 50 per workitem, max 64 characters each. Returns the updated workitem.",
+                        schema(required("id", "action", "tags"),
+                                prop("id", "integer", "Required. Workitem id."),
+                                enumProp("action", List.of("replace", "add", "remove"),
+                                        "Required. replace sets the full list, add appends, remove drops."),
+                                arrayProp("tags", Map.of("type", "string"),
+                                        "Required. Tags to apply; empty clears (replace) or is a no-op (add/remove)."))),
                 tool(DELETE_WORKITEM, "Delete an AutoWonder workitem when platform rules allow it.",
                         schema(required("id"), prop("id", "integer"))),
                 tool(ASSIGN_WORKITEM, "Assign an existing AutoWonder workitem to a human or digital worker. "
@@ -859,8 +899,14 @@ public class McpToolService {
                                         "Optional target digital worker ids for structured comment interactions."),
                                 arrayProp("targetHumanIds", Map.of("type", "integer"),
                                         "Optional target real user ids mentioned in this comment."))),
-                tool(LIST_WORKITEM_COMMENTS, "List comments on an AutoWonder workitem.",
-                        schema(required("id"), prop("id", "integer"))),
+                tool(LIST_WORKITEM_COMMENTS, "List comments on an AutoWonder workitem or scheduled-task run. "
+                                + "Scheduled-task agents must pass sourceType=WORKITEM to read business workitem comments.",
+                        schema(required("id"), prop("id", "integer"),
+                                enumProp("sourceType", List.of("WORKITEM", "SCHEDULED_TASK_RUN"),
+                                        "Optional. Select the comment owner type; id identifies that owner. "
+                                                + "When omitted, scheduled-run credentials read their own run's comments; "
+                                                + "other credentials read workitem comments. Dispatch credentials may "
+                                                + "read only their own scheduled run. All reads stay in workspaceId."))),
                 tool(UPLOAD_WORKITEM_DOCUMENT, "DEPRECATED: Do not send file content or Base64 through MCP. "
                                 + "Use the AutoWonder CLI for every requirement/design attachment regardless of size. "
                                 + "Mint an upload token with autowonder.workitem_cli_upload_token and run the command it returns, e.g.: "
@@ -887,11 +933,10 @@ public class McpToolService {
                                 prop("sourcePath", "string", "Optional local source path for display/audit only."))),
                 tool(WORKITEM_CLI_UPLOAD_TOKEN, "Mint a 30-minute, user-level, upload-only token for the AutoWonder CLI "
                                 + "`workitem upload` command. Long-lived personal, dispatch, and conversation "
-                                + "credentials can mint it. The token is not bound to an "
-                                + "organization or workitem and can be reused until it expires for any workitem the user "
-                                + "can currently modify; every upload re-checks live write membership. "
-                                + "id is the initial workitem id, used for the preflight check and the first exact command; "
-                                + "it is not bound into the token. Returns the token, expiry, deployment server URL, "
+                                + "credentials can mint it. Conversation-turn tokens are bound to this workitem and the originating "
+                                + "active turn, attempt, executor and actor. Personal and legacy dispatch tokens can be reused "
+                                + "for workitems the user can currently modify; every upload re-checks live write membership. "
+                                + "id selects the workitem and the generated command. Returns the token, expiry, deployment server URL, "
                                 + "recommended runtime version, and ready-to-run POSIX and PowerShell commands, e.g.: "
                                 + workitemCliUploadTokenService.commandTemplate() + ". "
                                 + "Standard flow: 1) create_workitem without assigneeType; "
@@ -899,15 +944,16 @@ public class McpToolService {
                                 + "4) call list_workitem_documents to verify; 5) call assign_workitem.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Initial workitem id used for the preflight write-access "
-                                        + "check and the first generated upload command; not bound into the token."))),
+                                        + "check and generated upload command; bound into conversation-turn credentials."))),
                 tool(WORKITEM_CLI_DOWNLOAD_TOKEN, "Mint a 30-minute, user-level, read-only token for the AutoWonder CLI "
                                 + "`workitem download` command. Long-lived personal, dispatch, and conversation "
-                                + "credentials can mint it. The token is not bound to an organization or workitem and can "
-                                + "be reused until it expires for any workitem the user can currently read; every download "
+                                + "credentials can mint it. Conversation-turn tokens are bound to this workitem and the originating "
+                                + "active turn, attempt, executor and actor. Personal and legacy dispatch tokens can be reused "
+                                + "for workitems the user can currently read; every download "
                                 + "re-checks live read membership. Use it to fetch requirement/design document bodies to "
                                 + "local disk instead of pulling them through MCP, which keeps large or binary attachments "
                                 + "out of this conversation's context. id is the initial workitem id, used for the preflight "
-                                + "check and the first exact command; it is not bound into the token. Returns the token, "
+                                + "check and the first exact command, and is bound for conversation-turn credentials. Returns the token, "
                                 + "expiry, deployment server URL, recommended runtime version, and ready-to-run POSIX and "
                                 + "PowerShell commands, e.g.: " + workitemCliDownloadTokenService.commandTemplate() + ". "
                                 + "Standard flow: 1) call list_workitem_documents to see document names and ids; "
@@ -916,7 +962,7 @@ public class McpToolService {
                                 + "4) read the local files with your own file tools.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Initial workitem id used for the preflight read-access "
-                                        + "check and the first generated download command; not bound into the token."))),
+                                        + "check and generated download command; bound into conversation-turn credentials."))),
                 tool(LIST_WORKITEM_DOCUMENTS, "List requirement/design context attachment documents uploaded to an AutoWonder "
                                 + "workitem. Returns metadata only (id, name, type, size, created time) and never the "
                                 + "document body. To read a document's actual contents without loading them into this MCP "
@@ -1275,11 +1321,18 @@ public class McpToolService {
                         schema(required("name"),
                                 prop("name", "string", "Required. Squad name."),
                                 prop("description", "string", "Optional. Squad description."))),
-                tool(GET_DELIVERY_RECOVERY, "Read delivery closure, executions, failure reasons, retries and cancellation acknowledgements.",
+                tool(GET_DELIVERY_RECOVERY, "Read delivery closure, executions, failure reasons, retries and cancellation acknowledgements. "
+                        + "Every execution includes resumeMode exactly as persisted: COMMENT_INTERACTION, "
+                        + "SIDE_INTERACTION and CANONICAL_INTERACTION mark bypass interactions, while COMMENT_REWORK, "
+                        + "RECOVERY, RETURNING_WORKER and null belong to formal delivery. It is null when the dispatch "
+                        + "never set one, and unknown values are returned unchanged.",
                         schema(required("workitemId"), prop("workitemId", "integer"))),
                 tool(LIST_WORKITEM_EXECUTIONS, "List every workitem dispatch created in a fixed UTC instant window, regardless of workitem or dispatch status. "
                         + "Use an exclusive createdTo, then follow nextCursor until null. Group returned dispatches by workitemId for analysis; "
-                        + "running dispatches need a pending conclusion.",
+                        + "running dispatches need a pending conclusion. Every item includes resumeMode exactly as persisted: "
+                        + "COMMENT_INTERACTION, SIDE_INTERACTION and CANONICAL_INTERACTION mark bypass interactions, while "
+                        + "COMMENT_REWORK, RECOVERY, RETURNING_WORKER and null belong to formal delivery; it is null when the "
+                        + "dispatch never set one, and unknown values are returned unchanged.",
                         schema(required("createdFrom", "createdTo"),
                                 prop("createdFrom", "string", "Required ISO-8601 instant, inclusive."),
                                 prop("createdTo", "string", "Required ISO-8601 instant, exclusive."),
@@ -1630,6 +1683,13 @@ public class McpToolService {
 
     public List<McpToolVO> listTools(
             McpAccessTokenService.Principal principal) {
+        // 工作流会话只有提交这一个工具：它是隔离分析任务，不该拿到项目读写能力。
+        if (principal != null
+                && principal.credentialType() == McpAccessTokenService.CredentialType.CONVERSATION
+                && squadWorkflowGuard != null
+                && squadWorkflowGuard.isWorkflowConversation(principal.workspaceId(), principal.tokenId())) {
+            return List.of(squadWorkflowSubmissionTool());
+        }
         List<McpToolVO> tools;
         WorkspaceAccessLevel scopeLevel = principal.accessLevel();
         if (scopeLevel == null) {
@@ -1801,7 +1861,33 @@ public class McpToolService {
     }
 
     public Object call(McpAccessTokenService.Principal principal, String name, Map<String, Object> args) {
+        if (principal == null || principal.executionScope() == null) return callInternal(principal, name, args);
+        String operation = name != null && TOOL_ACCESS.containsKey(name) ? name : "UNKNOWN_TOOL";
+        try {
+            Object result = callInternal(principal, name, args);
+            if (auditLogService != null) new ConversationCredentialAuditService(auditLogService).record(principal, operation, null, null);
+            return result;
+        } catch (RuntimeException failure) {
+            if (auditLogService != null) new ConversationCredentialAuditService(auditLogService).record(principal, operation, null, failure);
+            throw failure;
+        }
+    }
+
+    private Object callInternal(McpAccessTokenService.Principal principal, String name, Map<String, Object> args) {
         Map<String, Object> safeArgs = args == null ? Map.of() : args;
+        if (com.aliyun.autowonder.squad.workflow.SquadWorkflowSubmissionGuard.TOOL_NAME.equals(name)) {
+            if (squadWorkflowGuard == null) {
+                throw new BizException(ErrorCode.NO_PERMISSION);
+            }
+            return squadWorkflowGuard.submit(principal, safeArgs);
+        }
+        if (principal != null
+                && principal.credentialType() == McpAccessTokenService.CredentialType.CONVERSATION
+                && squadWorkflowGuard != null
+                && squadWorkflowGuard.isWorkflowConversation(principal.workspaceId(), principal.tokenId())) {
+            // listTools already hides the catalog here; call must fail closed for the same token.
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
         if (com.aliyun.autowonder.conversation.PlatformActionPlanService.PROPOSE_TOOL.equals(name)) {
             if (principal.credentialType()!=McpAccessTokenService.CredentialType.CONVERSATION
                     || principal.workspaceId()==null) throw new BizException(ErrorCode.NO_PERMISSION);
@@ -1825,7 +1911,7 @@ public class McpToolService {
         }
         try {
             Object result;
-            if (isSdlcMutation(name)) {
+            if (isSdlcMutation(name) || PUT_TASK_DATA.equals(name)) {
                 // Join the domain transaction so an audit insert failure rolls the mutation back.
                 result = new org.springframework.transaction.support.TransactionTemplate(transactionManager)
                         .execute(status -> {
@@ -1953,11 +2039,11 @@ public class McpToolService {
                 throw new BizException(ErrorCode.NO_PERMISSION);
             }
             return new ToolExecutionContext(scopeWorkspaceId, principal.userId(), scopeLevel,
-                    principal.tokenId(), principal.credentialType(), null);
+                    principal.tokenId(), principal.credentialType(), null, principal.executionScope());
         }
         if (!access.workspaceScoped()) {
             return new ToolExecutionContext(null, principal.userId(), null,
-                    principal.tokenId(), principal.credentialType(), null);
+                    principal.tokenId(), principal.credentialType(), null, principal.executionScope());
         }
         if (requestedWorkspaceId == null) {
             throw BizException.keyed(ErrorCode.PARAM_INVALID,
@@ -1971,7 +2057,7 @@ public class McpToolService {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
         return new ToolExecutionContext(requestedWorkspaceId, principal.userId(), memberLevel,
-                principal.tokenId(), principal.credentialType(), null);
+                principal.tokenId(), principal.credentialType(), null, principal.executionScope());
     }
 
     /**
@@ -2005,7 +2091,7 @@ public class McpToolService {
             capabilityGuard.requireAvailable("mcp");
         }
         return new ToolExecutionContext(context.workspaceId(), context.userId(), context.accessLevel(),
-                context.tokenId(), context.credentialType(), dispatch);
+                context.tokenId(), context.credentialType(), dispatch, context.executionScope());
     }
 
     private Long workspaceIdArgument(Map<String, Object> args) {
@@ -2057,8 +2143,10 @@ public class McpToolService {
                         bool(safeArgs, "pendingDecisionOnly", false), str(safeArgs, "mineScope"),
                         context.workspaceId(), context.userId(),
                         str(safeArgs, "keyword"), str(safeArgs, "tag"),
-                        // 定时工单过滤与创建时间高级筛选只服务于 Web 工单页，list_workitems 的 MCP 契约保持不变
-                        null, null, null,
+                        // 定时工单过滤与创建时间/创建者高级筛选只服务于 Web 工单页，list_workitems 的 MCP 契约保持不变
+                        null, null, null, null,
+                        // tagConditions 仅服务 Web 工单页的标签逻辑条件，MCP 仍只暴露单值 tag
+                        null,
                         integer(safeArgs, "page", 1), integer(safeArgs, "size", 20)).getList();
                 if (workitemWatchers != null) workitemWatchers.applyWatchState(items, context.workspaceId(), context.userId());
                 yield items;
@@ -2073,6 +2161,52 @@ public class McpToolService {
             case UPDATE_WORKITEM -> {
                 yield workitemService.updateContent(requiredLong(safeArgs, "id"), str(safeArgs, "title"),
                         str(safeArgs, "contentMd"), context.workspaceId(), context.userId());
+            }
+            case LIST_TASK_DATA, PUT_TASK_DATA -> {
+                if (context.credentialType() != McpAccessTokenService.CredentialType.LONG_LIVED) {
+                    throw new BizException(ErrorCode.NO_PERMISSION);
+                }
+                taskDataNumber(safeArgs, "workspaceId", -1, 1, Long.MAX_VALUE);
+                String namespace = requiredString(safeArgs, "namespace");
+                try {
+                    if (LIST_TASK_DATA.equals(name)) {
+                        yield taskDataService.list(context.workspaceId(), namespace,
+                                taskDataNumber(safeArgs, "afterId", 0, 0, Long.MAX_VALUE),
+                                (int) taskDataNumber(safeArgs, "limit", 50, 1, 100));
+                    }
+                    long ownerId = taskDataNumber(safeArgs, "ownerWorkitemId", -1, 1, Long.MAX_VALUE);
+                    int expectedVersion = (int) taskDataNumber(safeArgs, "expectedVersion", -1, 0, Integer.MAX_VALUE);
+                    var owner = taskDataOwners.findById(ownerId);
+                    if (owner == null || owner.getDeletedAt() != null
+                            || !context.workspaceId().equals(owner.getTenantId())) {
+                        throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+                    }
+                    yield taskDataService.put(context.workspaceId(), namespace, requiredString(safeArgs, "key"),
+                            ownerId, safeArgs.get("value"), expectedVersion, context.userId());
+                } catch (TaskDataConflictException failure) {
+                    throw new BizException(ErrorCode.CONFLICT, failure);
+                } catch (SecurityException failure) {
+                    throw new BizException(ErrorCode.NO_PERMISSION, failure);
+                } catch (IllegalArgumentException failure) {
+                    throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, failure);
+                }
+            }
+            case UPDATE_WORKITEM_TAGS -> {
+                long workitemId = requiredLong(safeArgs, "id");
+                String action = requiredString(safeArgs, "action");
+                if (!Set.of("replace", "add", "remove").contains(action)) {
+                    throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                }
+                if (!(safeArgs.get("tags") instanceof List<?> rawTags)
+                        || rawTags.stream().anyMatch(tag -> !(tag instanceof String))) {
+                    throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                }
+                List<String> tags = rawTags.stream().map(String.class::cast).toList();
+                AssignmentActor actor = isDispatchCredential(context)
+                        ? resolveAgentActor(requireDispatchOwner(context).getAgentId(), context.workspaceId())
+                        : AssignmentActor.human(context.userId(), null);
+                yield workitemService.updateTags(workitemId, action, tags, context.workspaceId(),
+                        context.userId(), actor);
             }
             case DELETE_WORKITEM -> {
                 workitemService.delete(requiredLong(safeArgs, "id"), context.workspaceId(), context.userId());
@@ -2115,14 +2249,22 @@ public class McpToolService {
             }
             case LIST_WORKITEM_COMMENTS -> {
                 long id = requiredLong(safeArgs, "id");
-                if (isDispatchCredential(context)) {
-                    DispatchDO owner = requireDispatchOwner(context);
-                    if (owner.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
-                        if (owner.getWorkitemId() != id || scheduledTaskRunCommentService == null) {
-                            throw new BizException(ErrorCode.NO_PERMISSION);
-                        }
-                        yield scheduledTaskRunCommentService.list(context.workspaceId(), id);
+                String sourceType = str(safeArgs, "sourceType");
+                if (sourceType != null && !Set.of("WORKITEM", "SCHEDULED_TASK_RUN").contains(sourceType)) {
+                    throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                }
+                DispatchDO owner = isDispatchCredential(context) ? requireDispatchOwner(context) : null;
+                if (sourceType == null) {
+                    sourceType = owner != null ? owner.executionSourceType().name() : "WORKITEM";
+                }
+                if ("SCHEDULED_TASK_RUN".equals(sourceType)) {
+                    if (owner != null && (owner.executionSourceType() != ExecutionSourceType.SCHEDULED_TASK_RUN
+                            || !Objects.equals(owner.getWorkitemId(), id))) {
+                        throw new BizException(ErrorCode.NO_PERMISSION);
                     }
+                    if (owner == null) requireScheduledTaskCapability();
+                    if (scheduledTaskRunCommentService == null) throw new BizException(ErrorCode.NO_PERMISSION);
+                    yield scheduledTaskRunCommentService.list(context.workspaceId(), id);
                 }
                 yield workitemService.listComments(id);
             }
@@ -2143,10 +2285,12 @@ public class McpToolService {
                         context.workspaceId(), context.userId(), str(safeArgs, "sourcePath"));
             }
             case WORKITEM_CLI_UPLOAD_TOKEN -> {
+                if (context.executionScope() != null) yield workitemCliUploadTokenService.mint(context.principal(), requiredLong(safeArgs, "id"));
                 yield workitemCliUploadTokenService.mint(context.credentialType(),
                         context.userId(), requiredLong(safeArgs, "id"));
             }
             case WORKITEM_CLI_DOWNLOAD_TOKEN -> {
+                if (context.executionScope() != null) yield workitemCliDownloadTokenService.mint(context.principal(), requiredLong(safeArgs, "id"));
                 yield workitemCliDownloadTokenService.mint(context.credentialType(),
                         context.userId(), requiredLong(safeArgs, "id"));
             }
@@ -2859,6 +3003,7 @@ public class McpToolService {
             item.put("createdAt", row.getGmtCreate().toInstant().toString());
             item.put("status", row.getStatus());
             item.put("agentId", row.getAgentId());
+            item.put("resumeMode", row.getResumeMode());
             items.add(item);
         }
         Map<String, Object> result = new LinkedHashMap<>();
@@ -3316,6 +3461,11 @@ public class McpToolService {
         audit.setTargetType(sdlc ? "sdlcs" : "mcp_tool");
         Long targetId = auditTargetId(args, sdlc && args.containsKey("sdlcId") ? "sdlcId" : "id");
         if (result instanceof com.aliyun.autowonder.sdlc.dto.SdlcVO flow) targetId = flow.getId();
+        if (result instanceof com.aliyun.autowonder.taskdata.dto.TaskDataRecordVO record) {
+            audit.setTargetType("task_data_record");
+            targetId = record.getId();
+            audit.detail("resultVersion", record.getVersion());
+        }
         audit.setTargetId(targetId);
         audit.setTriggerType(dispatch == null ? "ACTIVE" : "EVENT");
         audit.setTriggerSource("MCP");
@@ -3326,9 +3476,11 @@ public class McpToolService {
                 .detail("traceId", AutoWonderContext.get().getTraceId())
                 .detail("success", failure == null);
         // Never persist raw arguments/results: they may contain tokens, private text or large documents.
-        audit.detail("argumentFields", args.keySet().stream().sorted().limit(20)
+        ConversationCredentialAuditService.addScope(audit, context.executionScope());
+        if (context.executionScope() == null) audit.detail("argumentFields", args.keySet().stream().sorted().limit(20)
                 .map(field -> field.length() > 64 ? field.substring(0, 64) : field).toList());
-        for (String key : List.of("stepId", "sdlcId", "agentId", "workitemId", "dispatchId", "version")) {
+        for (String key : List.of("stepId", "sdlcId", "agentId", "workitemId", "dispatchId", "version",
+                "ownerWorkitemId", "expectedVersion")) {
             Object value = args.get(key);
             if (value instanceof Number) audit.detail(key, value);
         }
@@ -3584,21 +3736,88 @@ public class McpToolService {
         return result;
     }
 
+    private McpToolVO squadWorkflowSubmissionTool() {
+        Map<String, Object> input = schema(
+                required("generationId", "attemptId", "submissionId", "payloadJson"),
+                prop("generationId", "string", "Generation id from the task header."),
+                prop("attemptId", "string", "Attempt id from the task header."),
+                prop("submissionId", "string", "A new unique id for each distinct payload; reuse the same id "
+                        + "only to retry identical bytes."),
+                prop("payloadJson", "string", "The complete result serialized as a JSON string."));
+        Map<String, Object> output = schema(
+                prop("schemaVersion", "string", "Feedback contract version."),
+                prop("status", "string", "ACCEPTED or REJECTED."),
+                prop("generationId", "string", "Echo of the generation id."),
+                prop("attemptId", "string", "Echo of the attempt id."),
+                prop("submissionId", "string", "Echo of the submitted id."),
+                prop("summary", "string", "Short result summary."),
+                prop("retryable", "boolean", "Whether fixing the errors and resubmitting can still succeed."),
+                prop("remainingRepairAttempts", "integer", "Submissions left for this attempt."),
+                prop("errorsTruncated", "boolean", "True when more errors existed than are listed."),
+                prop("repairInstruction", "string", "Versioned instruction for the repair round."),
+                arrayProp("errors", schema(
+                        prop("code", "string", "Stable error code."),
+                        prop("path", "string", "Path of the invalid field."),
+                        prop("message", "string", "What is wrong."),
+                        prop("expected", "string", "What the validator expects.")),
+                        "Structured validation errors; empty when ACCEPTED."),
+                nullableProp("graph", "object", "Frozen graph; present only on ACCEPTED."));
+        return new McpToolVO(com.aliyun.autowonder.squad.workflow.SquadWorkflowSubmissionGuard.TOOL_NAME,
+                "Submit the squad workflow graph for this isolated analysis task. Call this exactly once with "
+                        + "a fresh submissionId when the result is ready. ACCEPTED means the snapshot is frozen "
+                        + "and the task is done. REJECTED returns structured errors (code, path, message, "
+                        + "expected): fix the reported fields and resubmit with a new submissionId. You have at "
+                        + "most three distinct submissions, so never resubmit identical bytes.",
+                input, output);
+    }
+
     private Map<String, Object> outputSchemaFor(String name) {
         return switch (name) {
+            case LIST_TASK_DATA -> schema(required("items", "nextAfterId"),
+                    arrayProp("items", taskDataRecordSchema(), "Task-data records in ascending id order."),
+                    nullableProp("nextAfterId", "integer", "Pass as afterId; null means the namespace is fully read."));
+            case PUT_TASK_DATA -> taskDataRecordSchema();
             case LIST_PROJECTS -> listOutputSchema(workspaceSchema());
-            case CREATE_WORKITEM, GET_WORKITEM, UPDATE_WORKITEM, ASSIGN_WORKITEM,
+            case CREATE_WORKITEM, GET_WORKITEM, UPDATE_WORKITEM, UPDATE_WORKITEM_TAGS, ASSIGN_WORKITEM,
                     TRANSITION_WORKITEM, PAUSE_WORKITEM, RESUME_WORKITEM -> workitemSchema();
             case LIST_WORKITEMS -> listOutputSchema(workitemSchema());
             case LIST_WORKITEM_EXECUTIONS -> schema(required("items", "nextCursor"),
-                    arrayProp("items", schema(required("dispatchId", "workitemId", "createdAt", "status"),
+                    arrayProp("items", schema(required("dispatchId", "workitemId", "createdAt", "status", "resumeMode"),
                             prop("dispatchId", "integer", "Dispatch id."),
                             prop("workitemId", "integer", "Workitem id."),
                             prop("createdAt", "string", "Dispatch creation instant."),
                             prop("status", "string", "Current dispatch status."),
-                            nullableProp("agentId", "integer", "Digital worker id, if assigned.")),
+                            nullableProp("agentId", "integer", "Digital worker id, if assigned."),
+                            nullableProp("resumeMode", "string", "Stored dispatch resume mode exactly as persisted, "
+                                    + "e.g. SIDE_INTERACTION, CANONICAL_INTERACTION or COMMENT_INTERACTION for "
+                                    + "interaction runs; null when the dispatch never set one. Unknown values are "
+                                    + "returned unchanged.")),
                             "Workitem dispatches in descending creation order."),
                     nullableProp("nextCursor", "string", "Pass as cursor for the next page; null means complete."));
+            case GET_DELIVERY_RECOVERY -> schema(
+                    required("closed", "executions", "restarts", "canReopen", "reopenReasonKey"),
+                    prop("closed", "boolean", "Whether the workitem delivery is closed to new executions."),
+                    arrayProp("executions", schema(required("dispatchId", "status", "resumeMode"),
+                            prop("dispatchId", "integer", "Dispatch id."),
+                            prop("status", "string", "Current dispatch status."),
+                            nullableProp("resumeMode", "string", "Stored dispatch resume mode exactly as persisted, "
+                                    + "e.g. SIDE_INTERACTION, CANONICAL_INTERACTION or COMMENT_INTERACTION for "
+                                    + "interaction runs; null when the dispatch never set one. Unknown values are "
+                                    + "returned unchanged."),
+                            nullableProp("agentId", "integer", "Digital worker id, if assigned."),
+                            nullableProp("attempt", "integer", "Dispatch attempt number, if recorded."),
+                            nullableProp("updatedAt", "string", "Last modification instant, if recorded."),
+                            prop("phase", "string", "Current delivery phase; mirrors status."),
+                            nullableProp("error", "string", "Last dispatch error, if any."),
+                            nullableProp("errorCode", "string", "Error code prefix, if any."),
+                            prop("retryable", "boolean", "Whether this execution can be retried."),
+                            prop("recovery", "object", "Recovery counters and the last recorded recovery intent."),
+                            prop("control", "object", "Last cancellation or stop intent, when recorded.")),
+                            "Executions of the workitem, oldest first."),
+                    arrayProp("restarts", schema(), "Delivery restart rounds, newest first."),
+                    prop("canReopen", "boolean", "Whether a closed delivery can be reopened."),
+                    nullableProp("reopenReasonKey", "string",
+                            "Message key explaining why reopening is unavailable; null when allowed."));
             case DELETE_WORKITEM -> schema(prop("deleted", "boolean", "Whether the workitem was deleted."));
             case ADD_WORKITEM_COMMENT -> commentSchema();
             case LIST_WORKITEM_COMMENTS -> listOutputSchema(commentSchema());
@@ -3768,7 +3987,7 @@ public class McpToolService {
     private Map<String, Object> workspaceSchema() {
         return schema(prop("id", "integer", "Workspace id. Pass it as workspaceId to workspace-scoped tools."),
                 prop("name", "string", "Workspace name."),
-                prop("description", "string", "Workspace description."),
+                nullableProp("description", "string", "Workspace description; null when unset."),
                 prop("accessLevel", "string",
                         "Your access level in this workspace: READ_ONLY, READ_WRITE or ADMIN."));
     }
@@ -4040,6 +4259,8 @@ public class McpToolService {
                 timestampProp("gmtCreate", "Creation time."),
                 arrayProp("repoPerms", schema(
                                 prop("repoId", "integer", "Repository id."),
+                                nullableProp("repoName", "string",
+                                        "Repository display name; null when the repository is unresolvable."),
                                 prop("permLevel", "string", "Permission level.")),
                         "Exact repository bindings."),
                 arrayProp("skills", schema(
@@ -4337,6 +4558,24 @@ public class McpToolService {
 
     private Map<String, Object> schema(Map<String, Object>... properties) {
         return schema(List.of(), properties);
+    }
+
+    private Map<String, Object> taskDataRecordSchema() {
+        return schema(required("id", "namespace", "recordKey", "ownerWorkitemId", "value", "version"),
+                prop("id", "integer"), prop("namespace", "string"), prop("recordKey", "string"),
+                prop("ownerWorkitemId", "integer"), Map.of("name", "value", "description", "Opaque JSON value."),
+                prop("version", "integer"), prop("gmtCreate", "string"), prop("gmtModified", "string"));
+    }
+
+    private long taskDataNumber(Map<String, Object> args, String key, long defaultValue, long min, long max) {
+        try {
+            Object raw = args.get(key);
+            long value = raw == null ? defaultValue : new java.math.BigDecimal(raw.toString()).longValueExact();
+            if (value < min || value > max) throw new ArithmeticException();
+            return value;
+        } catch (NumberFormatException | ArithmeticException failure) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, failure);
+        }
     }
 
     private Map<String, Object> schema(List<String> required, Map<String, Object>... properties) {
@@ -4703,7 +4942,10 @@ public class McpToolService {
     private record ToolExecutionContext(Long workspaceId, long userId, WorkspaceAccessLevel accessLevel,
                                        long tokenId,
                                        McpAccessTokenService.CredentialType credentialType,
-                                       DispatchDO dispatch) {
+                                       DispatchDO dispatch, McpAccessTokenService.ExecutionScope executionScope) {
+        McpAccessTokenService.Principal principal() {
+            return new McpAccessTokenService.Principal(workspaceId, userId, tokenId, accessLevel, credentialType, executionScope);
+        }
     }
 
     private record ToolAccess(WorkspaceAccessLevel level, boolean workspaceScoped) {

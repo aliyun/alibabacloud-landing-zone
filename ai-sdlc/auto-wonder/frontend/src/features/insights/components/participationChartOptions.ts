@@ -1,6 +1,6 @@
 import { i18n } from '@/shared/i18n';
 import type { EChartsOption } from 'echarts';
-import type { DurationSummary, TrendEntry, Granularity } from '../types';
+import type { DurationSummary, TrendEntry } from '../types';
 import { formatDurationCompact, formatDuration } from '@/shared/lib/duration';
 
 export type ChartKind = 'distribution' | 'ratio' | 'duration';
@@ -12,7 +12,7 @@ export function humanShare(human: number, agent: number, share?: number | null):
 }
 
 export function participationChartOptions(kind: ChartKind, data: TrendEntry[], average: DurationSummary | null,
-  palette: ChartPalette, hidden: string[] = [], granularity: Granularity = 'DAY'): EChartsOption {
+  palette: ChartPalette, hidden: string[] = []): EChartsOption {
   const labels = { human: i18n.t('insights:series.human'), agent: i18n.t('insights:series.agent'), total: i18n.t('insights:series.total') };
   const colors = { [SERIES.human]: palette.human, [SERIES.agent]: palette.agent, [SERIES.total]: palette.text };
   const base: EChartsOption = {
@@ -56,7 +56,7 @@ export function participationChartOptions(kind: ChartKind, data: TrendEntry[], a
     xAxis: { type: 'category', data: data.map(d => d.label), boundaryGap: ratio,
       axisTick: { show: false }, axisLine: { lineStyle: { color: palette.border } },
       axisLabel: { color: palette.muted, fontSize: 11, hideOverlap: true, margin: 14,
-        formatter: (label: string) => /^\d{4}-\d{2}-\d{2}$/.test(label) ? granularity === 'MONTH' ? label.slice(0, 7) : label.slice(5) : label } },
+        formatter: (label: string) => /^\d{4}-\d{2}-\d{2}$/.test(label) ? label.slice(5) : label } },
     yAxis: { type: 'value', min: 0, ...(ratio ? { max: 100, interval: 25 } : { max: Math.ceil(maxSeconds / tick) * tick, interval: tick }),
       splitNumber: 4, axisLabel: { color: palette.muted, fontSize: 11,
         formatter: (value: number) => ratio ? `${value}%` : formatDurationCompact(value) },

@@ -315,3 +315,15 @@ describe('buildTimeline 跨轮次归并', () => {
     expect(commands[1].commands?.availableCommands[0].name).toBe('commit');
   });
 });
+
+describe('dispatch attempt isolation', () => {
+  it('does not merge different attempts sharing tool ids or sequence numbers', () => {
+    const events = [
+      { ...ev(1, 'tool_use', { callId: 'same', tool: 'first' }), dispatchAttempt: 1 },
+      { ...ev(1, 'tool_use', { callId: 'same', tool: 'second' }), dispatchAttempt: 2 },
+    ];
+    const nodes = buildTimeline(events);
+    expect(nodes.map(n => n.tool?.tool)).toEqual(['first', 'second']);
+    expect(new Set(nodes.map(n => n.id)).size).toBe(2);
+  });
+});

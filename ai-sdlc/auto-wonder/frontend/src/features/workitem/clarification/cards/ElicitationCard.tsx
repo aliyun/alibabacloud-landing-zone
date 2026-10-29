@@ -15,6 +15,7 @@ interface ElicitationCardProps {
   message?: string;
   schema: unknown;
   resolved?: boolean;
+  expired?: boolean;
   action?: AcpElicitationAction;
   answers?: Record<string, unknown>;
 }
@@ -30,7 +31,7 @@ const RESOLVED_LABEL = {
  * 这里把题干与最终回传值一并回显，保证执行详情里的历史问答可读。
  */
 export function ElicitationCard({
-  requestId, message, schema, resolved = false, action, answers,
+  requestId, message, schema, resolved = false, action, answers, expired = false,
 }: ElicitationCardProps) {
   const { t } = useTranslation('workitem');
   const form = parseElicitationSchema(schema);
@@ -52,7 +53,7 @@ export function ElicitationCard({
         </Typography.Text>
         {resolved ? (
           <Tag color={action === 'accept' ? 'green' : 'default'} style={{ marginInlineEnd: 0 }}>
-            {(action && RESOLVED_LABEL[action] && t(RESOLVED_LABEL[action])) || t('clarification.resolved')}
+            {expired ? t('clarification.history.expired') : (action && RESOLVED_LABEL[action] && t(RESOLVED_LABEL[action])) || t('clarification.resolved')}
           </Tag>
         ) : null}
       </div>

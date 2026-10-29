@@ -22,8 +22,9 @@ class ExclusiveImProviderTest {
         var order = inOrder(dao);
         order.verify(dao).lockSelection();
         order.verify(dao).upsert(any());
-        order.verify(dao).disableOthers("FEISHU", 1L);
-        order.verify(dao).selectProvider("FEISHU");
+        order.verify(dao).disableOthers("FEISHU", "NOTIFY", 1L);
+        order.verify(dao).switchProvider("FEISHU");
+        verify(dao, never()).selectProvider(anyString());
     }
 
     @Test

@@ -10,31 +10,48 @@
             (#{tenantId}, #{actorId}, #{module}, #{action}, #{targetType}, #{targetId}, #{detailJson})
     </insert>
 
+    <!-- 风险等级口径（查询时派生，非存储列）。审计日志与执行审计共用，禁止前缀匹配，防两处 SQL 漂移。
+         片段要求 audit_log 使用别名 al。 -->
+    <sql id="riskLevelCase">
+        CASE
+            WHEN al.action IN ('DELETE', 'FORCE_PUBLISH', 'ROLE_CHANGE') THEN 'high'
+            WHEN al.action IN ('UPDATE', 'REJECT', 'RETRY') THEN 'medium'
+            ELSE 'low'
+        END
+    </sql>
+
     <sql id="searchCondition">
         <where>
-            tenant_id = #{tenantId}
-            <if test="module != null">AND module = #{module}</if>
-            <if test="action != null">AND action = #{action}</if>
-            <if test="actorType != null and actorType != ''">
-                AND JSON_UNQUOTE(JSON_EXTRACT(CASE WHEN JSON_VALID(detail_json) THEN detail_json ELSE '{}' END, '$.actorType')) = #{actorType}
+            al.tenant_id = #{tenantId}
+            <if test="module != null">AND al.module = #{module}</if>
+            <if test="action != null">AND al.action = #{action}</if>
+            <if test="riskLevel != null and riskLevel != ''">
+                AND <include refid="riskLevelCase"/> = #{riskLevel}
             </if>
-            <if test="actorId != null">AND actor_id = #{actorId}</if>
-            <if test="targetType != null">AND target_type = #{targetType}</if>
-            <if test="targetId != null">AND target_id = #{targetId}</if>
-            <if test="startTime != null">AND gmt_create &gt;= #{startTime}</if>
-            <if test="endTime != null">AND gmt_create &lt;= #{endTime}</if>
-            <if test="keyword != null">AND detail_json LIKE CONCAT('%', #{keyword}, '%')</if>
+            <!-- 历史数据 detail_json 无 actorType 时按 HUMAN 归集，与执行审计口径一致。 -->
+            <if test="actorType != null and actorType != ''">
+                AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(CASE WHEN JSON_VALID(al.detail_json) THEN al.detail_json ELSE '{}' END, '$.actorType')), 'HUMAN') = #{actorType}
+            </if>
+            <if test="actorId != null">AND al.actor_id = #{actorId}</if>
+            <if test="targetType != null">AND al.target_type = #{targetType}</if>
+            <if test="targetId != null">AND al.target_id = #{targetId}</if>
+            <if test="startTime != null">AND al.gmt_create &gt;= #{startTime}</if>
+            <if test="endTime != null">AND al.gmt_create &lt;= #{endTime}</if>
+            <if test="keyword != null">AND al.detail_json LIKE CONCAT('%', #{keyword}, '%')</if>
         </where>
     </sql>
 
     <select id="search" resultType="com.aliyun.autowonder.audit.AuditLogDO">
-        SELECT * FROM audit_log
+        SELECT al.id, al.tenant_id, al.actor_id, al.module, al.action,
+               al.target_type, al.target_id, al.detail_json, al.gmt_create,
+               <include refid="riskLevelCase"/> AS risk_level
+        FROM audit_log al
         <include refid="searchCondition"/>
-        ORDER BY gmt_create DESC LIMIT #{offset}, #{limit}
+        ORDER BY al.gmt_create DESC LIMIT #{offset}, #{limit}
     </select>
 
     <select id="countSearch" resultType="int">
-        SELECT COUNT(*) FROM audit_log
+        SELECT COUNT(*) FROM audit_log al
         <include refid="searchCondition"/>
     </select>
 </mapper>

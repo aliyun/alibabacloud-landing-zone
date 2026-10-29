@@ -1,0 +1,71 @@
+/* One geometry for every text/secret/select control in both message-channel purposes. */
+.aw-im-form .ant-input,
+.aw-im-form .ant-input-affix-wrapper,
+.aw-im-form .ant-select-single .ant-select-selector {
+  min-height: 40px;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.aw-im-form .ant-input {
+  padding: 8px 12px;
+}
+
+/* The affix wrapper owns the whole 40px box so a password toggle cannot make it taller. */
+.aw-im-form .ant-input-affix-wrapper {
+  height: 40px;
+  padding: 0 12px;
+  align-items: center;
+}
+
+/* The inner input must not inherit the outer min-height/padding. */
+.aw-im-form .ant-input-affix-wrapper > input.ant-input {
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  line-height: 22px;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.aw-im-form .ant-input-affix-wrapper .ant-input-suffix,
+.aw-im-form .ant-input-affix-wrapper .ant-input-prefix {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+}
+
+.aw-im-form .ant-input-affix-wrapper .ant-input-suffix > .ant-btn {
+  height: 22px;
+  min-height: 0;
+  padding: 0 4px;
+  line-height: 22px;
+}
+
+.aw-im-form .ant-select-single {
+  height: 40px;
+}
+
+.aw-im-form .ant-select-single .ant-select-selector {
+  padding: 8px 12px;
+  align-items: center;
+}
+
+.aw-im-form .ant-form-item {
+  margin-bottom: 0;
+}
+
+.aw-channel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.aw-channel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}

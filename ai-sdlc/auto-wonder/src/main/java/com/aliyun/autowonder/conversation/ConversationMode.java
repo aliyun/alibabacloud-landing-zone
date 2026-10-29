@@ -31,6 +31,18 @@ public enum ConversationMode {
                     + "用户要求重写时，先清理本次澄清上传的旧产物，再上传新版。",
             false),
 
+    /**
+     * 小队工作流分析：没有真人会回答，只能经任务专用工具提交候选图并接收结构化修复反馈。
+     * 不允许提问、行动计划或任何通用写工具。
+     */
+    SQUAD_WORKFLOW(
+            "\n\nThis is an isolated squad-workflow analysis task. No human will answer questions. "
+                    + "Read the complete INPUT, analyze the squad once, self-review the result against "
+                    + "the seven checks, and submit it with autowonder.submit_squad_workflow. "
+                    + "When the tool returns REJECTED, fix the reported fields and resubmit with a new "
+                    + "submissionId; never ask the user and never call any other write tool.",
+            true),
+
     /** 内部情报渠道：没有真人在线回答，交互工具的提问会掉进黑洞。 */
     PLATFORM_INTERNAL("", true),
 
@@ -55,6 +67,9 @@ public enum ConversationMode {
         if ("WORKITEM_CLARIFICATION".equals(channel)) {
             return WORKITEM_CLARIFICATION;
         }
+        if (com.aliyun.autowonder.squad.workflow.SquadWorkflowChannelSink.CHANNEL.equals(channel)) {
+            return SQUAD_WORKFLOW;
+        }
         if (PlatformIntelligenceChannelSink.CHANNEL.equals(channel)) {
             return PLATFORM_INTERNAL;
         }
@@ -68,5 +83,11 @@ public enum ConversationMode {
 
     public String promptSuffix() {
         return promptSuffix;
+    }
+
+    public String applyToIdentity(String identity, boolean supportsAcpInteraction) {
+        return identity + (oneWay || !supportsAcpInteraction
+                ? "\n\n重要:你在API模式下运行,不能使用AskUserQuestion等交互工具。直接用文字提问和回复。" : "")
+                + promptSuffix;
     }
 }

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent } from '@testing-library/react';
 import { ConversationEventView } from './ConversationEventView';
 import { buildTimeline } from './timeline';
 import type { StreamedEvent } from './hooks';
@@ -50,6 +51,27 @@ describe('ConversationEventView', () => {
     expect(screen.getByText('正在读取').tagName).toBe('STRONG');
     expect(screen.getByText('workitem').tagName).toBe('CODE');
     expect(screen.getByText('需求目标').tagName).toBe('STRONG');
+  });
+
+  it('opens only artifact paths that match reported workitem artifacts', () => {
+    const artifact = {
+      id: 9, workitemId: 100, dispatchId: 3, name: 'docs-100/demo.html',
+      type: 'DELIVERABLE', size: 100, gmtCreate: '2026-01-01T00:00:00',
+    };
+    const onArtifactClick = vi.fn();
+    render(
+      <ConversationEventView
+        nodes={nodesOf([event('text', '请查看 `docs-100/demo.html`，不要打开 `local-only/demo.html`')])}
+        isProcessing={false}
+        artifacts={[artifact]}
+        onArtifactClick={onArtifactClick}
+      />,
+    );
+
+    const link = screen.getByRole('button', { name: '打开产物 docs-100/demo.html' });
+    fireEvent.click(link);
+    expect(onArtifactClick).toHaveBeenCalledWith(artifact);
+    expect(screen.queryByRole('button', { name: '打开产物 local-only/demo.html' })).not.toBeInTheDocument();
   });
 
   it('scopes markdown to the clarification stylesheet class', () => {

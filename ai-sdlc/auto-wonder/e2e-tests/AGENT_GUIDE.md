@@ -80,10 +80,38 @@ unexpected `ERROR` or `WARN` records. A nonzero exit, `VERDICT=FAIL`, or failing
 ### Optional real Qoder task dispatch
 
 Use an already-injected `QODER_PERSONAL_ACCESS_TOKEN`; never print it, put it in
-arguments, or save it to a file. Install the pinned `autowonder@0.2.163` package
-into an isolated temporary npm prefix with `--ignore-scripts`, and set
-`AW_E2E_RUNTIME_PACKAGE` to that prefix's `node_modules/autowonder` directory.
-The installed `qodercli` must be on PATH. No global runtime configuration is used.
+arguments, or save it to a file. The installed `qodercli` must be on PATH.
+No global runtime configuration is used. Resolve the version from the exact
+worktree and running lifecycle before installing into an isolated npm prefix:
+
+```bash
+# Set this to the RUN_STATE_DIR printed by this worktree's successful --start.
+run_state_dir=/absolute/path/from/RUN_STATE_DIR
+platform_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["platformUrl"])' "$run_state_dir/runtime.json")"
+runtime_version="$(python3 ./e2e-tests/runtime_dispatch.py --print-recommended-version \
+  --project-root "$(pwd -P)" --state-dir "$run_state_dir" --base-url "$platform_url")" || exit 1
+runtime_prefix="$(mktemp -d "${TMPDIR:-/tmp}/aw-e2e-runtime.XXXXXX")" || exit 1
+env -u QODER_PERSONAL_ACCESS_TOKEN npm install --ignore-scripts --no-audit --no-fund \
+  --prefix "$runtime_prefix" "autowonder@$runtime_version" || exit 1
+export AW_E2E_RUNTIME_PACKAGE="$runtime_prefix/node_modules/autowonder"
+```
+
+The print command reads configuration and the public API only; it requires no
+Qoder token or installed runtime and never executes a daemon. With only
+`--project-root`, it prints the source default for advance package preparation;
+the lifecycle check always validates against the running application as well.
+
+`src/main/resources/application.yml` → `autowonder.runtime.recommended-version`
+is the version source. Its default is validated without evaluating the caller's
+environment. For a running lifecycle, only an explicit
+`AUTOWONDER_RUNTIME_RECOMMENDED_VERSION` entry in that run's protected `app.env`
+may override it. The resolver reads that single key without printing credentials.
+The public `GET /api/platform/branding/public` response's
+`data.recommendedRuntimeVersion` must match the resulting value. A missing or
+invalid source, invalid deployment override, failed/malformed API response or
+disagreement fails closed; never replace it with an old package or `latest`.
+Do not edit `app.env` to make a mismatch pass: reconcile the actual deployment
+configuration with the tested source and repeat the lifecycle normally.
 
 ```bash
 ./e2e-tests/verify.sh --check --with-runtime --project-root "$(pwd -P)"
@@ -92,15 +120,25 @@ The installed `qodercli` must be on PATH. No global runtime configuration is use
 This opt-in check requires a real online executor, successful task dispatch and
 downloaded artifact validation; missing prerequisites fail rather than skip.
 `QODER_TOKEN_REQUIRED`, `QODER_CLI_REQUIRED`, and `RUNTIME_PACKAGE_REQUIRED` identify
-missing prerequisites. `RUNTIME_VERSION_MISMATCH` requires the pinned package.
+missing prerequisites. `RUNTIME_VERSION_MISMATCH` requires the resolved package.
+`RUNTIME_RECOMMENDATION_MISMATCH` means the source/deployment snapshot and live
+platform disagree; `RUNTIME_RECOMMENDATION_API_FAILED` or
+`RUNTIME_RECOMMENDATION_API_INVALID` blocks selection rather than using a fallback.
 The daemon's own version self-check must pass (`RUNTIME_SELF_CHECK_FAILED` otherwise).
+Both preflight and dispatch re-resolve the recommendation. Package metadata and
+daemon identity must match it, and self-check receives only PATH, never the
+Qoder token. `runtime-dispatch.json` records `runtimeVersion`,
+`sourceRuntimeVersion` and `runtimeRecommendationSource` alongside the original
+dispatch/artifact/cleanup assertions. The installed package remains fixed for
+that check; changing a recommendation midway fails instead of silently switching.
 The positive scenario targets Community 0.9.0 or later: 0.8.0 forcibly changes
 HTTP S3 download URLs to HTTPS and therefore fails the strict artifact-download
 assertion with the local HTTP MinIO fixture. Do not rewrite the URL to hide this.
 The check leaves existing host runtime lock files untouched and removes only the
 new lock owned by its own child. Runtime stdout/stderr are discarded; evidence
 contains object IDs, assertion results and the artifact digest, not session data.
-Run the normal lifecycle cleanup after recording results.
+Run the normal lifecycle cleanup after recording results, then remove only the
+temporary npm prefix created for this check.
 
 The first screen identifies `FAILED_PHASE`, `FAILURE_KIND`, root-cause summary,
 and exact evidence paths. Start with `failure-report.txt`, then use the phase:

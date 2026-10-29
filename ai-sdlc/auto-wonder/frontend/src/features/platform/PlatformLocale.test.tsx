@@ -19,6 +19,12 @@ const language = (locale: string) => act(async () => { await i18n.changeLanguage
 const rawName = '名字<img src=x>';
 const self = { userId: 1, username: 'self', nickname: rawName, email: 'raw@example.com', active: true, self: true, removable: false, removeDisabledReason: '平台管理员不可移除自己' };
 const other = { ...self, userId: 2, username: 'other', nickname: 'raw other', self: false, removable: true, removeDisabledReason: null };
+const groupChat = (provider: string) => ({
+  provider, configured: false, ready: false, desiredEnabled: false, selected: provider === 'DINGTALK',
+  appKey: null, robotCode: null, secretConfigured: false, verificationTokenConfigured: false,
+  encryptKeyConfigured: false, version: null, routeVersion: 1, selectionGeneration: 1,
+  status: 'DISABLED', drainingCount: 0, failedCount: 0, unknownCount: 0,
+});
 function mount(element?: React.ReactNode, path = '/workspaces/branding') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   const router = createMemoryRouter(element ? [{ path, element }] : createAppRoutes(), { initialEntries: [path] });
@@ -34,6 +40,9 @@ beforeEach(async () => {
     http.get('/api/platform/branding', () => ok({ ...DEFAULT_BRANDING, canManage: true })),
     http.get('/api/platform/branding/public', () => ok({ ...DEFAULT_BRANDING, deploymentVersion: 'raw+version' })),
     http.get('/api/platform/im-channels', () => ok([{ provider: 'DINGTALK', enabled: true, appKey: 'ding-app', robotCode: 'robot', secretConfigured: true, ready: true }])),
+    http.get('/api/platform/im-channels/selection', () => ok({ provider: 'DINGTALK', generation: 1, activatedAt: null })),
+    http.get('/api/platform/im-channels/DINGTALK/group-chat', () => ok(groupChat('DINGTALK'))),
+    http.get('/api/platform/im-channels/FEISHU/group-chat', () => ok(groupChat('FEISHU'))),
     http.get('/api/platform/admins', () => ok({ admins: [self, other], canManage: true })),
     http.get('/api/platform/admins/candidates', () => ok([])),
   );
@@ -51,12 +60,12 @@ describe('platform and about language boundaries', () => {
     const domain = screen.getByLabelText('部署域名'); await userEvent.clear(domain); await userEvent.type(domain, 'https://raw.example/+?a=1');
     await waitFor(() => expect(screen.getByRole('radio', { name: '海洋蓝' })).toBeEnabled()); await userEvent.click(screen.getByText('海洋蓝'));
     const color = screen.getByLabelText('选择主色'); expect(color).toHaveValue('#2563eb');
-    await userEvent.click(screen.getByRole('tab', { name: '协作通知' }));
+    await userEvent.click(screen.getByRole('tab', { name: '消息渠道' }));
     const secret = screen.getByLabelText('AppSecret'); await userEvent.type(secret, ' raw/+秘密 ');
     const show = screen.getByRole('button', { name: '显示密钥' }); show.focus(); await userEvent.keyboard('{Enter}'); expect(secret).toHaveAttribute('type', 'text');
     await language('en-US');
     expect(screen.getByRole('heading', { name: 'Platform configuration' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Collaboration notifications' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Message channels' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByLabelText('AppSecret')).toBe(secret); expect(secret).toHaveValue(' raw/+秘密 ');
     screen.getByRole('button', { name: 'Hide secret' }).focus(); await userEvent.keyboard(' '); expect(secret).toHaveAttribute('type', 'password');
     await userEvent.click(screen.getByRole('tab', { name: 'Brand and theme' }));
@@ -73,11 +82,14 @@ describe('platform and about language boundaries', () => {
     expect(container.querySelector('img[src="x"]')).toBeNull();
   }, 20000);
   it.each(['DINGTALK', 'FEISHU'])('retains visible conditional %s errors and draft bytes without validating pristine siblings', async provider => {
-    server.use(http.get('/api/platform/im-channels', () => ok([{ provider, selected: true, enabled: true, appKey: '', robotCode: '', secretConfigured: false, ready: false }])));
-    mount(<BrandingConfigPage />); await userEvent.click(screen.getByRole('tab', { name: '协作通知' }));
+    server.use(
+      http.get('/api/platform/im-channels', () => ok([{ provider, selected: true, enabled: true, appKey: '', robotCode: '', secretConfigured: false, ready: false }])),
+      http.get('/api/platform/im-channels/selection', () => ok({ provider, generation: 2, activatedAt: null })),
+    );
+    mount(<BrandingConfigPage />); await userEvent.click(screen.getByRole('tab', { name: '消息渠道' }));
     const key = await screen.findByLabelText(provider === 'FEISHU' ? 'App ID' : 'AppKey'); await waitFor(() => expect(key).toBeEnabled());
     const secret = screen.getByLabelText('AppSecret'); await userEvent.type(secret, ' raw secret ');
-    await userEvent.click(screen.getByRole('button', { name: /保存协作通知/ })); await screen.findByText('请输入 AppKey');
+    await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ })); await screen.findByText('请输入 AppKey');
     await language('en-US'); await screen.findByText('Enter AppKey');
     if (provider === 'DINGTALK') expect(screen.getByText('Enter RobotCode')).toBeInTheDocument();
     else expect(screen.queryByText('Enter RobotCode')).not.toBeInTheDocument();
@@ -86,15 +98,18 @@ describe('platform and about language boundaries', () => {
     await language('zh-CN'); await screen.findByText('请输入 AppKey'); expect(secret).toHaveValue(' raw secret ');
   });
   it('translates required unconfigured secrets and allows disabled empty credentials with the exact payload', async () => {
-    server.use(http.get('/api/platform/im-channels', () => ok([{ provider: 'FEISHU', enabled: true, appKey: 'cli_raw', robotCode: '', secretConfigured: false, ready: false }])));
+    server.use(
+      http.get('/api/platform/im-channels', () => ok([{ provider: 'FEISHU', enabled: true, appKey: 'cli_raw', robotCode: '', secretConfigured: false, ready: false }])),
+      http.get('/api/platform/im-channels/selection', () => ok({ provider: 'FEISHU', generation: 2, activatedAt: null })),
+    );
     let payload: unknown;
     server.use(http.put('/api/platform/im-channels/feishu', async ({ request }) => { payload = await request.json(); return ok({ provider: 'FEISHU', enabled: false, appKey: '', robotCode: '', secretConfigured: false, ready: false }); }));
-    mount(<BrandingConfigPage />); await userEvent.click(screen.getByRole('tab', { name: '协作通知' }));
+    mount(<BrandingConfigPage />); await userEvent.click(screen.getByRole('tab', { name: '消息渠道' }));
     await waitFor(() => expect(screen.getByLabelText('App ID')).toHaveValue('cli_raw'));
-    await userEvent.click(screen.getByRole('button', { name: /保存协作通知/ })); await screen.findByText('请输入 AppSecret');
+    await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ })); await screen.findByText('请输入 AppSecret');
     await language('en-US'); await screen.findByText('Enter AppSecret');
     await userEvent.click(screen.getByRole('switch', { name: 'Enable Feishu robot' })); await userEvent.clear(screen.getByLabelText('App ID'));
-    await userEvent.click(screen.getByRole('button', { name: 'Save collaboration notifications' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save notification configuration' }));
     await waitFor(() => expect(payload).toEqual({ enabled: false, appKey: '', robotCode: '', appSecret: '' }));
   });
   it.each([
@@ -168,11 +183,11 @@ describe('platform decorative alert and confirmation icons', () => {
     const rawError = 'raw failure <b>保留</b>';
     server.use(http.get(kind === 'im' ? '/api/platform/im-channels' : '/api/platform/admins', () => HttpResponse.json({ success: false, code: '10500', message: rawError, data: null })));
     mount(kind === 'im' ? <BrandingConfigPage /> : <PlatformAdminPanel />);
-    if (kind === 'im') await userEvent.click(screen.getByRole('tab', { name: '协作通知' }));
+    if (kind === 'im') await userEvent.click(screen.getByRole('tab', { name: '消息渠道' }));
     await screen.findByText(rawError);
     for (const locale of ['zh-CN', 'en-US']) {
       await language(locale);
-      const alert = screen.getByRole('alert');
+      const alert = screen.getAllByRole('alert').find((node) => node.textContent?.includes(rawError))!;
       expect(alert).toHaveTextContent(rawError);
       expect(alert).toHaveTextContent(kind === 'im'
         ? locale === 'zh-CN' ? '协作通知配置加载失败' : 'Failed to load collaboration notification configuration'

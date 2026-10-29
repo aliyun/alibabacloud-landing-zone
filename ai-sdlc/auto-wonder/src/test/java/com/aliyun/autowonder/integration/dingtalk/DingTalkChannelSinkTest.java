@@ -717,6 +717,43 @@ class DingTalkChannelSinkTest {
     }
 
     @Test
+    void ambiguousLegacyWebhookFailuresStayUnknownInsteadOfRetrying() {
+        DingtalkRobotBindingDao dao = mock(DingtalkRobotBindingDao.class);
+        DingTalkBindingService bindingService = mock(DingTalkBindingService.class);
+        DingTalkOutboundSender sender = mock(DingTalkOutboundSender.class);
+        DingTalkMessageReactionService reactionService = mock(DingTalkMessageReactionService.class);
+        AgentConversationTurnDao turnDao = mock(AgentConversationTurnDao.class);
+        DingTalkChannelSink sink =
+                new DingTalkChannelSink(dao, bindingService, sender, reactionService, turnDao);
+
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(11L);
+        conv.setTenantId(1L);
+        conv.setAgentId(3L);
+        conv.setChannelConversationId("openConv");
+
+        DingtalkRobotBindingDO binding = binding(7L, "rc");
+        when(dao.listByTenant(1L)).thenReturn(new java.util.ArrayList<>(List.of(binding)));
+        when(bindingService.decryptSecret(binding)).thenReturn("sk");
+
+        DingTalkSourceContext context = new DingTalkSourceContext();
+        context.setSenderStaffId("220791");
+        context.setConversationType("2");
+        context.setSessionWebhook("https://oapi.dingtalk.com/robot/sendBySession?session=s1");
+        context.setSessionWebhookExpiredTime(System.currentTimeMillis() + 60_000);
+        AgentConversationTurnDO sourceTurn = new AgentConversationTurnDO();
+        sourceTurn.setSourceContext(context.toJson());
+        when(turnDao.findByExternalMsgId(1L, "m-1")).thenReturn(sourceTurn);
+        doThrow(new DingTalkHttpException(429, "{}")).when(sender)
+                .sendSessionWebhookText(eq(context.getSessionWebhook()), anyString(), anyList());
+
+        assertThrows(com.aliyun.autowonder.conversation.ImDeliveryUnknownException.class,
+                () -> sink.deliverReply(conv, "reply", "m-1"));
+        verify(sender, never()).sendGroupText(anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyList(), anyLong());
+    }
+
+    @Test
     void channelIsDingtalk() {
         DingTalkChannelSink sink = new DingTalkChannelSink(
                 mock(DingtalkRobotBindingDao.class), mock(DingTalkBindingService.class),

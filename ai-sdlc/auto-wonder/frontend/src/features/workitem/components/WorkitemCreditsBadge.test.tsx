@@ -146,6 +146,56 @@ describe('WorkitemCreditsBadge', () => {
       .toBeEmptyDOMElement();
     expect(render(<WorkitemCreditsBadge usage={{ credits: -5 }} />).container).toBeEmptyDOMElement();
   });
+
+  it('renders clarification credits as a dedicated row after every run without a run number', async () => {
+    render(
+      <WorkitemCreditsBadge
+        usage={{
+          credits: 30,
+          runs: [
+            { agentId: 41, agentName: 'CR', labelKind: 'CLARIFICATION', credits: 20 },
+            { agentId: 40, agentName: 'DEV', runIndex: 1, label: 'DEV run-1', labelKind: 'AGENT_RUN', credits: 10 },
+          ],
+        }}
+      />,
+    );
+
+    const breakdown = await openBreakdown();
+    const rows = Array.from(breakdown.children).map(row => row.textContent);
+
+    expect(rows[0]).toBe('DEV 第 1 次执行: 10 credits');
+    expect(rows[1]).toBe('CR · 需求澄清: 20 credits');
+    expect(rows[2]).toBe('总计: 30.00 Credits');
+  });
+
+  it('shows a clarification-only workitem badge whose total equals the clarification credits', async () => {
+    render(
+      <WorkitemCreditsBadge
+        usage={{ credits: 7.5, runs: [{ agentId: 41, agentName: 'CR', labelKind: 'CLARIFICATION', credits: 7.5 }] }}
+      />,
+    );
+
+    expect(screen.getByTestId('workitem-credits-badge')).toHaveTextContent('7.50 Credits');
+    const breakdown = await openBreakdown();
+    expect(breakdown).toHaveTextContent('CR · 需求澄清: 7.5 credits');
+    expect(breakdown).toHaveTextContent('总计: 7.50 Credits');
+  });
+
+  it('falls back to the agent id for clarification rows and translates the label', async () => {
+    render(
+      <WorkitemCreditsBadge
+        usage={{ credits: 3, runs: [{ agentId: 77, labelKind: 'CLARIFICATION', credits: 3 }] }}
+      />,
+    );
+
+    const breakdown = await openBreakdown();
+    expect(breakdown).toHaveTextContent('agent-77 · 需求澄清: 3 credits');
+
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.getByTestId('workitem-credits-breakdown')).toBe(breakdown);
+    expect(breakdown).toHaveTextContent('agent-77 · Requirement clarification: 3 credits');
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  });
 });
 
 

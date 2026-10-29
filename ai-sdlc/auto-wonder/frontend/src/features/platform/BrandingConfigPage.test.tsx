@@ -50,6 +50,44 @@ function imChannelsPayload() {
   };
 }
 
+function imSelectionPayload(provider = 'DINGTALK', generation = 1) {
+  return {
+    success: true,
+    code: '0',
+    message: '',
+    traceId: null,
+    data: { provider, generation, activatedAt: null },
+  };
+}
+
+function groupChatPayload(provider: string) {
+  return {
+    success: true,
+    code: '0',
+    message: '',
+    traceId: null,
+    data: {
+      provider,
+      configured: false,
+      ready: false,
+      desiredEnabled: false,
+      selected: provider === 'DINGTALK',
+      appKey: null,
+      robotCode: null,
+      secretConfigured: false,
+      verificationTokenConfigured: false,
+      encryptKeyConfigured: false,
+      version: null,
+      routeVersion: 1,
+      selectionGeneration: 1,
+      status: 'DISABLED',
+      drainingCount: 0,
+      failedCount: 0,
+      unknownCount: 0,
+    },
+  };
+}
+
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -80,7 +118,7 @@ function renderPageWithLocation() {
 
 /** antd Tabs mounts a pane only once its tab has been activated. */
 async function openNotificationTab() {
-  await userEvent.click(await screen.findByRole('tab', { name: '协作通知' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '消息渠道' }));
 }
 
 async function openPlatformAdminTab() {
@@ -116,6 +154,9 @@ describe('BrandingConfigPage', () => {
     server.use(
       http.get('/api/platform/branding', () => HttpResponse.json(brandingPayload())),
       http.get('/api/platform/im-channels', () => HttpResponse.json(imChannelsPayload())),
+      http.get('/api/platform/im-channels/selection', () => HttpResponse.json(imSelectionPayload())),
+      http.get('/api/platform/im-channels/DINGTALK/group-chat', () => HttpResponse.json(groupChatPayload('DINGTALK'))),
+      http.get('/api/platform/im-channels/FEISHU/group-chat', () => HttpResponse.json(groupChatPayload('FEISHU'))),
     );
   });
 
@@ -255,12 +296,14 @@ describe('BrandingConfigPage', () => {
   it('loads dingtalk collaboration robot status', async () => {
     renderPage();
 
-    expect(await screen.findByRole('tab', { name: '协作通知' })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: '消息渠道' })).toBeInTheDocument();
     await openNotificationTab();
 
-    expect(await screen.findByText('钉钉机器人')).toBeInTheDocument();
+    expect(await screen.findByText('通知机器人')).toBeInTheDocument();
     expect(await screen.findByText('AppSecret 已配置')).toBeInTheDocument();
     expect(screen.getByText('配置完整')).toBeInTheDocument();
+    // The notification form is namespaced so its AppKey cannot collide with the group-chat form.
+    expect(await screen.findByLabelText('AppKey')).toHaveAttribute('id', 'imNotification_appKey');
   });
 
   it('uses backend dingtalk ready state even when credentials are present', async () => {
@@ -307,7 +350,7 @@ describe('BrandingConfigPage', () => {
 
     await userEvent.clear(appKeyInput);
     await userEvent.type(appKeyInput, 'ding-app-updated');
-    await userEvent.click(screen.getByRole('button', { name: /保存协作通知/ }));
+    await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ }));
 
     await waitFor(() => {
       expect(savedBody).toEqual({
@@ -333,7 +376,7 @@ describe('BrandingConfigPage', () => {
 
     const enabledSwitch = await screen.findByRole('switch', { name: '启用钉钉机器人' });
     await userEvent.click(enabledSwitch);
-    await userEvent.click(screen.getByRole('button', { name: /保存协作通知/ }));
+    await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ }));
 
     await waitFor(() => {
       expect(savedBody).toMatchObject({
@@ -459,7 +502,7 @@ describe('BrandingConfigPage', () => {
     renderPage();
 
     const backButton = await screen.findByRole('button', { name: /返回工作空间列表/ });
-    const noticeSection = await screen.findByText('协作通知');
+    const noticeSection = await screen.findByText('通知机器人');
 
     expect(
       backButton.compareDocumentPosition(noticeSection) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -486,7 +529,7 @@ describe('BrandingConfigPage', () => {
     renderPage();
 
     expect(await screen.findByRole('tab', { name: '品牌与主题' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '协作通知' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '消息渠道' })).toBeInTheDocument();
     expect(await screen.findByRole('tab', { name: '企业 SSO' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '平台管理员' })).toBeInTheDocument();
 
@@ -592,7 +635,7 @@ describe('BrandingConfigPage', () => {
     firstRender.unmount();
     renderPage();
 
-    expect(await screen.findByRole('tab', { name: '协作通知' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tab', { name: '消息渠道' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('falls back to branding when the saved platform configuration tab is invalid', async () => {
@@ -623,7 +666,7 @@ describe('BrandingConfigPage', () => {
     renderPage();
     await openNotificationTab();
 
-    expect(screen.getByRole('tab', { name: /协作通知/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /消息渠道/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('does not fetch the platform admin roster until its tab is opened', async () => {
@@ -793,26 +836,154 @@ describe('BrandingConfigPage', () => {
     expect(screen.queryByRole('tab', { name: '用户管理' })).not.toBeInTheDocument();
   });
 
-});
-
-it('switches to Feishu without reusing DingTalk credentials or requiring RobotCode', async () => {
+it('switches to Feishu through the persisted selection without reusing DingTalk credentials or requiring RobotCode', async () => {
   let saved: UpdateDingTalkImChannelParams | undefined;
+  let selection: { provider: string } | undefined;
   server.use(
     http.get('/api/platform/branding', () => HttpResponse.json(brandingPayload())),
     http.get('/api/platform/im-channels', () => HttpResponse.json(imChannelsPayload())),
+    http.put('/api/platform/im-channels/selection', async ({ request }) => {
+      selection = await request.json() as { provider: string };
+      return HttpResponse.json(imSelectionPayload('FEISHU', 2));
+    }),
     http.put('/api/platform/im-channels/feishu', async ({ request }) => {
       saved = await request.json() as UpdateDingTalkImChannelParams;
       return HttpResponse.json({ ...imChannelsPayload(), data: { provider: 'FEISHU', ...saved } });
     }),
   );
   renderPage(); await openNotificationTab();
-  await userEvent.click(await screen.findByRole('radio', { name: '飞书' }));
+  await userEvent.click(await screen.findByRole('button', { name: '切换渠道' }));
+  await userEvent.click(await screen.findByRole('button', { name: '切换为飞书' }));
+  await waitFor(() => expect(selection).toEqual({ provider: 'FEISHU', expectedGeneration: 1 }));
+  expect(await screen.findByText('平台当前渠道：飞书')).toBeInTheDocument();
   expect(screen.queryByLabelText('RobotCode')).not.toBeInTheDocument();
   expect(screen.getByLabelText('App ID')).toHaveValue('');
   expect(screen.getByLabelText('AppSecret')).toHaveValue('');
+  expect(await screen.findByLabelText('群聊 App ID')).toBeInTheDocument();
   await userEvent.click(screen.getByRole('switch', { name: '启用飞书机器人' }));
   await userEvent.type(screen.getByLabelText('App ID'), 'cli_test');
   await userEvent.type(screen.getByLabelText('AppSecret'), 'feishu-secret');
-  await userEvent.click(screen.getByRole('button', { name: /保存协作通知/ }));
+  await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ }));
   await waitFor(() => expect(saved).toEqual({ enabled: true, appKey: 'cli_test', appSecret: 'feishu-secret', robotCode: '' }));
+});
+
+it('prefers the persisted provider selection over the channel list', async () => {
+  server.use(http.get('/api/platform/im-channels/selection', () => HttpResponse.json(imSelectionPayload('FEISHU', 3))));
+  renderPage(); await openNotificationTab();
+
+  expect(await screen.findByText('平台当前渠道：飞书')).toBeInTheDocument();
+  expect(screen.getByLabelText('App ID')).toBeInTheDocument();
+  expect(screen.queryByLabelText('RobotCode')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('群聊 AppKey')).not.toBeInTheDocument();
+  expect(await screen.findByLabelText('群聊 App ID')).toBeInTheDocument();
+});
+
+it('keeps the persisted channel and reports selection save failures', async () => {
+  server.use(
+    http.get('/api/platform/branding', () => HttpResponse.json(brandingPayload())),
+    http.get('/api/platform/im-channels', () => HttpResponse.json(imChannelsPayload())),
+    http.put('/api/platform/im-channels/selection', () => HttpResponse.json({
+      success: false,
+      code: '10500',
+      message: '渠道切换失败',
+      traceId: null,
+      data: null,
+    })),
+  );
+  renderPage(); await openNotificationTab();
+  await userEvent.click(await screen.findByRole('button', { name: '切换渠道' }));
+  await userEvent.click(await screen.findByRole('button', { name: '切换为飞书' }));
+
+  await waitFor(() => expect(message.error).toHaveBeenCalledWith('渠道切换失败'));
+  expect(screen.getByText('平台当前渠道：钉钉')).toBeInTheDocument();
+  expect(screen.getByLabelText('AppKey')).toHaveValue('ding-app');
+});
+
+it('hides the shared group-chat panel from non-admin operators', async () => {
+  server.use(http.get('/api/platform/branding', () => HttpResponse.json({
+    ...brandingPayload(),
+    data: { ...brandingPayload().data, canManage: false },
+  })));
+  renderPage(); await openNotificationTab();
+
+  expect(await screen.findByRole('switch', { name: '启用钉钉机器人' })).toBeInTheDocument();
+  expect(screen.queryByText('群聊机器人')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '保存群聊机器人' })).not.toBeInTheDocument();
+});
+
+it('warns about unsaved notification input before switching the platform channel', async () => {
+  renderPage(); await openNotificationTab();
+
+  const appKeyInput = await screen.findByLabelText('AppKey');
+  await waitFor(() => expect(appKeyInput).not.toBeDisabled());
+  await userEvent.type(appKeyInput, '-dirty');
+  await userEvent.click(screen.getByRole('button', { name: '切换渠道' }));
+
+  expect(await screen.findByText('有未保存的修改，切换前请先保存或明确放弃。')).toBeInTheDocument();
+});
+
+it('does not flag unsaved input after the notification section is saved', async () => {
+  let saved = 0;
+  server.use(http.put('/api/platform/im-channels/dingtalk', () => {
+    saved += 1;
+    return HttpResponse.json(imChannelsPayload());
+  }));
+  renderPage(); await openNotificationTab();
+
+  const appKeyInput = await screen.findByLabelText('AppKey');
+  await waitFor(() => expect(appKeyInput).not.toBeDisabled());
+  await userEvent.type(appKeyInput, '-saved');
+  await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ }));
+  await waitFor(() => expect(saved).toBe(1));
+
+  await userEvent.click(screen.getByRole('button', { name: '切换渠道' }));
+  expect(screen.queryByText('有未保存的修改，切换前请先保存或明确放弃。')).not.toBeInTheDocument();
+});
+
+it('saves only the notification section without touching selection or group-chat', async () => {
+  let noticeSaves = 0;
+  let selectionWrites = 0;
+  let groupChatWrites = 0;
+  server.use(
+    http.put('/api/platform/im-channels/dingtalk', () => {
+      noticeSaves += 1;
+      return HttpResponse.json(imChannelsPayload());
+    }),
+    http.put('/api/platform/im-channels/selection', () => {
+      selectionWrites += 1;
+      return HttpResponse.json(imSelectionPayload());
+    }),
+    http.put('/api/platform/im-channels/DINGTALK/group-chat', () => {
+      groupChatWrites += 1;
+      return HttpResponse.json(groupChatPayload('DINGTALK'));
+    }),
+  );
+  renderPage(); await openNotificationTab();
+
+  const appKeyInput = await screen.findByLabelText('AppKey');
+  await waitFor(() => expect(appKeyInput).not.toBeDisabled());
+  await userEvent.type(appKeyInput, '-independent');
+  await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ }));
+  await waitFor(() => expect(noticeSaves).toBe(1));
+
+  expect(selectionWrites).toBe(0);
+  expect(groupChatWrites).toBe(0);
+});
+
+it('performs no write when the channel switch is cancelled', async () => {
+  let selectionWrites = 0;
+  server.use(http.put('/api/platform/im-channels/selection', () => {
+    selectionWrites += 1;
+    return HttpResponse.json(imSelectionPayload('FEISHU', 2));
+  }));
+  renderPage(); await openNotificationTab();
+
+  await userEvent.click(screen.getByRole('button', { name: '切换渠道' }));
+  await userEvent.click(await screen.findByRole('button', { name: /取\s*消/ }));
+
+  await waitFor(() => expect(screen.queryByRole('button', { name: '切换为飞书' })).not.toBeInTheDocument());
+  expect(selectionWrites).toBe(0);
+  expect(screen.getByText('平台当前渠道：钉钉')).toBeInTheDocument();
+});
+
 });

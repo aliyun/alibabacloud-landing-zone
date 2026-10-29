@@ -16,6 +16,24 @@ public class AgentConversationRecoveryTask {
         this.conversationService = conversationService;
     }
 
+    @Scheduled(fixedDelayString = "${autowonder.conversation.queue-recovery.fixed-delay-ms:10000}")
+    public void recoverQueuedTurns() {
+        try {
+            conversationService.recoverQueuedTurns();
+        } catch (RuntimeException e) {
+            log.warn("conversation queued turn recovery scan failed", e);
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${autowonder.squad.workflow.cancel-interval-ms:30000}")
+    public void cancelInactiveWorkflowTurns() {
+        try {
+            conversationService.cancelInactiveWorkflowTurns();
+        } catch (RuntimeException e) {
+            log.warn("workflow cancellation sweep failed", e);
+        }
+    }
+
     @Scheduled(fixedDelayString = "${autowonder.conversation.recovery.fixed-delay-ms:60000}")
     public void recoverStaleTurns() {
         try {

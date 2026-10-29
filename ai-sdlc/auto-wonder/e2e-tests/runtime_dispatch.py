@@ -18,11 +18,87 @@ import time
 import urllib.request
 from urllib.parse import urlsplit
 
-RUNTIME_VERSION = "0.2.163"
-
-
 class CheckFailure(Exception):
     """Contains only a fixed, non-secret failure code."""
+
+
+def valid_runtime_version(value):
+    return isinstance(value, str) and re.fullmatch(
+        r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", value) is not None
+
+
+def source_runtime_version(project_root):
+    # Match the deployment Skill's exact YAML namespace and placeholder contract
+    # without requiring a global Python YAML package or evaluating environment.
+    parents, values, mappings = {}, [], set()
+    target = ("autowonder", "runtime", "recommended-version")
+    try:
+        with (project_root / "src/main/resources/application.yml").open(encoding="utf-8") as stream:
+            for raw in stream:
+                if not raw.strip() or raw.lstrip().startswith("#"):
+                    continue
+                match = re.match(r"^( *)([A-Za-z0-9-]+)\s*:\s*(.*?)\s*$", raw.rstrip("\r\n"))
+                if not match:
+                    continue
+                indent, key, scalar = len(match.group(1)), match.group(2), match.group(3)
+                parents = {level: name for level, name in parents.items() if level < indent}
+                current = tuple(parents[level] for level in sorted(parents)) + (key,)
+                scalar = scalar.split(" #", 1)[0].strip()
+                if current == target:
+                    values.append(scalar.strip('"\''))
+                if not scalar:
+                    if current in (target[:1], target[:2]) and current in mappings:
+                        raise CheckFailure("RUNTIME_SOURCE_RECOMMENDATION_INVALID")
+                    mappings.add(current)
+                    parents[indent] = key
+    except (OSError, UnicodeError):
+        raise CheckFailure("RUNTIME_SOURCE_RECOMMENDATION_INVALID") from None
+    if len(values) != 1:
+        raise CheckFailure("RUNTIME_SOURCE_RECOMMENDATION_INVALID")
+    value = values[0]
+    placeholder = re.fullmatch(r"\$\{AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:([^}]+)\}", value)
+    if placeholder:
+        value = placeholder.group(1)
+    if not valid_runtime_version(value):
+        raise CheckFailure("RUNTIME_SOURCE_RECOMMENDATION_INVALID")
+    return value
+
+
+def resolve_runtime_recommendation(project_root, state=None, base=None):
+    source = source_runtime_version(project_root)
+    result = {"sourceRuntimeVersion": source, "runtimeVersion": source,
+              "runtimeRecommendationSource": "application.yml"}
+    if state is None and base is None:
+        return result
+    if state is None or base is None:
+        raise CheckFailure("RUNTIME_RECOMMENDATION_CONTEXT_REQUIRED")
+    env_file = state / "app.env"
+    if not state.is_dir() or state.is_symlink() or env_file.is_symlink():
+        raise CheckFailure("RUNTIME_DEPLOYMENT_ENV_REQUIRED")
+    overrides = []
+    try:
+        with env_file.open(encoding="utf-8") as stream:
+            for line in stream:
+                key, sep, value = line.rstrip("\r\n").partition("=")
+                if sep and key == "AUTOWONDER_RUNTIME_RECOMMENDED_VERSION":
+                    overrides.append(value)
+    except (OSError, UnicodeError):
+        raise CheckFailure("RUNTIME_DEPLOYMENT_ENV_REQUIRED") from None
+    if overrides:
+        if len(overrides) != 1 or not valid_runtime_version(overrides[0]):
+            raise CheckFailure("RUNTIME_DEPLOYMENT_RECOMMENDATION_INVALID")
+        result.update(runtimeVersion=overrides[0], runtimeRecommendationSource="lifecycle-app.env")
+    api = Api(base)
+    try:
+        branding = api.call("GET", "/api/platform/branding/public")
+    except CheckFailure:
+        raise CheckFailure("RUNTIME_RECOMMENDATION_API_FAILED") from None
+    live = branding.get("recommendedRuntimeVersion") if isinstance(branding, dict) else None
+    if not valid_runtime_version(live):
+        raise CheckFailure("RUNTIME_RECOMMENDATION_API_INVALID")
+    if live != result["runtimeVersion"]:
+        raise CheckFailure("RUNTIME_RECOMMENDATION_MISMATCH")
+    return result
 
 
 def require_api_success(body):
@@ -112,7 +188,8 @@ def wait_for(probe, timeout, failure):
 
 EVIDENCE_KEYS = frozenset(("verdict", "runtimeVersion", "workspaceId", "agentId",
     "agentVersionId", "executorId", "workitemId", "dispatchId", "stepId", "artifactId",
-    "artifactSha256", "checks", "cleanup", "failureKind", "cleanupLogStart", "cleanupLogEnd"))
+    "artifactSha256", "checks", "cleanup", "failureKind", "cleanupLogStart", "cleanupLogEnd",
+    "sourceRuntimeVersion", "runtimeRecommendationSource"))
 
 
 def log_line_counts(state):
@@ -273,12 +350,12 @@ class Api:
             raise CheckFailure("ARTIFACT_DOWNLOAD_FAILED") from None
 
 
-def run_scenario(binary, state, base, storage_origin):
+def run_scenario(binary, state, base, storage_origin, recommendation):
     if not state or not state.is_dir() or state.is_symlink():
         raise CheckFailure("LIFECYCLE_STATE_REQUIRED")
     api = Api(base)
     validate_download(storage_origin, storage_origin)
-    evidence = {"verdict": "FAIL", "runtimeVersion": RUNTIME_VERSION, "checks": [], "cleanup": False}
+    evidence = dict(recommendation, verdict="FAIL", checks=[], cleanup=False)
     executor_id = None
     owned = None
     try:
@@ -391,17 +468,21 @@ def run_scenario(binary, state, base, storage_origin):
     print("RUNTIME_DISPATCH=PASS", flush=True)
 
 
-def preflight():
+def preflight(runtime_version=None):
     if not os.environ.get("QODER_PERSONAL_ACCESS_TOKEN", "").strip():
         raise CheckFailure("QODER_TOKEN_REQUIRED")
     if not shutil.which("qodercli"):
         raise CheckFailure("QODER_CLI_REQUIRED")
+    if runtime_version is None:
+        runtime_version = source_runtime_version(Path(__file__).resolve().parents[1])
+    if not valid_runtime_version(runtime_version):
+        raise CheckFailure("RUNTIME_SOURCE_RECOMMENDATION_INVALID")
     package = Path(os.environ.get("AW_E2E_RUNTIME_PACKAGE", ""))
     try:
         metadata = json.loads((package / "package.json").read_text())
     except (OSError, ValueError):
         raise CheckFailure("RUNTIME_PACKAGE_REQUIRED") from None
-    if metadata.get("name") != "autowonder" or metadata.get("version") != RUNTIME_VERSION:
+    if not isinstance(metadata, dict) or metadata.get("name") != "autowonder" or metadata.get("version") != runtime_version:
         raise CheckFailure("RUNTIME_VERSION_MISMATCH")
     system = platform.system().lower()
     arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64"}.get(platform.machine())
@@ -412,12 +493,12 @@ def preflight():
         raise CheckFailure("RUNTIME_BINARY_REQUIRED")
     try:
         # Self-check needs no credentials; never forward the user's token here.
-        check = subprocess.run([str(binary.resolve()), "--self-check", "--expected-version", RUNTIME_VERSION],
+        check = subprocess.run([str(binary.resolve()), "--self-check", "--expected-version", runtime_version],
             env={"PATH": os.environ.get("PATH", "")}, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20)
         identity = json.loads(check.stdout) if check.returncode == 0 else {}
-        if any(identity.get(key) != expected for key, expected in
-               (("package", "autowonder"), ("version", RUNTIME_VERSION), ("goos", system), ("goarch", arch))):
+        if not isinstance(identity, dict) or any(identity.get(key) != expected for key, expected in
+               (("package", "autowonder"), ("version", runtime_version), ("goos", system), ("goarch", arch))):
             raise CheckFailure("RUNTIME_SELF_CHECK_FAILED")
     except (OSError, ValueError, subprocess.TimeoutExpired):
         raise CheckFailure("RUNTIME_SELF_CHECK_FAILED") from None
@@ -429,14 +510,22 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--preflight", action="store_true")
     mode.add_argument("--run", action="store_true")
+    mode.add_argument("--print-recommended-version", action="store_true")
+    parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--base-url")
     parser.add_argument("--storage-origin")
     args = parser.parse_args()
     try:
-        binary = preflight()
+        if args.run and (args.state_dir is None or args.base_url is None or args.storage_origin is None):
+            raise CheckFailure("RUNTIME_RECOMMENDATION_CONTEXT_REQUIRED")
+        recommendation = resolve_runtime_recommendation(args.project_root, args.state_dir, args.base_url)
+        if args.print_recommended_version:
+            print(recommendation["runtimeVersion"])
+            return 0
+        binary = preflight(recommendation["runtimeVersion"])
         if args.run:
-            run_scenario(binary, args.state_dir, args.base_url, args.storage_origin)
+            run_scenario(binary, args.state_dir, args.base_url, args.storage_origin, recommendation)
             return 0
         print("RUNTIME_PREFLIGHT=PASS")
         return 0

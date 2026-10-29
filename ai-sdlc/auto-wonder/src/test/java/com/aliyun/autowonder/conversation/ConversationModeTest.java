@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.conversation;
 
+import com.aliyun.autowonder.squad.workflow.SquadWorkflowChannelSink;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -35,6 +36,23 @@ class ConversationModeTest {
         assertEquals(ConversationMode.PLATFORM_ASSISTANT, ConversationMode.of(PLATFORM_CHANNEL));
         assertEquals(ConversationMode.WORKITEM_CLARIFICATION, ConversationMode.of(CLARIFICATION_CHANNEL));
         assertEquals(ConversationMode.PLATFORM_INTERNAL, ConversationMode.of(INTERNAL_CHANNEL));
+    }
+
+    @Test
+    void theSquadWorkflowChannelMapsToItsIsolatedAnalysisMode() {
+        assertEquals(ConversationMode.SQUAD_WORKFLOW,
+                ConversationMode.of(SquadWorkflowChannelSink.CHANNEL));
+        assertTrue(ConversationMode.SQUAD_WORKFLOW.oneWay(),
+                "没有真人会回答工作流分析会话的提问");
+    }
+
+    @Test
+    void theSquadWorkflowPromptNamesTheSubmissionToolAndForbidsAskingTheUser() {
+        String suffix = ConversationMode.SQUAD_WORKFLOW.promptSuffix();
+        assertTrue(suffix.contains("autowonder.submit_squad_workflow"));
+        assertTrue(suffix.contains("No human will answer"));
+        assertTrue(suffix.contains("REJECTED"));
+        assertTrue(suffix.contains("new submissionId"));
     }
 
     @Test

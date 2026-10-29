@@ -47,6 +47,25 @@ public class AbstractRedisManager {
         return decode(bytes, 0, bytes.length);
     }
 
+    /**
+     * Reads an MGET element that is expected to be text. Values written through the plain String
+     * APIs stay raw UTF-8 bytes, which {@link #deserialize(byte[])} returns unchanged, so both
+     * encodings have to be accepted here.
+     */
+    public static String decodeString(Object value) {
+        if (value instanceof String text) {
+            return text;
+        }
+        if (!(value instanceof byte[] raw) || raw.length == 0) {
+            return null;
+        }
+        Object decoded = deserialize(raw);
+        if (decoded instanceof String text) {
+            return text;
+        }
+        return decoded instanceof byte[] bytes ? new String(bytes, UTF8) : null;
+    }
+
     public static byte[] serialize(Object object) {
         return encode(object);
     }

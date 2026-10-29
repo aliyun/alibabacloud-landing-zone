@@ -21,6 +21,15 @@ describe('EllipsisText', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('完整标题');
   });
 
+  it('shows the tooltip on keyboard focus when content overflows', async () => {
+    mockMeasurements(true);
+    render(<EllipsisText tooltip="完整标题">被截断的标题</EllipsisText>);
+    const text = screen.getByText('被截断的标题');
+    expect(text).toHaveAttribute('tabindex', '0');
+    fireEvent.focus(text);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('完整标题');
+  });
+
   it('shows no tooltip when content fits', () => {
     mockMeasurements(false);
     render(<EllipsisText tooltip="完整标题">短标题</EllipsisText>);

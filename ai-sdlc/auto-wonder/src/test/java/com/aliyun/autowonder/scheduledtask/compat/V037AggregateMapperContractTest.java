@@ -28,6 +28,7 @@ class V037AggregateMapperContractTest {
         // Rendering a KPI statement also verifies the database-specific fence
         // included by endToEndSuccessfulWorkitems inside its derived table.
         assertWorkitemSql(legacy, sourceAware, namespace + "countTodayCompletedTasks");
+        assertWorkitemSql(legacy, sourceAware, namespace + "countRunningWorkitems");
         for (String id : List.of("squadInProgressWorkitems", "listRunningFeed", "listRecentFeed",
                 "listRunningWorkitems", "listAgentRunning")) {
             assertWorkitemSql(legacy, sourceAware, namespace + id);
@@ -41,7 +42,7 @@ class V037AggregateMapperContractTest {
         String namespace = "com.aliyun.autowonder.dashboard.DashboardDao.";
 
         for (String id : List.of("countRunningDispatches", "countQueuedDispatches",
-                "countTodaySucceeded", "countTodayFailedOrTimeout", "countTodayRetries",
+                "countTodayCreatedWorkitems", "countTodaySucceeded", "countTodayFailedOrTimeout", "countTodayRetries",
                 "avgTodaySuccessDurationMinutes", "countActiveSquads", "squadLineAggregates",
                 "onlineWorkstations")) {
             assertSourceNeutral(sql(legacy, namespace + id), id);

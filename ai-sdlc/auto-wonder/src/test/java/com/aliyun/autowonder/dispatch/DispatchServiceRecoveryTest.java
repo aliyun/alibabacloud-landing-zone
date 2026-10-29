@@ -327,6 +327,90 @@ class DispatchServiceRecoveryTest {
         assertTrue(error.getMessage().contains("最新一次执行"), error.getMessage());
     }
 
+    @Test
+    void pauseCapabilityUsesWorkerLatestFormalInsteadOfGlobalLatest() {
+        DispatchDO workerA = dispatch(55L, DispatchStatus.RUNNING, 1);
+        DispatchDO workerB = dispatch(80L, DispatchStatus.SUCCEEDED, 1);
+        workerB.setAgentId(401L);
+
+        DispatchService.PauseResolution resolution = DispatchService.resolvePauseCapability(
+                workerA, List.of(workerA, workerB), false, false, false, true);
+
+        assertTrue(resolution.allowed());
+    }
+
+    @Test
+    void pauseCapabilityRejectsHistoricalAndInteractionExecutions() {
+        DispatchDO historical = dispatch(55L, DispatchStatus.RUNNING, 1);
+        DispatchDO latest = dispatch(56L, DispatchStatus.SUCCEEDED, 2);
+        assertFalse(DispatchService.resolvePauseCapability(
+                historical, List.of(historical, latest), false, false, false, true).allowed());
+
+        DispatchDO interaction = dispatch(57L, DispatchStatus.RUNNING, 1);
+        interaction.setResumeMode("COMMENT_INTERACTION");
+        assertEquals("delivery.controlReason.interactionNoPause", DispatchService.resolvePauseCapability(
+                interaction, List.of(interaction), false, false, false, true).reasonKey());
+    }
+
+    @Test
+    void pauseCapabilityPreservesExecutorOfflineGuard() {
+        DispatchDO running = dispatch(55L, DispatchStatus.RUNNING, 1);
+        assertEquals("delivery.controlReason.executorOffline", DispatchService.resolvePauseCapability(
+                running, List.of(running), false, false, false, false).reasonKey());
+    }
+
+    @Test
+    void pauseFailedCannotContinueUntilItBecomesTerminal() {
+        DispatchDO source = dispatch(55L, DispatchStatus.PAUSE_FAILED, 2);
+        when(dispatchDao.findById(55L)).thenReturn(source);
+        when(dispatchDao.listByWorkitem(100L, 200L)).thenReturn(List.of(source));
+        when(dispatchDao.findByIdempotencyKey(100L, "continue:55")).thenReturn(null);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.continueDispatch(100L, 200L, 55L, 9L));
+    }
+
+    @Test
+    void latestNonTerminalInteractionBlocksFormalContinue() {
+        DispatchDO source = dispatch(55L, DispatchStatus.FAILED, 2);
+        DispatchDO interaction = dispatch(57L, DispatchStatus.RUNNING, 1);
+        interaction.setResumeMode("COMMENT_INTERACTION");
+
+        DispatchService.ContinueResolution resolution =
+                DispatchService.resolveContinueTarget(source, List.of(source, interaction));
+
+        assertEquals("dispatch.recovery.interaction", resolution.errorKey());
+    }
+
+    @Test
+    void staleNonTerminalInteractionBehindNewerFormalResolvesFormalTarget() {
+        DispatchDO source = dispatch(55L, DispatchStatus.FAILED, 2);
+        DispatchDO staleInteraction = dispatch(57L, DispatchStatus.PAUSED, 1);
+        staleInteraction.setResumeMode("COMMENT_INTERACTION");
+        DispatchDO rework = dispatch(58L, DispatchStatus.FAILED, 3);
+        rework.setResumeMode("COMMENT_REWORK");
+
+        DispatchService.ContinueResolution resolution =
+                DispatchService.resolveContinueTarget(source, List.of(source, staleInteraction, rework));
+
+        assertNull(resolution.errorKey());
+        assertEquals(58L, resolution.target().getId());
+    }
+
+    @Test
+    void newerFormalOnAnotherStepIsNotForwarded() {
+        DispatchDO source = dispatch(55L, DispatchStatus.FAILED, 2);
+        DispatchDO newer = dispatch(58L, DispatchStatus.FAILED, 3);
+        newer.setSdlcStepId(301L);
+
+        DispatchService.ContinueResolution resolution =
+                DispatchService.resolveContinueTarget(source, List.of(source, newer));
+
+        assertEquals("dispatch.recovery.newer", resolution.errorKey());
+        assertEquals(58L, resolution.errorArgs()[0]);
+        assertEquals(301L, resolution.errorArgs()[1]);
+    }
+
     private DispatchDO dispatch(long id, String status, int attempt) {
         DispatchDO dispatch = new DispatchDO();
         dispatch.setId(id);

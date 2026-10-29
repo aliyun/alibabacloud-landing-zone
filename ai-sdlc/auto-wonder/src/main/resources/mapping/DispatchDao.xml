@@ -304,11 +304,15 @@
         LIMIT #{limit}
     </select>
 
+    <!-- Candidate predecessors only. Pick terminal rows too so a late result or a
+         historical missed callback can be reconciled, but the service must re-check
+         durable pause/stop facts and authoritative inventory before releasing. -->
     <select id="listReleasedPausePredecessors" resultMap="dispatchMap">
         SELECT <include refid="cols"/> FROM dispatch d
         WHERE d.is_deleted = 0
+          AND d.id &gt; #{afterId}
           <if test="executorId != null">AND d.executor_id = #{executorId}</if>
-          AND (d.status = 'PAUSED'
+          AND (d.status IN ('PAUSED', 'SUCCEEDED', 'FAILED')
             OR (d.status = 'CANCELED' AND d.error LIKE 'PAUSE_CONFIRMATION_MISSING:%'))
           AND EXISTS (
             SELECT 1 FROM dispatch waiter
@@ -320,6 +324,16 @@
           )
         ORDER BY d.id ASC
         LIMIT #{limit}
+    </select>
+
+    <select id="existsWaitingForPredecessor" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1 FROM dispatch
+            WHERE tenant_id = #{tenantId}
+              AND status = 'WAITING_FOR_PAUSE'
+              AND result_summary = CONCAT('waitForDispatchId=', #{predecessorId})
+              AND is_deleted = 0
+        )
     </select>
 
     <!-- In-flight dispatches of one workspace, for the logical-delete linkage (D5). Caller supplies

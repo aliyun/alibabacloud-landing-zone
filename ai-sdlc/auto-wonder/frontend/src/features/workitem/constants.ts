@@ -38,12 +38,21 @@ export interface WorkitemStatusInput {
   statusCategory?: string | null;
 }
 
+/** 默认看板的四个列；CANCELED 只作为筛选值，不进入默认看板（规格 3.1 优先级 0）。 */
 export const STATUS_COLUMNS: StatusColumn[] = [
   { key: 'NEW', get title() { return i18n.t('workitem:status.new'); }, color: 'var(--aw-border)' },
   { key: 'IN_PROGRESS', get title() { return i18n.t('workitem:status.inProgress'); }, color: 'var(--aw-accent-text)' },
   { key: 'PENDING_DECISION', get title() { return i18n.t('workitem:status.pendingDecision'); }, color: 'var(--aw-warning)' },
   { key: 'DONE', get title() { return i18n.t('workitem:status.done'); }, color: 'var(--aw-success)' },
 ];
+
+/** 已取消列仅在状态筛选显式选中「已取消」时展示。 */
+export const CANCELED_STATUS_COLUMN: StatusColumn = {
+  key: 'CANCELED', get title() { return i18n.t('workitem:status.canceled'); }, color: 'var(--aw-muted)',
+};
+
+/** 状态筛选下拉：四个看板列 + 已取消，用于查看默认看板隐藏的已取消工单。 */
+export const STATUS_FILTER_COLUMNS: StatusColumn[] = [...STATUS_COLUMNS, CANCELED_STATUS_COLUMN];
 
 /** 读取服务端下发的看板分类；缺失时按待处理兜底（规格 3.1：状态名称不参与判断）。 */
 export function statusCategoryOf(item?: WorkitemStatusInput | null): string {

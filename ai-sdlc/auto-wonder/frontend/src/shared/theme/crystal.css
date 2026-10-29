@@ -93,7 +93,14 @@ html .ant-input::placeholder,html textarea::placeholder{color:var(--aw-muted);op
 
 .aw-workitem-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 0; margin-bottom: 4px; min-width: 0; }
 .aw-workitem-actions > * { flex-shrink: 0; }
-.aw-delivery-toggle { display: inline-flex; align-items: center; gap: 8px; height: 38px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--aw-border); border-radius: 8px; background: var(--aw-panel); color: var(--aw-muted); font-size: 12px; white-space: nowrap; margin-left: auto; }
+/* Delivery state and its standard button share one group; no decorative box wraps the button. */
+.aw-workitem-actions > .aw-delivery-toggle { flex-shrink: 1; max-width: 100%; margin-left: auto; }
+.aw-delivery-toggle { display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 8px; min-width: 0; color: var(--aw-muted); font-size: 12px; line-height: 1.5; }
+.aw-delivery-toggle-state { min-width: 0; overflow-wrap: anywhere; }
+.aw-delivery-toggle > .ant-btn,
+.aw-delivery-toggle > .aw-delivery-toggle-action { flex-shrink: 0; }
+.aw-delivery-toggle-action { display: inline-flex; border-radius: 8px; }
+.aw-delivery-toggle-action:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 2px; }
 
 /* The sidebar layout owns the page surface; feature cards own only their contents. */
 .aw-content-frame { height: 100%; min-width: 0; padding: 24px; overflow: auto; border: 1px solid var(--aw-border); border-radius: 12px; background: var(--aw-panel); }
@@ -140,6 +147,10 @@ html .aw-content-card > .ant-card-head .ant-card-extra { max-width: 100%; margin
 .aw-workitem-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; margin-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--aw-border); color: var(--aw-muted); font-size: 13px; line-height: 1.6; }
 .aw-workitem-meta > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .aw-workitem-meta .ant-tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 22px; }
+.aw-workitem-tags-cell .aw-workitem-tags-edit { opacity: 0; transition: opacity .15s; }
+.aw-workitem-tags-cell:hover .aw-workitem-tags-edit,
+.aw-workitem-tags-cell:focus-within .aw-workitem-tags-edit,
+.aw-workitem-tags-cell .aw-workitem-tags-edit:focus-visible { opacity: 1; }
 .aw-workitem-intervention.ant-alert { padding: 10px 12px; align-items: center; }
 .aw-workitem-intervention .ant-alert-icon { font-size: 16px; margin-inline-end: 8px; }
 .aw-workitem-intervention .ant-alert-content { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }

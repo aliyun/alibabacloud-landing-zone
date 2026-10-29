@@ -10,6 +10,7 @@ import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.List;
 
@@ -35,12 +36,41 @@ class AuditLogServiceTest {
     void actorTypeFiltersBothSearchAndCount() {
         AuditLogQuery query = new AuditLogQuery();
         query.setActorType("HUMAN");
-        when(auditLogDao.search(1L, null, null, "HUMAN", null, null, null, null, null, null, 0, 20))
+        when(auditLogDao.search(1L, null, null, null, "HUMAN", null, null, null, null, null, null, 0, 20))
                 .thenReturn(java.util.Collections.emptyList());
         service.search(query, 1L, 1, 20);
         service.count(query, 1L);
-        verify(auditLogDao).search(1L, null, null, "HUMAN", null, null, null, null, null, null, 0, 20);
-        verify(auditLogDao).countSearch(1L, null, null, "HUMAN", null, null, null, null, null, null);
+        verify(auditLogDao).search(1L, null, null, null, "HUMAN", null, null, null, null, null, null, 0, 20);
+        verify(auditLogDao).countSearch(1L, null, null, null, "HUMAN", null, null, null, null, null, null);
+    }
+
+    @Test
+    void timeWindowInstantsConvertToShanghaiWallClockForSearchAndCount() {
+        LocalDateTime start = LocalDateTime.of(2026, 10, 16, 0, 0);
+        LocalDateTime end = LocalDateTime.of(2026, 10, 16, 23, 59, 59, 999_000_000);
+        AuditLogQuery query = new AuditLogQuery();
+        query.setStartTime("2026-10-15T16:00:00.000Z");
+        query.setEndTime("2026-10-16T15:59:59.999Z");
+        when(auditLogDao.search(1L, null, null, null, null, null, null, null, start, end, null, 0, 20))
+                .thenReturn(java.util.Collections.emptyList());
+        when(auditLogDao.countSearch(1L, null, null, null, null, null, null, null, start, end, null))
+                .thenReturn(0);
+
+        service.search(query, 1L, 1, 20);
+        service.count(query, 1L);
+
+        verify(auditLogDao).search(1L, null, null, null, null, null, null, null, start, end, null, 0, 20);
+        verify(auditLogDao).countSearch(1L, null, null, null, null, null, null, null, start, end, null);
+    }
+
+    @Test
+    void timeWindowAcceptsOffsetsWallClockAndBlankInput() {
+        assertEquals(LocalDateTime.of(2026, 10, 16, 0, 0),
+                AuditLogService.toShanghaiWallClock("2026-10-16T00:00:00+08:00"));
+        assertEquals(LocalDateTime.of(2026, 10, 16, 0, 0),
+                AuditLogService.toShanghaiWallClock("2026-10-16T00:00:00"));
+        assertNull(AuditLogService.toShanghaiWallClock(" "));
+        assertNull(AuditLogService.toShanghaiWallClock("not-a-time"));
     }
 
     @Test
@@ -51,7 +81,7 @@ class AuditLogServiceTest {
         log.setModule("WORKITEM");
         log.setAction("CREATE");
         log.setGmtCreate(new Date());
-        when(auditLogDao.search(1L, "WORKITEM", null, null, null, null, null, null, null, null, 0, 20))
+        when(auditLogDao.search(1L, "WORKITEM", null, null, null, null, null, null, null, null, null, 0, 20))
                 .thenReturn(List.of(log));
 
         AuditLogQuery query = new AuditLogQuery();
@@ -65,18 +95,18 @@ class AuditLogServiceTest {
 
     @Test
     void searchPageBoundsClamped() {
-        when(auditLogDao.search(eq(1L), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0), eq(100)))
+        when(auditLogDao.search(eq(1L), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0), eq(100)))
                 .thenReturn(List.of());
 
         AuditLogQuery query = new AuditLogQuery();
         service.search(query, 1L, -1, 999);
 
-        verify(auditLogDao).search(1L, null, null, null, null, null, null, null, null, null, 0, 100);
+        verify(auditLogDao).search(1L, null, null, null, null, null, null, null, null, null, null, 0, 100);
     }
 
     @Test
     void countDelegates() {
-        when(auditLogDao.countSearch(1L, "AGENT", "DELETE", null, null, null, null, null, null, null))
+        when(auditLogDao.countSearch(1L, "AGENT", "DELETE", null, null, null, null, null, null, null, null))
                 .thenReturn(5);
 
         AuditLogQuery query = new AuditLogQuery();
@@ -95,7 +125,7 @@ class AuditLogServiceTest {
         log.setAction("UPDATE");
         log.setDetailJson("{\"name\":\"alpha\"}");
         log.setGmtCreate(new Date());
-        when(auditLogDao.search(1L, null, null, null, null, null, null, null, null, "alpha", 0, 20))
+        when(auditLogDao.search(1L, null, null, null, null, null, null, null, null, null, "alpha", 0, 20))
                 .thenReturn(List.of(log));
 
         AuditLogQuery query = new AuditLogQuery();
@@ -135,7 +165,7 @@ class AuditLogServiceTest {
         agent.setName("Auto Dev");
         when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user);
         when(agentDao.findById(7L)).thenReturn(agent);
-        when(auditLogDao.search(1L, null, null, null, null, "workitem", null, null, null, null, 0, 20))
+        when(auditLogDao.search(1L, null, null, null, null, null, "workitem", null, null, null, null, 0, 20))
                 .thenReturn(List.of(humanLog, agentLog));
 
         AuditLogQuery query = new AuditLogQuery();
@@ -151,13 +181,34 @@ class AuditLogServiceTest {
 
     @Test
     void countWithKeyword() {
-        when(auditLogDao.countSearch(1L, null, null, null, null, null, null, null, null, "beta"))
+        when(auditLogDao.countSearch(1L, null, null, null, null, null, null, null, null, null, "beta"))
                 .thenReturn(3);
 
         AuditLogQuery query = new AuditLogQuery();
         query.setKeyword("beta");
         int count = service.count(query, 1L);
         assertEquals(3, count);
+    }
+
+    @Test
+    void riskLevelFiltersSearchAndCountAndIsDerivedOnTheVo() {
+        AuditLogDO log = new AuditLogDO();
+        log.setId(3L);
+        log.setModule("WORKITEM");
+        log.setAction("DELETE");
+        log.setRiskLevel("high");
+        log.setGmtCreate(new Date());
+        when(auditLogDao.search(1L, null, null, "high", null, null, null, null, null, null, null, 0, 20))
+                .thenReturn(List.of(log));
+        when(auditLogDao.countSearch(1L, null, null, "high", null, null, null, null, null, null, null))
+                .thenReturn(1);
+
+        AuditLogQuery query = new AuditLogQuery();
+        query.setRiskLevel("high");
+        List<AuditLogVO> result = service.search(query, 1L, 1, 20);
+
+        assertEquals("high", result.get(0).getRiskLevel());
+        assertEquals(1, service.count(query, 1L));
     }
 
     @Test

@@ -3,6 +3,7 @@ import { Alert, Button, Input, Space, Typography } from 'antd';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { useTranslation } from 'react-i18next';
 import { getDispatchGuidance, sendDispatchGuidance, type DispatchGuidance } from '../api';
+import { createUuidV4 } from '@/shared/lib/uuid';
 
 export function DispatchGuidanceInput({ dispatchId }: { dispatchId: number }) {
   const { t } = useTranslation('workitem');
@@ -30,7 +31,7 @@ export function DispatchGuidanceInput({ dispatchId }: { dispatchId: number }) {
   const send = async () => {
     if (sending || !content.trim()) return;
     const text = content;
-    if (request.current?.content !== text) request.current = { content: text, key: crypto.randomUUID() };
+    if (request.current?.content !== text) request.current = { content: text, key: createUuidV4() };
     setSending(true); setError(null);
     try {
       const rows = await sendDispatchGuidance(dispatchId, text, request.current.key);

@@ -1,3 +1,11 @@
+export interface WorkerCost {
+  agentId: number | null;
+  agentName?: string | null;
+  credits: number;
+  /** credits 中来自会话（澄清/平台管家/IM 等）的部分。 */
+  conversationCredits?: number | null;
+}
+
 export interface CostMetrics {
   totalTokens: number;
   avgTokensPerTask: number;
@@ -7,6 +15,8 @@ export interface CostMetrics {
   avgCreditsPerTask: number;
   dailyAvgCredits: number;
   creditsTrend: number[];
+  /** 旧后端没有该字段：缺失时成本卡不展示 hover 明细。 */
+  byWorker?: WorkerCost[] | null;
 }
 
 export interface EfficiencyMetrics {
@@ -87,8 +97,6 @@ export interface InsightModel {
 
 export type TimeRange = '7d' | '30d' | '90d';
 
-export type Granularity = 'DAY' | 'WEEK' | 'MONTH';
-
 export interface DurationSummary {
   humanShare?: number | null;
   totalDurationSeconds: number;
@@ -117,16 +125,14 @@ export interface TrendEntry {
 export interface HumanAgentParticipation {
   medianTotalSeconds?: number;
   agentWorkitemCount?: number;
-  executionSampleSize?: number;
-  averageExecutionSeconds?: number | null;
-  executionMissingCount?: number;
-  executionIncompleteCount?: number;
   identifiedCompletedCount?: number;
   inferredAssignmentCount?: number;
   exclusions?: Record<string, number>;
   available: boolean;
   generatedAt: string | null;
   dataThrough: string | null;
+  realtimeTail?: boolean;
+  averageTotalMinutes?: number | null;
   refreshTriggered: boolean;
   sampleSize: number;
   average: DurationSummary | null;
@@ -134,61 +140,74 @@ export interface HumanAgentParticipation {
   trend: TrendEntry[];
 }
 
-export interface HumanAgentSlowTailPage {
-  tailSize: number;
-  total: number;
-  page: number;
-  pageSize: number;
+export interface HumanAgentSlowTail {
   items: P90Workitem[];
 }
 
-export interface RequirementDeliveryDurationStats {
-  averageDurationSeconds: number | null;
-  medianDurationSeconds: number | null;
-  validSampleCount: number;
-  missingSampleCount: number;
-  metTargetCount: number | null;
-  goalRatio: number | null;
-}
-
-export interface RequirementDeliverySample {
+export interface StageDurationSample {
+  dispatchId: number;
   workitemId: number;
   title: string;
-  deliveredAt: string;
-  deliveryStartedAt: string | null;
-  durationSeconds: number | null;
-  metTarget: boolean | null;
-  missingReason: string | null;
+  agentName: string | null;
+  createdAt: string;
+  status: string;
+  durationMs: number | null;
 }
 
-export interface RequirementDeliveryWeek extends RequirementDeliveryDurationStats {
-  weekStart: string;
-  weekEnd: string;
-  coveredFrom: string;
-  coveredTo: string;
-  partial: boolean;
-  deliveredCount: number;
+export interface StageDurationStage {
+  key: string;
+  sdlcId: number;
+  sdlcName: string | null;
+  stepId: number | null;
+  stepOrder: number | null;
+  name: string | null;
+  sampleCount: number;
+  completedCount: number;
+  activeCount: number;
+  incompleteCount: number;
+  reusedCount: number;
+  skippedCount: number;
+  missingDurationCount: number;
+  totalDurationMs: number;
+  averageDurationMs: number | null;
+  medianDurationMs: number | null;
+  p90DurationMs: number | null;
+  slowest: StageDurationSample[];
 }
 
-export interface RequirementDeliveryPeriod {
-  startDate: string;
-  endDate: string;
-  deliveredCount: number;
-}
-
-export interface RequirementDeliverySummary extends RequirementDeliveryDurationStats {
-  deliveredCount: number;
-  previous: RequirementDeliveryPeriod;
-  changePercent: number | null;
-}
-
-export interface RequirementDeliveryReport {
+export interface StageDurationReport {
   startDate: string;
   endDate: string;
   timezone: string;
-  dataThrough: string;
-  targetHours: number | null;
-  summary: RequirementDeliverySummary;
-  weeks: RequirementDeliveryWeek[];
-  samples: RequirementDeliverySample[];
+  calculatedAt: string;
+  executionCount: number;
+  workitemCount: number;
+  measuredExecutionCount: number;
+  missingDurationCount: number;
+  totalDurationMs: number;
+  stages: StageDurationStage[];
+}
+
+export interface MemberDeliveryCounts {
+  created: number;
+  total: number;
+  completed: number;
+  inProgress: number;
+  notStarted: number;
+  pendingDecision: number;
+  requirements: number;
+}
+
+export interface MemberDeliveryMember extends MemberDeliveryCounts {
+  memberId: number | string | null;
+  memberName: string;
+  memberNameKind?: string | null;
+}
+
+export interface MemberDeliveryReport {
+  startDate: string;
+  endDate: string;
+  timezone: string;
+  summary: MemberDeliveryCounts;
+  members: MemberDeliveryMember[];
 }

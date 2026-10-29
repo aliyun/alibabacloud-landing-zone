@@ -2,6 +2,7 @@ package com.aliyun.autowonder.evolution;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -36,9 +37,28 @@ class EvolutionHistoricalPercentileLiteServiceTest {
         assertTrue(expensive >= 0.0 && expensive <= 1.0);
     }
 
+    @Test
+    void compactSamplesPreserveNumericStringsAndSkipMissingOrInvalidMetrics() {
+        BayesianEvidenceDao dao = mock(BayesianEvidenceDao.class);
+        when(dao.listRecentCohortSamples(1L, "TOKEN_EFFICIENCY", null, 500))
+                .thenReturn(Arrays.asList(
+                        sample(1000), jsonSample("{\"rawMetricValue\":\"2000\"}"),
+                        jsonSample("{\"rawMetricValue\":null}"), jsonSample("{}"),
+                        jsonSample("{\"rawMetricValue\":\"invalid\"}"),
+                        jsonSample("{\"rawMetricValue\":\"NaN\"}"),
+                        jsonSample("{\"rawMetricValue\":\"Infinity\"}"), null));
+        EvolutionHistoricalPercentileLiteService service = new EvolutionHistoricalPercentileLiteService(dao);
+
+        assertEquals(5.0 / 6.0, service.lowerIsBetter(1L, "coding:repo:test", "TOKEN_EFFICIENCY", 500), 0.0001);
+    }
+
     private BayesianEvidenceDO sample(long value) {
+        return jsonSample("{\"rawMetricValue\":" + value + "}");
+    }
+
+    private BayesianEvidenceDO jsonSample(String json) {
         BayesianEvidenceDO evidence = new BayesianEvidenceDO();
-        evidence.setEvidenceJson("{\"rawMetricValue\":" + value + "}");
+        evidence.setEvidenceJson(json);
         return evidence;
     }
 }

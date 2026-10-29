@@ -51,6 +51,44 @@ describe('MarkdownView', () => {
     expect(link).not.toHaveAttribute('onclick');
   });
 
+  it('renders both inline images from a rich-text body without changing their URLs', () => {
+    const urls = ['one.png', 'two.png'].map(name => (
+      `https://workitems.example.test/v2/api/workitem/adapter/file/url?fileIdentifier=workitem%2Fexample%2F0%2F${name}&download=false`
+    ));
+    render(<MarkdownView content={`<article><p>Namespace</p>${urls.map((url, index) => (
+      `<p><img src="${url.replaceAll('&', '&amp;')}" alt="Screenshot ${index + 1}" /></p>`
+    )).join('')}</article>`} />);
+
+    expect(screen.getAllByRole('img').map(image => image.getAttribute('src'))).toEqual(urls);
+    expect(screen.getByRole('img', { name: 'Screenshot 1' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Screenshot 2' })).toBeInTheDocument();
+    expect(screen.getByText('Namespace')).toBeInTheDocument();
+  });
+
+  it('renders Markdown images with their accessible label and title', () => {
+    render(<MarkdownView content={'![Screenshot](/images/namespace.png "Namespace settings")'} />);
+
+    const image = screen.getByRole('img', { name: 'Screenshot' });
+    expect(image).toHaveAttribute('src', '/images/namespace.png');
+    expect(image).toHaveAttribute('title', 'Namespace settings');
+  });
+
+  it('removes inline image handlers and styles while preserving a safe source', () => {
+    render(<MarkdownView content={'<img src="https://example.com/screenshot.png" alt="Screenshot" onerror="alert(1)" onload="alert(2)" style="position:fixed" />'} />);
+
+    const image = screen.getByRole('img', { name: 'Screenshot' });
+    expect(image).toHaveAttribute('src', 'https://example.com/screenshot.png');
+    expect(image).not.toHaveAttribute('onerror');
+    expect(image).not.toHaveAttribute('onload');
+    expect(image).not.toHaveAttribute('style');
+  });
+
+  it.each(['javascript:alert(1)', 'data:image/svg+xml,%3Csvg%20onload=alert(1)%3E'])('removes unsafe image source %s', source => {
+    render(<MarkdownView content={`<img src="${source}" alt="Unsafe screenshot" />`} />);
+
+    expect(screen.getByRole('img', { name: 'Unsafe screenshot' })).not.toHaveAttribute('src');
+  });
+
   it('opens explicit, bare, relative, mailto and raw html links in a new tab with safe rel', () => {
     render(
       <MarkdownView

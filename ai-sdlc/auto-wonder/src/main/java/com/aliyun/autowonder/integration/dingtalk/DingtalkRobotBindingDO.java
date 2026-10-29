@@ -8,6 +8,9 @@ import java.util.Date;
 public class DingtalkRobotBindingDO {
     private Long id;
     private Long tenantId;
+    private String bindingMode;
+    private Long platformConfigId;
+    private String groupId;
     private String appKey;
     private String credentialRef;
     private String robotCode;
@@ -17,6 +20,7 @@ public class DingtalkRobotBindingDO {
     private String baseUrl;
     private String regionId;
     private String streamEnv;
+    private Long routeVersion;
     private Date lastSuccessAt;
     private String lastError;
     private String status;

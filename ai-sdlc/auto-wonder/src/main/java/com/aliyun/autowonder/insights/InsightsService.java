@@ -5,46 +5,56 @@ import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.aiusage.DispatchAiUsageService;
 import com.aliyun.autowonder.aiusage.dto.DispatchAiUsageBackfillResult;
 import com.aliyun.autowonder.insights.dto.HumanAgentParticipationVO;
-import com.aliyun.autowonder.insights.dto.HumanAgentSlowTailPageVO;
+import com.aliyun.autowonder.insights.dto.HumanAgentSlowTailVO;
 import com.aliyun.autowonder.insights.dto.InsightAuditItemVO;
 import com.aliyun.autowonder.insights.dto.InsightAuditPageVO;
 import com.aliyun.autowonder.insights.dto.InsightMetricsVO;
 import com.aliyun.autowonder.insights.dto.InsightWorkerVO;
+import com.aliyun.autowonder.insights.participation.CompletionFactQuery;
 import com.aliyun.autowonder.insights.participation.HumanAgentParticipationCalculator;
-import com.aliyun.autowonder.insights.participation.HumanAgentParticipationCalculator.Granularity;
 import com.aliyun.autowonder.insights.participation.HumanAgentParticipationCalculator.ParticipationSummary;
 import com.aliyun.autowonder.insights.participation.HumanAgentParticipationCalculator.TrendBucket;
 import com.aliyun.autowonder.insights.participation.HumanAgentParticipationFact;
 import com.aliyun.autowonder.insights.participation.HumanAgentParticipationProperties;
 import com.aliyun.autowonder.insights.participation.HumanAgentParticipationRefreshService;
 import com.aliyun.autowonder.insights.participation.HumanAgentParticipationSnapshotStore.ParsedSnapshot;
+import com.aliyun.autowonder.insights.participation.ParticipationRefreshResult;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
 public class InsightsService {
 
+    private static final List<String> CREDIT_SOURCE_ORDER = List.of(
+            "DISPATCH", "WORKITEM_CLARIFICATION", "PLATFORM_ASSISTANT", "IM", "OTHER_CONVERSATION");
+    static final int MAX_PARTICIPATION_RANGE_DAYS = 180;
+
     private final InsightsDao insightsDao;
     private final DispatchAiUsageService usageService;
     private final HumanAgentParticipationRefreshService participationRefreshService;
     private final HumanAgentParticipationProperties participationProperties;
     private final HumanAgentParticipationCalculator participationCalculator;
+    private final CompletionFactQuery completionFactQuery;
 
     public InsightsService(InsightsDao insightsDao,
                             DispatchAiUsageService usageService,
                             HumanAgentParticipationRefreshService participationRefreshService,
-                            HumanAgentParticipationProperties participationProperties) {
+                            HumanAgentParticipationProperties participationProperties,
+                            CompletionFactQuery completionFactQuery) {
         this.insightsDao = insightsDao;
         this.usageService = usageService;
         this.participationRefreshService = participationRefreshService;
         this.participationProperties = participationProperties;
         this.participationCalculator = new HumanAgentParticipationCalculator();
+        this.completionFactQuery = completionFactQuery;
     }
 
     public InsightMetricsVO getMetrics(long tenantId, Long agentId, String timeRange) {
@@ -66,13 +76,17 @@ public class InsightsService {
             totalCredits = BigDecimal.ZERO;
         }
         cost.setTotalCredits(totalCredits);
-        cost.setAvgCreditsPerTask(usageWorkitems > 0
-                ? totalCredits.divide(BigDecimal.valueOf(usageWorkitems), 2, RoundingMode.HALF_UP)
+        // Credits 均值分母包含「只有工单绑定对话用量」的工单；Token 指标口径保持不变。
+        int creditUsageWorkitems = insightsDao.countCreditUsageWorkitems(tenantId, since, agentId);
+        cost.setAvgCreditsPerTask(creditUsageWorkitems > 0
+                ? totalCredits.divide(BigDecimal.valueOf(creditUsageWorkitems), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO);
         cost.setDailyAvgCredits(days > 0
                 ? totalCredits.divide(BigDecimal.valueOf(days), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO);
         cost.setCreditsTrend(buildCreditsTrend(tenantId, since, agentId));
+        cost.setByWorker(buildWorkerCosts(insightsDao.listWorkerCredits(tenantId, since, agentId)));
+        cost.setBySource(buildCreditSources(insightsDao.listCreditsBySource(tenantId, since, agentId)));
         vo.setCost(cost);
 
         // Efficiency
@@ -175,6 +189,41 @@ public class InsightsService {
                 .collect(Collectors.toList());
     }
 
+    private List<InsightMetricsVO.WorkerCost> buildWorkerCosts(List<InsightMetricsVO.WorkerCost> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return rows.stream()
+                .filter(Objects::nonNull)
+                .filter(row -> row.getCredits() != null
+                        && row.getCredits().compareTo(BigDecimal.ZERO) > 0)
+                .collect(Collectors.toList());
+    }
+
+    private List<InsightMetricsVO.CreditSource> buildCreditSources(List<InsightMetricsVO.CreditSource> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Map<String, BigDecimal> creditsBySource = new HashMap<>();
+        for (InsightMetricsVO.CreditSource row : rows) {
+            if (row == null || row.getSource() == null || row.getCredits() == null) {
+                continue;
+            }
+            creditsBySource.merge(row.getSource(), row.getCredits(), BigDecimal::add);
+        }
+        List<InsightMetricsVO.CreditSource> ordered = new ArrayList<>();
+        for (String source : CREDIT_SOURCE_ORDER) {
+            BigDecimal credits = creditsBySource.get(source);
+            if (credits != null && credits.compareTo(BigDecimal.ZERO) > 0) {
+                InsightMetricsVO.CreditSource item = new InsightMetricsVO.CreditSource();
+                item.setSource(source);
+                item.setCredits(credits);
+                ordered.add(item);
+            }
+        }
+        return ordered;
+    }
+
     private BigDecimal toBigDecimal(Object raw) {
         if (raw == null) {
             return BigDecimal.ZERO;
@@ -182,46 +231,50 @@ public class InsightsService {
         return raw instanceof BigDecimal ? (BigDecimal) raw : new BigDecimal(String.valueOf(raw));
     }
 
-    public boolean forceParticipationRefresh(long tenantId) {
+    public ParticipationRefreshResult forceParticipationRefresh(long tenantId) {
         return participationRefreshService.forceRefresh(tenantId);
     }
 
     public HumanAgentParticipationVO getParticipation(long tenantId, LocalDate startDate,
-                                                       LocalDate endDate, String granularity) {
-        Optional<ParsedSnapshot> snapshotOpt = participationRefreshService.read(tenantId);
-        if (snapshotOpt.isEmpty()) {
-            participationRefreshService.requestRefresh(tenantId);
-            participationRefreshService.waitForRefresh(tenantId, participationProperties.getCacheMissWaitMs());
-            snapshotOpt = participationRefreshService.read(tenantId);
-            if (snapshotOpt.isEmpty()) {
-                HumanAgentParticipationVO vo = new HumanAgentParticipationVO();
-                vo.setAvailable(false);
-                vo.setRefreshTriggered(true);
-                return vo;
-            }
-        }
-        return buildParticipationResponse(snapshotOpt.get(), startDate, endDate, granularity);
+                                                       LocalDate endDate) {
+        return getParticipation(tenantId, startDate, endDate, null);
     }
 
-    private HumanAgentParticipationVO buildParticipationResponse(ParsedSnapshot snapshot,
-                                                                   LocalDate startDate, LocalDate endDate,
-                                                                   String granularity) {
-        HumanAgentParticipationVO vo = new HumanAgentParticipationVO();
-        LocalDate dataThrough = LocalDate.parse(snapshot.dataThrough());
-        if (startDate.isAfter(endDate) || endDate.isAfter(dataThrough)) {
-            throw new KeyedIllegalArgumentException("insights.invalid_date_range", null, "Invalid date range: start_date must be <= end_date and end_date <= dataThrough");
+    public HumanAgentParticipationVO getParticipation(long tenantId, LocalDate startDate,
+                                                       LocalDate endDate, String workType) {
+        Optional<ParsedSnapshot> snapshotOpt = completionFactQuery.ensureSnapshot(tenantId);
+        if (snapshotOpt.isEmpty()) {
+            HumanAgentParticipationVO vo = new HumanAgentParticipationVO();
+            vo.setAvailable(false);
+            vo.setRefreshTriggered(true);
+            return vo;
         }
+        return buildParticipationResponse(snapshotOpt, tenantId, startDate, endDate, workType);
+    }
 
-        Granularity g = Granularity.valueOf(granularity.toUpperCase());
+    private HumanAgentParticipationVO buildParticipationResponse(Optional<ParsedSnapshot> snapshotOpt,
+                                                                   long tenantId,
+                                                                   LocalDate startDate, LocalDate endDate,
+                                                                   String workType) {
+        ParsedSnapshot snapshot = snapshotOpt.get();
         ZoneId zone = ZoneId.of(participationProperties.getTimezone());
+        LocalDate today = LocalDate.now(zone);
+        validateParticipationRange(startDate, endDate, today);
+
+        HumanAgentParticipationVO vo = new HumanAgentParticipationVO();
+        List<HumanAgentParticipationFact> facts = completionFactQuery.range(
+                snapshotOpt, tenantId, startDate, endDate, workType);
+        boolean realtimeTail = endDate.isEqual(today) && completionFactQuery.includesRealtimeTail(endDate);
         ParticipationSummary summary = participationCalculator.summarize(
-                snapshot.items(), startDate, endDate, g, zone);
+                facts, startDate, endDate, zone);
 
         vo.setAvailable(true);
-        vo.setGeneratedAt(snapshot.generatedAt());
-        vo.setDataThrough(snapshot.dataThrough());
+        vo.setGeneratedAt(realtimeTail ? Instant.now().toString() : snapshot.generatedAt());
+        vo.setDataThrough(realtimeTail ? today.toString() : snapshot.dataThrough());
+        vo.setRealtimeTail(realtimeTail);
         vo.setRefreshTriggered(false);
         vo.setSampleSize(summary.eligibleFacts().size());
+        vo.setAverageTotalMinutes(HumanAgentParticipationCalculator.averageMinutes(summary.eligibleFacts()));
 
         HumanAgentParticipationVO.DurationSummary avg = new HumanAgentParticipationVO.DurationSummary(
                 summary.averageTotalSeconds(), summary.averageHumanSeconds(), summary.averageAgentSeconds());
@@ -229,21 +282,11 @@ public class InsightsService {
         vo.setAverage(avg);
         vo.setMedianTotalSeconds(summary.medianTotalSeconds());
         vo.setAgentWorkitemCount(summary.agentWorkitemCount());
-        List<HumanAgentParticipationFact> execution = summary.eligibleFacts().stream()
-                .filter(f -> f.executionSeconds() != null).collect(java.util.stream.Collectors.toList());
-        vo.setExecutionSampleSize(execution.size());
-        vo.setAverageExecutionSeconds(execution.isEmpty() ? null : execution.stream()
-                .mapToLong(HumanAgentParticipationFact::executionSeconds).average().orElse(0));
-        vo.setExecutionMissingCount((int) summary.eligibleFacts().stream()
-                .filter(f -> f.agentParticipated() && "MISSING".equals(f.executionStatus())).count());
-        vo.setExecutionIncompleteCount((int) summary.eligibleFacts().stream()
-                .filter(f -> f.agentParticipated() && "INCOMPLETE".equals(f.executionStatus())).count());
         vo.setInferredAssignmentCount((int) summary.eligibleFacts().stream()
                 .filter(HumanAgentParticipationFact::inferredAssignment).count());
         java.util.Map<String, Integer> exclusions = new java.util.LinkedHashMap<>();
-        for (HumanAgentParticipationFact fact : snapshot.items()) {
-            LocalDate completed = fact.completedAt().atZone(zone).toLocalDate();
-            if (fact.exclusionReason() != null && !completed.isBefore(startDate) && !completed.isAfter(endDate)) {
+        for (HumanAgentParticipationFact fact : facts) {
+            if (fact.exclusionReason() != null) {
                 exclusions.merge(fact.exclusionReason(), 1, Integer::sum);
             }
         }
@@ -273,54 +316,49 @@ public class InsightsService {
         return human + agent == 0 ? null : (double) human / (human + agent);
     }
 
-    public HumanAgentSlowTailPageVO getSlowTail(long tenantId, LocalDate startDate,
-                                                  LocalDate endDate, int page, int pageSize) {
-        Optional<ParsedSnapshot> snapshotOpt = participationRefreshService.read(tenantId);
-        if (snapshotOpt.isEmpty()) {
-            participationRefreshService.requestRefresh(tenantId);
-            participationRefreshService.waitForRefresh(tenantId, participationProperties.getCacheMissWaitMs());
-            snapshotOpt = participationRefreshService.read(tenantId);
-            if (snapshotOpt.isEmpty()) {
-                HumanAgentSlowTailPageVO vo = new HumanAgentSlowTailPageVO();
-                vo.setTailSize(0);
-                vo.setTotal(0);
-                vo.setPage(page);
-                vo.setPageSize(pageSize);
-                vo.setItems(Collections.emptyList());
-                return vo;
-            }
-        }
-        return buildSlowTailResponse(snapshotOpt.get(), startDate, endDate, page, pageSize);
+    public HumanAgentSlowTailVO getSlowTail(long tenantId, LocalDate startDate, LocalDate endDate) {
+        return getSlowTail(tenantId, startDate, endDate, null);
     }
 
-    private HumanAgentSlowTailPageVO buildSlowTailResponse(ParsedSnapshot snapshot,
+    public HumanAgentSlowTailVO getSlowTail(long tenantId, LocalDate startDate, LocalDate endDate,
+                                            String workType) {
+        Optional<ParsedSnapshot> snapshotOpt = completionFactQuery.ensureSnapshot(tenantId);
+        if (snapshotOpt.isEmpty()) {
+            HumanAgentSlowTailVO vo = new HumanAgentSlowTailVO();
+            vo.setItems(Collections.emptyList());
+            return vo;
+        }
+        return buildSlowTailResponse(snapshotOpt, tenantId, startDate, endDate, workType);
+    }
+
+    private HumanAgentSlowTailVO buildSlowTailResponse(Optional<ParsedSnapshot> snapshotOpt,
+                                                             long tenantId,
                                                              LocalDate startDate, LocalDate endDate,
-                                                             int page, int pageSize) {
-        HumanAgentSlowTailPageVO vo = new HumanAgentSlowTailPageVO();
-        LocalDate dataThrough = LocalDate.parse(snapshot.dataThrough());
-        if (startDate.isAfter(endDate) || endDate.isAfter(dataThrough)) {
-            throw new KeyedIllegalArgumentException("insights.invalid_date_range", null, "Invalid date range: start_date must be <= end_date and end_date <= dataThrough");
-        }
-
-        Granularity g = Granularity.DAY;
+                                                             String workType) {
+        HumanAgentSlowTailVO vo = new HumanAgentSlowTailVO();
         ZoneId zone = ZoneId.of(participationProperties.getTimezone());
-        ParticipationSummary summary = participationCalculator.summarize(
-                snapshot.items(), startDate, endDate, g, zone);
+        LocalDate today = LocalDate.now(zone);
+        validateParticipationRange(startDate, endDate, today);
 
-        List<HumanAgentParticipationFact> tail = summary.slowTail();
-        int total = tail.size();
-        int fromIndex = Math.min((page - 1) * pageSize, total);
-        int toIndex = Math.min(fromIndex + pageSize, total);
+        List<HumanAgentParticipationFact> facts = completionFactQuery.range(
+                snapshotOpt, tenantId, startDate, endDate, workType);
+
         List<HumanAgentParticipationVO.P90Workitem> items = new ArrayList<>();
-        for (int i = fromIndex; i < toIndex; i++) {
-            items.add(toP90Workitem(tail.get(i)));
+        for (HumanAgentParticipationFact fact
+                : HumanAgentParticipationCalculator.slowTail(facts, startDate, endDate, zone)) {
+            items.add(toP90Workitem(fact));
         }
-        vo.setTailSize(total);
-        vo.setTotal(total);
-        vo.setPage(page);
-        vo.setPageSize(pageSize);
         vo.setItems(items);
         return vo;
+    }
+
+    private static void validateParticipationRange(LocalDate startDate, LocalDate endDate, LocalDate today) {
+        boolean tooWide = !startDate.isAfter(endDate)
+                && ChronoUnit.DAYS.between(startDate, endDate) > MAX_PARTICIPATION_RANGE_DAYS;
+        if (startDate.isAfter(endDate) || endDate.isAfter(today) || tooWide) {
+            throw new KeyedIllegalArgumentException("insights.invalid_date_range", null,
+                    "Invalid date range: start_date must be <= end_date and end_date <= today");
+        }
     }
 
     private HumanAgentParticipationVO.P90Workitem toP90Workitem(HumanAgentParticipationFact f) {

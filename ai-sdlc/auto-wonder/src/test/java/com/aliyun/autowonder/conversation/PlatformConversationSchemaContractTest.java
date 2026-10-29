@@ -26,6 +26,16 @@ class PlatformConversationSchemaContractTest {
             "conversation_action_plan",
             "conversation_action_step");
 
+    @Test
+    void senderMigrationIsNullableAndDoesNotInventHistoricalActors() throws Exception {
+        String migration = read("docs/migration/V099__conversation_turn_submitted_user.sql");
+        assertTrue(migration.contains("ALTER TABLE `agent_conversation_turn`"));
+        assertTrue(migration.contains("`submitted_user_id` BIGINT NULL"));
+        org.junit.jupiter.api.Assertions.assertFalse(migration.toUpperCase().contains("UPDATE "));
+        assertTrue(tableDefinition(read(SCHEMA), "agent_conversation_turn")
+                .contains("`submitted_user_id` BIGINT NULL"));
+    }
+
     private String read(String relative) throws Exception {
         return Files.readString(Path.of(relative), StandardCharsets.UTF_8);
     }

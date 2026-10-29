@@ -210,9 +210,11 @@ export async function getClarificationTurnEvents(
   workitemId: number | string,
   conversationId: number,
   turnId: number,
+  afterId?: number,
 ): Promise<ClarificationTurnEvent[]> {
   const resp = await apiClient.get<ClarificationTurnEvent[]>(
     `${base(workitemId)}/${conversationId}/turns/${turnId}/events`,
+    ...(afterId === undefined ? [] : [{ params: { afterId } }]),
   );
   return resp.data;
 }

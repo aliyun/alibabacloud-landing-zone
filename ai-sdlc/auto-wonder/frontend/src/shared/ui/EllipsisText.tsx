@@ -35,6 +35,7 @@ export function EllipsisText({ children, tooltip, lines = 1, placement = 'top', 
   const span = (
     <span
       ref={ref}
+      tabIndex={overflow ? 0 : undefined}
       style={{
         display: 'block',
         minWidth: 0,
@@ -49,7 +50,7 @@ export function EllipsisText({ children, tooltip, lines = 1, placement = 'top', 
   );
 
   return overflow ? (
-    <Tooltip title={tooltip ?? children} placement={placement}>
+    <Tooltip title={tooltip ?? children} placement={placement} trigger={['hover', 'focus']}>
       {span}
     </Tooltip>
   ) : span;

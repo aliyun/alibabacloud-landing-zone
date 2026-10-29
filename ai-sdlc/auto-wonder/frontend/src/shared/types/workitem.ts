@@ -206,6 +206,24 @@ export interface DeliveryStep {
   usage?: UsageSummary | null;
 }
 
+export interface ControlActionCapability {
+  allowed: boolean;
+  reasonKey?: string | null;
+  reasonArgs?: string[] | null;
+  targetDispatchId?: number | null;
+  mode?: 'RESUME' | 'RETRY' | null;
+  targetStatus?: string | null;
+  targetStopPending?: boolean | null;
+  targetForced?: boolean | null;
+}
+
+export interface DispatchControlCapabilities {
+  pause: ControlActionCapability;
+  end: ControlActionCapability;
+  forceEnd: ControlActionCapability;
+  resume: ControlActionCapability;
+}
+
 export interface DispatchAttempt {
   waitingReason?: string | null;
   dispatchId: number;
@@ -222,6 +240,10 @@ export interface DispatchAttempt {
   stepTimings?: StepTiming[] | null;
   canContinue?: boolean;
   canPause?: boolean;
+  cancelRequested?: boolean;
+  stopPending?: boolean;
+  forced?: boolean;
+  control?: DispatchControlCapabilities | null;
 }
 
 export interface StepTiming {
@@ -283,6 +305,10 @@ export interface DeliveryProgress {
   totalDurationMs?: number | null;
   /** 工单内全部执行轮次累加的 credits；无消耗时后端返回 null。 */
   totalUsage?: WorkitemUsageSummary | null;
+  closed?: boolean;
+  canReopen?: boolean;
+  reopenReasonKey?: string | null;
+  reopenReasonArgs?: string[] | null;
 }
 
 export interface ProcessGraphNode {
@@ -514,9 +540,44 @@ export interface WorkflowPlan {
   steps: WorkflowPlanStep[];
 }
 
+export interface ExecutionControlDetail {
+  action: string;
+  phase: string;
+  origin?: string | null;
+  dispatchId: number;
+  agentId?: number | null;
+  agentName?: string | null;
+  requestedById?: number | null;
+  requestedByName?: string | null;
+  sourceDispatchId?: number | null;
+  targetDispatchId?: number | null;
+  supersedesRequestEventId?: number | null;
+  requestEventId?: number | null;
+  parentRequestEventId?: number | null;
+  stopPending?: boolean | null;
+  forced?: boolean | null;
+  reason?: string | null;
+  mode?: string | null;
+}
+
+export interface DeliveryControlDetail {
+  action: string;
+  requestedById?: number | null;
+  requestedByName?: string | null;
+  reason?: string | null;
+  affectedDispatches: Array<{
+    dispatchId: number;
+    fromStatus?: string | null;
+    toStatus?: string | null;
+    stopPending?: boolean | null;
+  }>;
+}
+
 export interface TimelineItem {
   id: number;
   eventType?: string | null;
+  executionControl?: ExecutionControlDetail | null;
+  deliveryControl?: DeliveryControlDetail | null;
   fromValDisplay?: string | null;
   fromValNameFallback?: ExternalPrincipalNameFallback | null;
   toValDisplay?: string | null;

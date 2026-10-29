@@ -195,6 +195,35 @@ class ProjectBackupServiceTest {
     }
 
     @Test
+    void sharedBindingAssociationIsBackedUpWithoutAnyConfirmationState() throws Exception {
+        jdbc.update("UPDATE feishu_robot_binding SET binding_mode='SHARED', platform_config_id=42, "
+                + "group_id='oc_group' WHERE id=1");
+        jdbc.update("UPDATE dingtalk_robot_binding SET binding_mode='SHARED', platform_config_id=42, "
+                + "group_id='cid_group' WHERE id=1");
+
+        var result = service.create(1, 9);
+
+        assertTrue(result.ossRef().startsWith("backup-bucket/project-backups/1/"));
+        Map<String, byte[]> zip = unzip(objects.get(result.ossRef()));
+        for (String table : List.of("feishu_robot_binding", "dingtalk_robot_binding")) {
+            JsonNode row = json.readTree(zip.get("config/" + table + ".json")).get(0);
+            assertEquals("SHARED", row.get("binding_mode").asText(), table);
+            // The association survives so a restore can show what has to be re-selected, under the
+            // environment-local platform_config_id the restore notes call out.
+            assertEquals(42, row.get("platform_config_id").asInt(), table);
+            assertTrue(row.hasNonNull("group_id"), table);
+            // Group confirmation was removed, so the export carries no confirmation state at all.
+            assertFalse(row.has("confirmed_at"), table);
+            assertFalse(row.has("challenge_hash"), table);
+            assertFalse(row.has("challenge_expires_at"), table);
+        }
+        JsonNode manifest = json.readTree(zip.get("manifest.json"));
+        String restoreNotes = manifest.get("restoreNotes").asText();
+        assertTrue(restoreNotes.contains("must be re-selected for the target environment"));
+        assertTrue(manifest.get("credentials").asText().contains("platform GROUP_CHAT credentials are never included"));
+    }
+
+    @Test
     void archivePreservesRepositoryBranchPatterns() throws Exception {
         jdbc.update("UPDATE agent_repo_perm SET allowed_branch_patterns='[\"release/*\"]' WHERE id=1");
 

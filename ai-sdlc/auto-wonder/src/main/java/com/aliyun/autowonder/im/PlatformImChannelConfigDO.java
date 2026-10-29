@@ -10,7 +10,9 @@ import java.util.Date;
 public class PlatformImChannelConfigDO {
     private Long id;
     private String provider;
+    private String purpose;
     private Integer enabled;
+    private Long routeVersion;
     private String appKey;
     private String credentialRef;
     private String robotCode;

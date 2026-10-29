@@ -5,6 +5,8 @@ import com.aliyun.autowonder.conversation.AgentConversationDO;
 import com.aliyun.autowonder.conversation.ConversationCapabilityService;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -20,6 +22,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 
 /**
  * 与执行器 daemon/wsclient.ConversationElicitationReplyFrame 的字段契约。
@@ -33,6 +36,36 @@ class WsConversationTransportElicitationTest {
             mock(ConversationCapabilityService.class);
     private final WsConversationTransport transport =
             new WsConversationTransport(sessionRegistry, redisManager, capabilityService);
+
+    @ParameterizedTest @ValueSource(booleans = {true, false})
+    void reliableReceiptQueryRoutesOriginalExecutorDespiteConversationRebind(boolean local) throws Exception {
+        var conv = new AgentConversationDO(); conv.setId(11L); conv.setExecutorId(99L);
+        var row = new com.aliyun.autowonder.conversation.AgentConversationElicitationDO();
+        row.setConversationId(11L); row.setTurnId(22L); row.setExecutorId(9L); row.setDispatchAttempt(2);
+        row.setRequestId("question"); row.setAnswerId("answer"); row.setStatus("ANSWERED");
+        row.setReceiptOnly(true); row.setAnswerJson("{}");
+        var session = mock(ExecutorSession.class);
+        var socket = mock(javax.websocket.Session.class);
+        when(session.getSession()).thenReturn(socket); when(socket.isOpen()).thenReturn(true);
+        when(sessionRegistry.findByExecutorId(9L)).thenReturn(local ? session : null);
+        transport.sendReliableElicitationReply(conv, row, 12345L);
+        var payload = ArgumentCaptor.forClass(String.class);
+        if (local) {
+            verify(session).sendText(payload.capture());
+            verifyNoInteractions(redisManager);
+        } else {
+            verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+            verifyNoInteractions(session);
+        }
+        verify(sessionRegistry).findByExecutorId(9L);
+        verify(sessionRegistry, never()).findByExecutorId(99L);
+        var frame = com.aliyun.autowonder.json.JSON.parseObject(payload.getValue());
+        assertEquals(9L, frame.getLongValue("executorId")); assertEquals(11L, frame.getLongValue("conversationId"));
+        assertEquals(22L, frame.getLongValue("turnId")); assertEquals(2, frame.getIntValue("dispatchAttempt"));
+        assertEquals("question", frame.getString("requestId")); assertEquals("answer", frame.getString("answerId"));
+        assertTrue(frame.getBooleanValue("receiptOnly")); assertEquals(12345L, frame.getLongValue("remainingTtlMs"));
+        assertEquals(99L, conv.getExecutorId());
+    }
 
     @Test
     void acceptFrameMatchesRuntimeContract() {

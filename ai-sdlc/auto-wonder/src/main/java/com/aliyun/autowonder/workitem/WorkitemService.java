@@ -2,17 +2,20 @@ package com.aliyun.autowonder.workitem;
 
 import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
 import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.dispatch.AgentSdlcResolver;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao;
+import com.aliyun.autowonder.dispatch.DispatchRuntimeFailure;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
 import com.aliyun.autowonder.dispatch.WorkitemAssignedEvent;
@@ -54,8 +57,12 @@ import com.aliyun.autowonder.workitem.dto.AgentDeliveryProgressVO;
 import com.aliyun.autowonder.workitem.dto.CreateWorkitemRequest;
 import com.aliyun.autowonder.workitem.dto.DeliveryProgressVO;
 import com.aliyun.autowonder.workitem.dto.DeliveryStepVO;
+import com.aliyun.autowonder.workitem.dto.ControlActionCapabilityVO;
+import com.aliyun.autowonder.workitem.dto.DeliveryControlVO;
 import com.aliyun.autowonder.workitem.dto.DispatchAttemptVO;
+import com.aliyun.autowonder.workitem.dto.DispatchControlCapabilitiesVO;
 import com.aliyun.autowonder.workitem.dto.EventVO;
+import com.aliyun.autowonder.workitem.dto.ExecutionControlVO;
 import com.aliyun.autowonder.workitem.dto.ExternalPrincipalVO;
 import com.aliyun.autowonder.workitem.dto.ParticipantVO;
 import com.aliyun.autowonder.workitem.dto.ProcessGraphEdgeVO;
@@ -91,6 +98,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -100,8 +108,16 @@ import java.util.stream.Collectors;
 public class WorkitemService {
 
     private static final Logger log = LoggerFactory.getLogger(WorkitemService.class);
-    private static final int MAX_TAGS_PER_WORKITEM = 20;
-    private static final int MAX_TAG_LENGTH = 32;
+    private static final int MAX_TAGS_PER_WORKITEM = 50;
+    private static final int MAX_TAG_LENGTH = 64;
+    private static final int MAX_TAG_OPTIONS = 200;
+    /** 标签逻辑条件上限与序列化长度上限（工单 #56796）：与前端保持一致，防止 GET URL 超长。 */
+    private static final int MAX_TAG_CONDITIONS = 30;
+    private static final int MAX_TAG_CONDITIONS_LENGTH = 4000;
+    private static final Set<String> TAG_CONDITION_OPS = Set.of("AND", "OR", "IN", "NOT");
+    /** 时间线每个方向最多展示的标签数，完整 diff 保存在 detail_json。 */
+    private static final int TAG_EVENT_DETAIL_LIMIT = 5;
+    private static final int TAG_EVENT_VALUE_MAX_LENGTH = 256;
 
 
     private static final Set<String> WORK_TYPES = Set.of("REQ", "TASK", "BUG");
@@ -141,6 +157,8 @@ public class WorkitemService {
     private final ApplicationEventPublisher eventPublisher;
     @Autowired(required = false)
     private com.aliyun.autowonder.aiusage.DispatchAiUsageDao dispatchAiUsageDao;
+    @Autowired(required = false)
+    private com.aliyun.autowonder.aiusage.AgentConversationUsageService agentConversationUsageService;
     @Autowired(required = false)
     private ScheduledTaskRunDao scheduledTaskRunDao;
     @Autowired(required = false)
@@ -318,6 +336,7 @@ public class WorkitemService {
                                       String mineScope,
                                       long tenantId, long currentUserId, String keyword, String tag,
                                       String scheduledStart, String createdFrom, String createdTo,
+                                      List<Long> creatorIds, String tagConditions,
                                       int page, int size) {
         int p = page < 1 ? 1 : page;
         int s = size < 1 ? 20 : Math.min(size, 200);
@@ -330,6 +349,7 @@ public class WorkitemService {
         String effectiveScheduledStart = normalizeScheduledStart(scheduledStart);
         Date effectiveCreatedFrom = normalizeCreatedBound(createdFrom);
         Date effectiveCreatedTo = normalizeCreatedBound(createdTo);
+        List<WorkitemTagCondition> effectiveTagConditions = parseTagConditions(tagConditions);
         Long keywordId = null;
         if (effectiveKeyword != null && effectiveKeyword.matches("\\d+")) {
             try {
@@ -340,11 +360,13 @@ public class WorkitemService {
         long total = workitemDao.count(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
                 pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag,
-                effectiveScheduledStart, effectiveCreatedFrom, effectiveCreatedTo);
+                effectiveScheduledStart, effectiveCreatedFrom, effectiveCreatedTo, creatorIds,
+                effectiveTagConditions);
         List<WorkitemDO> rows = workitemDao.list(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
                 pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag,
-                effectiveScheduledStart, effectiveCreatedFrom, effectiveCreatedTo, offset, s);
+                effectiveScheduledStart, effectiveCreatedFrom, effectiveCreatedTo, creatorIds,
+                effectiveTagConditions, offset, s);
         Map<Long, DispatchDO> latestByWorkitem = loadLatestDispatches(tenantId, rows);
 
         Set<Long> humanIds = new HashSet<>();
@@ -462,6 +484,83 @@ public class WorkitemService {
         } catch (DateTimeParseException e) {
             return null;
         }
+    }
+
+    /**
+     * 解析标签逻辑条件（工单 #56796）：缺省、空白或空数组返回 null，表示不过滤。
+     * 结构错误与未知运算符统一按 invalid 处理，条数、序列化长度与单标签长度各有独立 keyed 错误，
+     * 由响应边界渲染成 400 + 双语文案；同一条件内 trim 后去重，跨条件允许重复。
+     */
+    private List<WorkitemTagCondition> parseTagConditions(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        if (raw.length() > MAX_TAG_CONDITIONS_LENGTH) {
+            throw new KeyedIllegalArgumentException("workitem.list.tag_conditions.too_long",
+                    new Object[]{MAX_TAG_CONDITIONS_LENGTH},
+                    "tagConditions length " + raw.length() + " exceeds " + MAX_TAG_CONDITIONS_LENGTH);
+        }
+        JSONArray parsed;
+        try {
+            parsed = JSON.parseArray(raw);
+        } catch (RuntimeException ex) {
+            throw invalidTagConditions("tagConditions is not a valid JSON array", ex);
+        }
+        if (parsed == null || parsed.isEmpty()) {
+            return null;
+        }
+        if (parsed.size() > MAX_TAG_CONDITIONS) {
+            throw new KeyedIllegalArgumentException("workitem.list.tag_conditions.too_many",
+                    new Object[]{MAX_TAG_CONDITIONS},
+                    "tagConditions count " + parsed.size() + " exceeds " + MAX_TAG_CONDITIONS);
+        }
+        List<WorkitemTagCondition> conditions = new ArrayList<>(parsed.size());
+        for (Object element : parsed) {
+            if (!(element instanceof JSONObject object)) {
+                throw invalidTagConditions("tagConditions element is not an object", null);
+            }
+            String rawOp = object.getString("op");
+            String op = rawOp == null ? "" : rawOp.trim().toUpperCase(Locale.ROOT);
+            if (!TAG_CONDITION_OPS.contains(op)) {
+                throw invalidTagConditions("unknown tag condition operator", null);
+            }
+            JSONArray rawTags;
+            try {
+                rawTags = object.getJSONArray("tags");
+            } catch (RuntimeException ex) {
+                throw invalidTagConditions("tag condition tags is not an array", ex);
+            }
+            if (rawTags == null) {
+                throw invalidTagConditions("tag condition tags is missing", null);
+            }
+            Set<String> tags = new LinkedHashSet<>();
+            for (Object item : rawTags) {
+                if (!(item instanceof String text)) {
+                    throw invalidTagConditions("tag condition tag is not a string", null);
+                }
+                String trimmedTagValue = text.trim();
+                if (trimmedTagValue.isEmpty()) {
+                    continue;
+                }
+                if (trimmedTagValue.length() > MAX_TAG_LENGTH) {
+                    throw new KeyedIllegalArgumentException("workitem.list.tag_conditions.tag_too_long",
+                            new Object[]{MAX_TAG_LENGTH},
+                            "tag length " + trimmedTagValue.length() + " exceeds " + MAX_TAG_LENGTH);
+                }
+                tags.add(trimmedTagValue);
+            }
+            if (tags.isEmpty()) {
+                throw new KeyedIllegalArgumentException("workitem.list.tag_conditions.empty", new Object[0],
+                        "tag condition " + op + " has no tags");
+            }
+            conditions.add(new WorkitemTagCondition(op, new ArrayList<>(tags)));
+        }
+        return List.copyOf(conditions);
+    }
+
+    private static KeyedIllegalArgumentException invalidTagConditions(String diagnostic, Throwable cause) {
+        return new KeyedIllegalArgumentException("workitem.list.tag_conditions.invalid", new Object[0],
+                diagnostic, cause);
     }
 
     private Map<Long, DispatchDO> loadLatestDispatches(long tenantId, List<WorkitemDO> rows) {
@@ -884,7 +983,7 @@ public class WorkitemService {
                 } else {
                     eventPublisher.publishEvent(new WorkitemAssignedEvent(
                             tenantId, id, reloaded.getCurrentStepId(), assigneeRef,
-                            reloaded.getVersion(), modifierUserId));
+                            reloaded.getVersion(), modifierUserId, effectiveActor));
                 }
             }
         }
@@ -961,17 +1060,119 @@ public class WorkitemService {
 
     @Transactional
     public WorkitemVO updateTags(long id, List<String> tags, long tenantId, long userId) {
+        return updateTags(id, "replace", tags, tenantId, userId, AssignmentActor.human(userId, null));
+    }
+
+    /**
+     * Web 全量替换与 MCP replace/add/remove 共用的标签写入口：统一 trim、去重、50/64 校验。
+     * 新旧集合相同（仅顺序不同视为相同）时不写库、不递增版本、不产生时间线事件。
+     */
+    @Transactional
+    public WorkitemVO updateTags(long id, String action, List<String> tags, long tenantId,
+                                 long modifierUserId, AssignmentActor actor) {
         WorkitemDO w = workitemDao.findById(id);
         if (w == null || !Long.valueOf(tenantId).equals(w.getTenantId())) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
-        List<String> normalized = normalizeTags(tags);
+        List<String> current = parseTagsJson(w.getTags());
+        List<String> target;
+        switch (action == null ? "" : action.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "replace" -> target = tags;
+            case "add" -> {
+                List<String> merged = new ArrayList<>(current);
+                if (tags != null) {
+                    merged.addAll(tags);
+                }
+                target = merged;
+            }
+            case "remove" -> {
+                Set<String> toRemove = new HashSet<>();
+                if (tags != null) {
+                    for (String tag : tags) {
+                        if (tag != null) {
+                            toRemove.add(tag.trim());
+                        }
+                    }
+                }
+                target = current.stream().filter(tag -> !toRemove.contains(tag)).collect(Collectors.toList());
+            }
+            default -> throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        List<String> normalized = normalizeTags(target);
+        if (new HashSet<>(current).equals(new HashSet<>(normalized))) {
+            return toVO(w);
+        }
+        List<String> added = normalized.stream().filter(tag -> !current.contains(tag)).collect(Collectors.toList());
+        List<String> removed = current.stream().filter(tag -> !normalized.contains(tag)).collect(Collectors.toList());
         String tagsJson = normalized.isEmpty() ? null : JSON.toJSONString(normalized);
-        int rows = workitemDao.updateTags(id, tenantId, tagsJson, w.getVersion(), userId);
+        int rows = workitemDao.updateTags(id, tenantId, tagsJson, w.getVersion(), modifierUserId);
         if (rows == 0) {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
+        Map<String, List<String>> detail = new LinkedHashMap<>();
+        detail.put("added", added);
+        detail.put("removed", removed);
+        AssignmentActor eventActor = actor == null ? AssignmentActor.human(modifierUserId, null) : actor;
+        writeEvent(tenantId, id, WorkitemEventType.TAG_CHANGE.code(),
+                summarizeTagEventValue(removed), summarizeTagEventValue(added),
+                eventActor.type(), eventActor.ref(), JSON.toJSONString(detail));
         return toVO(workitemDao.findById(id));
+    }
+
+    public List<String> listTagOptions(long tenantId) {
+        return workitemDao.listTagOptions(tenantId, MAX_TAG_OPTIONS);
+    }
+
+    /** 事件列 from_val/to_val 的摘要：前 5 个标签，超长按 UTF-16 边界截断到 256。 */
+    private String summarizeTagEventValue(List<String> tags) {
+        if (tags == null || tags.isEmpty()) {
+            return null;
+        }
+        String joined = tags.stream().limit(TAG_EVENT_DETAIL_LIMIT).collect(Collectors.joining("、"));
+        if (joined.length() <= TAG_EVENT_VALUE_MAX_LENGTH) {
+            return joined;
+        }
+        int end = TAG_EVENT_VALUE_MAX_LENGTH;
+        if (Character.isHighSurrogate(joined.charAt(end - 1))) {
+            end--;
+        }
+        return joined.substring(0, end);
+    }
+
+    /** 时间线展示：基于 detail_json 的完整 diff，每个方向前 5 个，其余以「等 N 个」收尾。 */
+    private String formatTagEventValue(List<String> tags) {
+        if (tags == null || tags.isEmpty()) {
+            return null;
+        }
+        String shown = tags.stream().limit(TAG_EVENT_DETAIL_LIMIT).collect(Collectors.joining("、"));
+        if (tags.size() > TAG_EVENT_DETAIL_LIMIT) {
+            int remaining = tags.size() - TAG_EVENT_DETAIL_LIMIT;
+            shown += " " + SystemMessages.render("workitem.event.tag_change.more",
+                    new Object[]{remaining}, "等 " + remaining + " 个");
+        }
+        return shown;
+    }
+
+    private List<String> tagEventValues(WorkitemEventDO event, String key) {
+        if (event == null || event.getDetailJson() == null || event.getDetailJson().isBlank()) {
+            return List.of();
+        }
+        try {
+            JSONObject detail = JSON.parseObject(event.getDetailJson());
+            JSONArray values = detail == null ? null : detail.getJSONArray(key);
+            if (values == null) {
+                return List.of();
+            }
+            List<String> result = new ArrayList<>();
+            for (Object value : values) {
+                if (value != null) {
+                    result.add(String.valueOf(value));
+                }
+            }
+            return result;
+        } catch (RuntimeException ignored) {
+            return List.of();
+        }
     }
 
     private List<String> normalizeTags(List<String> tags) {
@@ -1494,6 +1695,7 @@ public class WorkitemService {
         }
         List<DispatchRuntimeEventDO> runtimeEvents = safeList(runtimeEventDao.listForProgress(tenantId, workitemId));
         ProgressReadContext context = new ProgressReadContext(runtimeEvents);
+        context.bindDelivery(tenantId, workitemId, dispatches);
         if (deliveryRecoveryService != null) {
             context.waitingReasons.putAll(deliveryRecoveryService.waitingReasons(tenantId, dispatches.stream()
                     .filter(d -> DispatchStatus.PENDING.equals(d.getStatus())).map(DispatchDO::getId).toList()));
@@ -1509,7 +1711,7 @@ public class WorkitemService {
         }
 
         com.aliyun.autowonder.aiusage.dto.WorkitemUsageSummaryVO totalUsage =
-                enrichAgentUsage(tenantId, dispatches, agentProgress, context);
+                enrichAgentUsage(tenantId, workitemId, dispatches, agentProgress, context);
 
         WorkflowPlanVO workflowPlan = latestWorkflowPlan(runtimeEvents, context);
         if (!applyWorkflowPlan(workflowPlan, agentProgress)) {
@@ -1540,6 +1742,11 @@ public class WorkitemService {
         result.setProcessGraph(buildProcessGraph(w, tenantId, dispatches, context));
         result.setTotalDurationMs(sumAgentDurations(agentProgress));
         result.setTotalUsage(totalUsage);
+        boolean allTerminal = dispatches.stream().allMatch(d -> DispatchStatus.isTerminal(d.getStatus()));
+        result.setClosed(context.controlClosed);
+        result.setCanReopen(context.controlClosed && allTerminal);
+        result.setReopenReasonKey(allTerminal ? null : "dispatch.recovery.cancel_pending");
+        result.setReopenReasonArgs(List.of());
         return result;
     }
 
@@ -2129,23 +2336,65 @@ public class WorkitemService {
     }
 
     private com.aliyun.autowonder.aiusage.dto.WorkitemUsageSummaryVO enrichAgentUsage(
-            long tenantId, List<DispatchDO> dispatches, List<AgentDeliveryProgressVO> agentProgress, ProgressReadContext context) {
-        if (dispatchAiUsageDao == null || dispatches.isEmpty()) {
+            long tenantId, long workitemId, List<DispatchDO> dispatches,
+            List<AgentDeliveryProgressVO> agentProgress, ProgressReadContext context) {
+        List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> usageRows =
+                loadDispatchUsageRows(tenantId, workitemId, dispatches);
+        List<com.aliyun.autowonder.aiusage.AgentConversationUsageDO> clarificationRows =
+                loadClarificationUsageRows(tenantId, workitemId);
+        if (usageRows.isEmpty() && clarificationRows.isEmpty()) {
             return null;
+        }
+        applyDispatchUsageToAgents(usageRows, agentProgress);
+        List<DispatchDO> knownDispatches = dispatches.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        return com.aliyun.autowonder.aiusage.WorkitemUsageAggregator.summarize(
+                usageRows, knownDispatches, clarificationRows, context::agentName);
+    }
+
+    private List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> loadDispatchUsageRows(
+            long tenantId, long workitemId, List<DispatchDO> dispatches) {
+        if (dispatchAiUsageDao == null || dispatches == null || dispatches.isEmpty()) {
+            return List.of();
         }
         List<Long> dispatchIds = dispatches.stream()
                 .map(DispatchDO::getId).filter(Objects::nonNull).collect(Collectors.toList());
         if (dispatchIds.isEmpty()) {
-            return null;
+            return List.of();
         }
-        List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> usageRows;
         try {
-            usageRows = dispatchAiUsageDao.listByDispatchIds(tenantId, dispatchIds);
+            List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> rows =
+                    dispatchAiUsageDao.listByDispatchIds(tenantId, dispatchIds);
+            return rows == null ? List.of() : rows;
         } catch (RuntimeException ex) {
-            return null;
+            log.warn("dispatch usage load failed workitemId={}", workitemId, ex);
+            return List.of();
         }
-        if (usageRows == null || usageRows.isEmpty()) {
-            return null;
+    }
+
+    private List<com.aliyun.autowonder.aiusage.AgentConversationUsageDO> loadClarificationUsageRows(
+            long tenantId, long workitemId) {
+        if (agentConversationUsageService == null) {
+            return List.of();
+        }
+        try {
+            List<com.aliyun.autowonder.aiusage.AgentConversationUsageDO> rows =
+                    agentConversationUsageService.listByWorkitem(tenantId, workitemId,
+                            com.aliyun.autowonder.aiusage.AgentConversationUsageService
+                                    .CHANNEL_WORKITEM_CLARIFICATION);
+            return rows == null ? List.of() : rows;
+        } catch (RuntimeException ex) {
+            // 会话用量表缺失/查询失败不能影响工单进度展示，派发用量照常展示。
+            log.warn("clarification usage load failed workitemId={}", workitemId, ex);
+            return List.of();
+        }
+    }
+
+    private void applyDispatchUsageToAgents(List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> usageRows,
+                                            List<AgentDeliveryProgressVO> agentProgress) {
+        if (usageRows.isEmpty()) {
+            return;
         }
         Map<Long, List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO>> byAgent = usageRows.stream()
                 .filter(r -> r.getAgentId() != null)
@@ -2171,11 +2420,6 @@ public class WorkitemService {
                 }
             }
         }
-        List<DispatchDO> knownDispatches = dispatches.stream()
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-        return com.aliyun.autowonder.aiusage.WorkitemUsageAggregator.summarize(
-                usageRows, knownDispatches, context::agentName);
     }
 
     private com.aliyun.autowonder.aiusage.dto.StepUsageSummaryVO aggregateUsage(
@@ -2277,6 +2521,9 @@ public class WorkitemService {
         private final Map<Long, Boolean> executorOnline = new HashMap<>();
         private final Map<Long, List<SdlcStepDO>> stepsBySdlc = new HashMap<>();
         private final Map<Long, SdlcStepDO> stepsById = new HashMap<>();
+        private List<DispatchDO> allDispatches = List.of();
+        private Map<Long, com.aliyun.autowonder.dispatch.DispatchRecoveryService.ControlState> controlStates = Map.of();
+        private boolean controlClosed;
 
         private ProgressReadContext(List<DispatchRuntimeEventDO> events) {
             this.latestEvents = latestRuntimeEventByDispatch(events);
@@ -2285,6 +2532,26 @@ public class WorkitemService {
                 eventsByAgent.computeIfAbsent(event.getAgentId(), ignored -> new ArrayList<>()).add(event);
                 eventsByDispatch.computeIfAbsent(event.getDispatchId(), ignored -> new ArrayList<>()).add(event);
             }
+        }
+
+        private void bindDelivery(long tenantId, long workitemId, List<DispatchDO> dispatches) {
+            this.allDispatches = safeList(dispatches);
+            this.controlClosed = deliveryRecoveryService != null && deliveryRecoveryService.closed(tenantId, workitemId);
+            if (deliveryRecoveryService != null) {
+                this.controlStates = deliveryRecoveryService.controlStates(tenantId,
+                        allDispatches.stream().map(DispatchDO::getId).toList());
+            }
+        }
+
+        private com.aliyun.autowonder.dispatch.DispatchRecoveryService.ControlState controlState(Long dispatchId) {
+            return controlStates.getOrDefault(dispatchId,
+                    com.aliyun.autowonder.dispatch.DispatchRecoveryService.ControlState.none());
+        }
+
+        private List<DispatchDO> workerDispatches(Long agentId) {
+            return allDispatches.stream()
+                    .filter(d -> Objects.equals(d.getAgentId(), agentId))
+                    .toList();
         }
 
         private boolean executorOffline(Long id) {
@@ -2373,26 +2640,97 @@ public class WorkitemService {
             vo.setStartedAt(d.getGmtCreate());
             vo.setEndedAt(DispatchStatus.isTerminal(d.getStatus()) ? d.getGmtModified() : null);
             vo.setDurationMs(durationOf(d));
-            // Historical attempts never expose controls. Avoid remote presence reads for them,
-            // and reuse the current executor snapshot across step/overview projections.
-            boolean controlCandidate = Objects.equals(d.getId(), resumableDispatchId);
-            boolean executorOffline = controlCandidate
-                    && !DispatchStatus.isTerminal(d.getStatus())
-                    && !DispatchStatus.PAUSED.equals(d.getStatus())
-                    && context.executorOffline(d.getExecutorId());
-            vo.setCanContinue(Objects.equals(d.getId(), resumableDispatchId)
-                    && DispatchService.canContinue(d, System.currentTimeMillis())
-                    && (DispatchStatus.PAUSED.equals(d.getStatus())
-                            || DispatchStatus.isTerminal(d.getStatus()) || executorOffline));
-            vo.setCanPause(Objects.equals(d.getId(), resumableDispatchId)
-                    && (DispatchStatus.isPauseable(d.getStatus())
-                            || DispatchStatus.PAUSING.equals(d.getStatus())
-                            || DispatchStatus.PAUSE_FAILED.equals(d.getStatus()))
-                    && !runtimeFailed
-                    && !executorOffline);
+            DispatchControlCapabilitiesVO control = controlCapabilities(d, runtimeFailed, context);
+            vo.setControl(control);
+            vo.setCanPause(control.getPause().isAllowed());
+            vo.setCanContinue(control.getResume().isAllowed());
+            var controlState = context.controlState(d.getId());
+            vo.setCancelRequested(controlState.cancelRequested());
+            vo.setStopPending(controlState.stopPending());
+            vo.setForced(controlState.forced());
             attempts.add(vo);
         }
         return attempts;
+    }
+
+    private DispatchControlCapabilitiesVO controlCapabilities(DispatchDO d, boolean runtimeFailed,
+                                                               ProgressReadContext context) {
+        var state = context.controlState(d.getId());
+        boolean terminal = DispatchStatus.isTerminal(d.getStatus());
+        boolean cancelled = state.cancelRequested();
+        boolean interaction = DispatchService.isInteractionDispatchValue(d);
+        DispatchControlCapabilitiesVO capabilities = new DispatchControlCapabilitiesVO();
+
+        boolean pauseCandidate = !context.controlClosed && !interaction && !cancelled && !runtimeFailed
+                && (DispatchStatus.isPauseable(d.getStatus()) || DispatchStatus.PAUSE_FAILED.equals(d.getStatus()));
+        boolean executorOnline = !pauseCandidate || !context.executorOffline(d.getExecutorId());
+        DispatchService.PauseResolution pause = DispatchService.resolvePauseCapability(
+                d, context.workerDispatches(d.getAgentId()), context.controlClosed,
+                cancelled, runtimeFailed, executorOnline);
+        capabilities.setPause(pause.allowed()
+                ? ControlActionCapabilityVO.allowed()
+                : ControlActionCapabilityVO.denied(pause.reasonKey()));
+
+        if (terminal) {
+            capabilities.setEnd(ControlActionCapabilityVO.denied("delivery.controlReason.terminal"));
+        } else if (cancelled) {
+            capabilities.setEnd(ControlActionCapabilityVO.denied("delivery.controlReason.cancelling"));
+        } else {
+            capabilities.setEnd(ControlActionCapabilityVO.allowed());
+        }
+
+        if (terminal) {
+            capabilities.setForceEnd(ControlActionCapabilityVO.denied("delivery.controlReason.terminal"));
+        } else if (!cancelled) {
+            capabilities.setForceEnd(ControlActionCapabilityVO.denied("delivery.controlReason.notCancelling"));
+        } else {
+            capabilities.setForceEnd(ControlActionCapabilityVO.allowed());
+        }
+
+        if (context.controlClosed) {
+            capabilities.setResume(ControlActionCapabilityVO.denied("delivery.controlReason.closed"));
+            return capabilities;
+        }
+        DispatchService.ContinueResolution resolution =
+                DispatchService.resolveContinueTarget(d, context.workerDispatches(d.getAgentId()));
+        if (resolution.errorKey() != null) {
+            capabilities.setResume(resumeDenied(resolution.errorKey(), resolution.errorArgs()));
+            return capabilities;
+        }
+        DispatchDO target = resolution.target();
+        if (target == null) {
+            capabilities.setResume(ControlActionCapabilityVO.denied("delivery.controlReason.notResumable"));
+            return capabilities;
+        }
+        if (!DispatchStatus.PAUSED.equals(target.getStatus()) && !DispatchStatus.isTerminal(target.getStatus())) {
+            capabilities.setResume(ControlActionCapabilityVO.denied("delivery.controlReason.running"));
+            return capabilities;
+        }
+        if (!DispatchService.canContinue(target, System.currentTimeMillis())) {
+            capabilities.setResume(ControlActionCapabilityVO.denied("delivery.controlReason.online"));
+            return capabilities;
+        }
+        ControlActionCapabilityVO resume = ControlActionCapabilityVO.allowed();
+        resume.setTargetDispatchId(target.getId());
+        resume.setMode(DispatchStatus.PAUSED.equals(target.getStatus()) ? "RESUME" : "RETRY");
+        var targetState = context.controlState(target.getId());
+        resume.setTargetStatus(target.getStatus());
+        resume.setTargetStopPending(targetState.stopPending());
+        resume.setTargetForced(targetState.forced());
+        capabilities.setResume(resume);
+        return capabilities;
+    }
+
+    private ControlActionCapabilityVO resumeDenied(String errorKey, Object[] args) {
+        String reason = switch (errorKey) {
+            case "dispatch.recovery.interaction" -> "delivery.controlReason.interactionBusy";
+            case "dispatch.recovery.newer" -> "delivery.controlReason.newer";
+            case "dispatch.recovery.latest" -> "delivery.controlReason.notLatest";
+            default -> "delivery.controlReason.notResumable";
+        };
+        String[] stringArgs = args == null ? new String[0]
+                : java.util.Arrays.stream(args).map(String::valueOf).toArray(String[]::new);
+        return ControlActionCapabilityVO.denied(reason, stringArgs);
     }
 
     private Map<Long, DispatchRuntimeEventDO> latestRuntimeEventByDispatch(List<DispatchRuntimeEventDO> events) {
@@ -2421,28 +2759,11 @@ public class WorkitemService {
     }
 
     private boolean isRuntimeFailureEvent(DispatchRuntimeEventDO event) {
-        if (event == null) {
-            return false;
-        }
-        String type = event.getEventType();
-        return event.getError() != null
-                || "step.failed".equals(type)
-                || "dispatch.failed".equals(type)
-                || "runtime.failed".equals(type)
-                || "task.failed".equals(type);
+        return DispatchRuntimeFailure.isFailure(event);
     }
 
     private String runtimeFailureMessage(DispatchRuntimeEventDO event) {
-        if (event == null) {
-            return null;
-        }
-        if (event.getError() != null && !event.getError().isBlank()) {
-            return event.getError();
-        }
-        if (event.getMessage() != null && !event.getMessage().isBlank()) {
-            return event.getMessage();
-        }
-        return event.getEventType();
+        return DispatchRuntimeFailure.message(event);
     }
 
     private List<SubStepVO> dispatchSubSteps(DispatchDO dispatch) {
@@ -2779,6 +3100,7 @@ public class WorkitemService {
             item.setEventType(e.getEventType());
             item.setFromValDisplay(fromVal);
             item.setToValDisplay(toVal);
+            applyControlDetail(item, e);
             String operator = "EXTERNAL".equals(e.getActorType()) && externalWorkitemViewService != null
                     && ("STATUS_CHANGE".equals(e.getEventType()) || "ASSIGN".equals(e.getEventType()))
                     && e.getActorRef() != null && e.getActorRef() != 0L
@@ -2803,8 +3125,82 @@ public class WorkitemService {
         return items;
     }
 
+    private void applyControlDetail(TimelineItemVO item, WorkitemEventDO event) {
+        if (event == null || event.getDetailJson() == null) return;
+        if (WorkitemEventType.EXECUTION_CONTROL.code().equals(event.getEventType())) {
+            JSONObject detail = JSON.parseObject(event.getDetailJson());
+            ExecutionControlVO control = new ExecutionControlVO();
+            control.setAction(detail.getString("action"));
+            control.setPhase(detail.getString("phase"));
+            control.setOrigin(detail.getString("origin"));
+            control.setDispatchId(detail.getLong("dispatchId"));
+            control.setAgentId(detail.getLong("agentId"));
+            control.setAgentName(detail.getString("agentName"));
+            if (control.getAgentName() == null) control.setAgentName(resolveAgentName(control.getAgentId()));
+            control.setRequestedById(detail.getLong("requestedById"));
+            control.setRequestedByName(detail.getString("requestedByName"));
+            if (control.getRequestedByName() == null && control.getRequestedById() != null && control.getRequestedById() > 0) {
+                control.setRequestedByName(resolveActorDisplayName("HUMAN", control.getRequestedById()));
+            }
+            control.setSourceDispatchId(detail.getLong("sourceDispatchId"));
+            control.setTargetDispatchId(detail.getLong("targetDispatchId"));
+            control.setSupersedesRequestEventId(detail.getLong("supersedesRequestEventId"));
+            control.setRequestEventId(detail.getLong("requestEventId"));
+            control.setParentRequestEventId(detail.getLong("parentRequestEventId"));
+            control.setStopPending(detail.getBoolean("stopPending"));
+            control.setForced(detail.getBoolean("forced"));
+            control.setReason(detail.getString("reason"));
+            control.setMode(detail.getString("mode"));
+            item.setExecutionControl(control);
+            return;
+        }
+        if (WorkitemEventType.DELIVERY_CONTROL.code().equals(event.getEventType())) {
+            JSONObject detail = JSON.parseObject(event.getDetailJson());
+            DeliveryControlVO control = new DeliveryControlVO();
+            control.setAction(detail.getString("action"));
+            control.setRequestedById(detail.getLong("requestedById"));
+            control.setRequestedByName(detail.getString("requestedByName"));
+            if (control.getRequestedByName() == null && control.getRequestedById() != null && control.getRequestedById() > 0) {
+                control.setRequestedByName(resolveActorDisplayName("HUMAN", control.getRequestedById()));
+            }
+            control.setReason(detail.getString("reason"));
+            List<DeliveryControlVO.AffectedDispatch> affected = new ArrayList<>();
+            List<JSONObject> rows = detail.getJSONArray("affectedDispatches") == null ? List.of()
+                    : detail.getJSONArray("affectedDispatches").stream().map(row -> (JSONObject) row).toList();
+            for (JSONObject row : rows) {
+                DeliveryControlVO.AffectedDispatch value = new DeliveryControlVO.AffectedDispatch();
+                value.setDispatchId(row.getLong("dispatchId"));
+                value.setFromStatus(row.getString("fromStatus"));
+                value.setToStatus(row.getString("toStatus"));
+                value.setStopPending(row.getBoolean("stopPending"));
+                affected.add(value);
+            }
+            control.setAffectedDispatches(affected);
+            item.setDeliveryControl(control);
+        }
+    }
+
     private String formatTimelineEventContent(WorkitemEventDO event, String fromVal, String toVal, String operator) {
         WorkitemEventType eventType = WorkitemEventType.fromCode(event.getEventType()).orElse(null);
+        if (eventType == WorkitemEventType.EXECUTION_CONTROL && event.getDetailJson() != null) {
+            JSONObject detail = JSON.parseObject(event.getDetailJson());
+            String action = detail.getString("action");
+            String phase = detail.getString("phase");
+            String key = "workitem.event.execution_control."
+                    + (action == null ? "unknown" : action.toLowerCase(java.util.Locale.ROOT))
+                    + "." + (phase == null ? "unknown" : phase.toLowerCase(java.util.Locale.ROOT));
+            Object dispatchId = detail.getLong("dispatchId");
+            String diagnostic = "执行控制: action=" + action + ", phase=" + phase + ", dispatchId=" + dispatchId;
+            return SystemMessages.render(key, new Object[]{dispatchId == null ? "-" : dispatchId.toString()}, diagnostic);
+        }
+        if (eventType == WorkitemEventType.DELIVERY_CONTROL && event.getDetailJson() != null) {
+            JSONObject detail = JSON.parseObject(event.getDetailJson());
+            String action = detail.getString("action");
+            String key = "workitem.event.delivery_control."
+                    + (action == null ? "unknown" : action.toLowerCase(java.util.Locale.ROOT));
+            int count = detail.getJSONArray("affectedDispatches") == null ? 0 : detail.getJSONArray("affectedDispatches").size();
+            return SystemMessages.render(key, new Object[]{count}, "交付控制: action=" + action + ", affected=" + count);
+        }
         if (eventType == null) {
             if (event.getFromVal() != null && event.getToVal() != null) return event.getEventType() + ": " + fromVal + " → " + toVal;
             return event.getToVal() == null ? event.getEventType() : event.getEventType() + ": " + toVal;
@@ -2815,7 +3211,24 @@ public class WorkitemService {
         if (eventType == WorkitemEventType.AONE_IMPORT || eventType == WorkitemEventType.AONE_UPDATE) {
             return SystemMessages.render(key, new Object[0], diagnostic);
         }
-        if (eventType == WorkitemEventType.EXTERNAL_COMMENT_EDIT
+        if (eventType == WorkitemEventType.TAG_CHANGE) {
+            String addedText = formatTagEventValue(tagEventValues(event, "added"));
+            String removedText = formatTagEventValue(tagEventValues(event, "removed"));
+            if (addedText != null && removedText != null) {
+                key += ".both";
+                args.add(removedText);
+                args.add(addedText);
+                diagnostic += ": 添加 " + addedText + "；移除 " + removedText;
+            } else if (addedText != null) {
+                key += ".to";
+                args.add(addedText);
+                diagnostic += ": 添加 " + addedText;
+            } else if (removedText != null) {
+                key += ".from";
+                args.add(removedText);
+                diagnostic += ": 移除 " + removedText;
+            }
+        } else if (eventType == WorkitemEventType.EXTERNAL_COMMENT_EDIT
                 || eventType == WorkitemEventType.EXTERNAL_COMMENT_AUTHOR_CHANGE
                 || eventType == WorkitemEventType.EXTERNAL_COMMENT_DELETE) {
             if (event.getFromVal() != null && !event.getFromVal().isBlank()) {
@@ -2845,7 +3258,9 @@ public class WorkitemService {
             return null;
         }
         WorkitemEventType eventType = WorkitemEventType.fromCode(event.getEventType()).orElse(null);
-        if (eventType != WorkitemEventType.STATUS_CHANGE && eventType != WorkitemEventType.ASSIGN) {
+        if (eventType != WorkitemEventType.STATUS_CHANGE && eventType != WorkitemEventType.ASSIGN
+                && eventType != WorkitemEventType.TAG_CHANGE
+                && eventType != WorkitemEventType.EXECUTION_CONTROL && eventType != WorkitemEventType.DELIVERY_CONTROL) {
             return null;
         }
         String actorType = event.getActorType();

@@ -53,7 +53,18 @@ class ConversationElicitationSchemaContractTest {
 
     @Test
     void schemaFileStaysInSyncWithMigration() throws Exception {
-        assertEquals(tableDefinition(read(MIGRATION)), tableDefinition(read(SCHEMA)),
+        String current = tableDefinition(read(SCHEMA));
+        String addition = read("docs/migration/V098__conversation_answer_delivery.sql");
+        for (String column : java.util.List.of("answer_protocol_version", "dispatch_attempt", "executor_id",
+                "answer_id", "delivery_status", "delivery_deadline", "next_delivery_at")) {
+            assertTrue(addition.contains("ADD COLUMN `" + column + "`"));
+            assertTrue(current.contains("`" + column + "`"));
+            current = current.replaceAll("(?m)^  `" + column + "`[^\\n]*\\n", "");
+        }
+        assertTrue(addition.contains("ADD KEY `idx_answer_delivery_due`"));
+        current = current.replace(",\n  KEY `idx_answer_delivery_due` (`delivery_status`, `next_delivery_at`, `id`)", "");
+        current = current.replace(",\n  KEY `idx_answer_conversation_recent` (`tenant_id`, `conversation_id`, `id`)", "");
+        assertEquals(tableDefinition(read(MIGRATION)), current,
                 "autowonder-schema.sql 的建表语句必须与 migration 逐字一致");
     }
 

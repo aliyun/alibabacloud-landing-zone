@@ -8,6 +8,7 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.conversation.AgentConversationDO;
 import com.aliyun.autowonder.conversation.AgentConversationDao;
 import com.aliyun.autowonder.conversation.PlatformConversationChannel;
+import com.aliyun.autowonder.squad.workflow.SquadWorkflowChannelSink;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,6 +57,14 @@ class ConversationMcpTokenServiceTest {
     void setUp() {
         conversationDao = mock(AgentConversationDao.class);
         tokens = new ConversationMcpTokenService(jwtService, conversationDao);
+    }
+
+    @Test
+    void legacyClarificationTokenCannotAuthorizeWithoutALegacyProcessingTurn() {
+        AgentConversationDO row = conversation("WORKITEM_CLARIFICATION", null);
+        stub(row);
+        String token = tokens.issue(row, INTRUDER_ID);
+        assertUnauthorized(() -> tokens.authenticate(token));
     }
 
     @Test
@@ -154,6 +163,12 @@ class ConversationMcpTokenServiceTest {
 
     @Test
     void legacyChannelsKeepTheReadWriteCeilingTheyHadBefore() {
+        var turns = mock(com.aliyun.autowonder.conversation.AgentConversationTurnDao.class);
+        var legacy = new com.aliyun.autowonder.conversation.AgentConversationTurnDO();
+        legacy.setTenantId(TENANT_ID); legacy.setConversationId(CONVERSATION_ID);
+        legacy.setDirection("IN"); legacy.setStatus("PROCESSING");
+        when(turns.findProcessingInbound(TENANT_ID, CONVERSATION_ID)).thenReturn(legacy);
+        tokens = new ConversationMcpTokenService(jwtService, conversationDao, turns, null);
         for (String channel : List.of("DINGTALK", "WORKITEM_CLARIFICATION")) {
             AgentConversationDO row = conversation(channel, null);
             stub(row);
@@ -164,6 +179,38 @@ class ConversationMcpTokenServiceTest {
             // 澄清会话要能上传确认稿并推进工单状态，对它降权会直接弄坏既有能力。
             assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel(), channel);
         }
+    }
+
+    @Test
+    void workflowConversationIsOwnerBoundWithTheReadOnlyCeiling() {
+        AgentConversationDO row = conversation(SquadWorkflowChannelSink.CHANNEL, OWNER_ID);
+        stub(row);
+
+        assertThrows(IllegalArgumentException.class, () -> tokens.issue(row, INTRUDER_ID));
+
+        McpAccessTokenService.Principal principal =
+                tokens.authenticate(tokens.issue(row, OWNER_ID));
+        assertEquals(OWNER_ID, principal.userId());
+        // 工作流分析只允许提交图谱，不应携带项目写权限。
+        assertEquals(WorkspaceAccessLevel.READ_ONLY, principal.accessLevel());
+    }
+
+    @Test
+    void workflowConversationRejectsATokenAfterItsOwnerWasReassigned() {
+        AgentConversationDO row = conversation(SquadWorkflowChannelSink.CHANNEL, OWNER_ID);
+        stub(row);
+        String token = tokens.issue(row, OWNER_ID);
+
+        row.setOwnerUserId(INTRUDER_ID);
+
+        assertUnauthorized(() -> tokens.authenticate(token));
+    }
+
+    @Test
+    void workflowConversationWithoutARecordedOwnerCannotIssueAToken() {
+        AgentConversationDO row = conversation(SquadWorkflowChannelSink.CHANNEL, null);
+
+        assertThrows(IllegalArgumentException.class, () -> tokens.issue(row, OWNER_ID));
     }
 
     @Test

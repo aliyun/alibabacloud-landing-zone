@@ -1,7 +1,13 @@
 import { apiClient } from '@/shared/api/client';
 
+export type FeishuBindingMode = 'SHARED' | 'LEGACY';
+
 export interface FeishuBinding {
   id: number;
+  bindingMode: FeishuBindingMode;
+  platformConfigId: number | null;
+  groupId: string | null;
+  routeVersion: number;
   appId: string;
   agentId: number;
   status: 'ENABLED' | 'DISABLED';
@@ -12,8 +18,10 @@ export interface FeishuBinding {
   lastError: string | null;
 }
 export interface FeishuBindingRequest {
-  appId: string;
-  agentId: number;
+  bindingMode?: FeishuBindingMode;
+  groupId?: string;
+  appId?: string;
+  agentId?: number;
   status?: 'ENABLED' | 'DISABLED';
   version?: number;
   appSecret?: string;

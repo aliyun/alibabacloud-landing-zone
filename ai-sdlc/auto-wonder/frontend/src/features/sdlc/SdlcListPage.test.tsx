@@ -64,6 +64,15 @@ describe('SdlcListPage', () => {
     expect(screen.getByText('新建')).toBeInTheDocument();
   });
 
+  it('opens the squad workflow tab without leaving the SDLC page', async () => {
+    useSquadsAndSdlcs([]);
+    renderPage();
+    await userEvent.click(await screen.findByRole('tab', { name: '小队工作流' }));
+
+    expect(await screen.findByTestId('squad-workflow-panel')).toBeInTheDocument();
+    expect(screen.getByText('选择一个小队，查看由成员线上配置推导出的协作图。')).toBeInTheDocument();
+  });
+
   it('hides the AI generate entry', async () => {
     server.use(
       http.get('/api/sdlcs/page', () => sdlcPageResponse({

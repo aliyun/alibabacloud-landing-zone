@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.taskdata.TaskDataRecordDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.taskdata.TaskDataRecordDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO task_data_record
+            (workspace_id, namespace, record_key, owner_workitem_id, value_json,
+             version, creator_id)
+        VALUES
+            (#{workspaceId}, #{namespace}, #{recordKey}, #{ownerWorkitemId}, #{valueJson},
+             0, #{creatorId})
+    </insert>
+
+    <select id="findByKey" resultType="com.aliyun.autowonder.taskdata.TaskDataRecordDO">
+        SELECT * FROM task_data_record
+        WHERE workspace_id = #{workspaceId}
+          AND namespace = #{namespace}
+          AND record_key = #{recordKey}
+        LIMIT 1
+    </select>
+
+    <select id="list" resultType="com.aliyun.autowonder.taskdata.TaskDataRecordDO">
+        SELECT * FROM task_data_record
+        WHERE workspace_id = #{workspaceId}
+          AND namespace = #{namespace}
+        <if test="afterId != null">
+            AND id &gt; #{afterId}
+        </if>
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="update">
+        UPDATE task_data_record
+        SET value_json = #{valueJson},
+            owner_workitem_id = #{ownerWorkitemId},
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE workspace_id = #{workspaceId}
+          AND namespace = #{namespace}
+          AND record_key = #{recordKey}
+          AND version = #{expectedVersion}
+    </update>
+</mapper>

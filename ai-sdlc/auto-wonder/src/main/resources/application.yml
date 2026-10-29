@@ -55,8 +55,30 @@ autowonder:
   # 社区版本：为 true 时前端隐藏新建 MCP 令牌入口中的「更多客户端接入」。
   # 支持环境变量 AUTOWONDER_COMMUNITY_EDITION 覆盖。
   community-edition: ${AUTOWONDER_COMMUNITY_EDITION:true}
+  telemetry:
+    # Additional metric/business export switch; AUTOWONDER_SLS_ENABLED still gates all SLS.
+    sls-enabled: ${AUTOWONDER_TELEMETRY_SLS_ENABLED:true}
+  conversation:
+    queue-recovery:
+      fixed-delay-ms: ${AUTOWONDER_CONVERSATION_QUEUE_RECOVERY_FIXED_DELAY_MS:10000}
+    im-delivery:
+      fixed-delay-ms: ${AUTOWONDER_CONVERSATION_IM_DELIVERY_FIXED_DELAY_MS:5000}
+    elicitation:
+      timeout-minutes: ${AUTOWONDER_CONVERSATION_ELICITATION_TIMEOUT_MINUTES:30}
+      delivery-timeout-seconds: ${AUTOWONDER_CONVERSATION_ELICITATION_DELIVERY_TIMEOUT_SECONDS:300}
+      delivery-sweep-ms: ${AUTOWONDER_CONVERSATION_ELICITATION_DELIVERY_SWEEP_MS:1000}
+  squad:
+    workflow:
+      cancel-interval-ms: ${AUTOWONDER_SQUAD_WORKFLOW_CANCEL_INTERVAL_MS:30000}
+      recovery-interval-ms: ${AUTOWONDER_SQUAD_WORKFLOW_RECOVERY_INTERVAL_MS:30000}
+      cleanup-interval-ms: ${AUTOWONDER_SQUAD_WORKFLOW_CLEANUP_INTERVAL_MS:3600000}
+      max-active-generations: ${AUTOWONDER_SQUAD_WORKFLOW_MAX_ACTIVE_GENERATIONS:2}
+      deadline-seconds: ${AUTOWONDER_SQUAD_WORKFLOW_DEADLINE_SECONDS:1200}
+      retention-failed-days: ${AUTOWONDER_SQUAD_WORKFLOW_RETENTION_FAILED_DAYS:7}
+      retention-success-days: ${AUTOWONDER_SQUAD_WORKFLOW_RETENTION_SUCCESS_DAYS:30}
+      max-input-bytes: ${AUTOWONDER_SQUAD_WORKFLOW_MAX_INPUT_BYTES:2097152}
   runtime:
-    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.3.22}
+    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.3.30}
     # 全局自动升级开关：开启后服务端发现执行器版本落后就自动下发升级指令。默认开启；
     # 关闭请改这里（或设同名环境变量）后重启服务端，手动与批量升级不受它影响。
     executor-auto-update-enabled: ${AUTOWONDER_RUNTIME_EXECUTOR_AUTO_UPDATE_ENABLED:true}
@@ -135,6 +157,7 @@ autowonder:
       refresh-core-pool-size: 1
       refresh-max-pool-size: 2
       refresh-queue-capacity: 20
+      tail-cache-ttl-seconds: ${AUTOWONDER_INSIGHTS_HUMAN_AGENT_TAIL_CACHE_TTL_SECONDS:60}
 
 feishu:
   inbox:
@@ -144,3 +167,7 @@ feishu:
 memory:
   document-store:
     enabled: ${AUTOWONDER_MEMORY_DOCUMENT_STORE_ENABLED:true}
+
+dashboard:
+  pipeline-health:
+    avg-source: ${DASHBOARD_PIPELINE_HEALTH_AVG_SOURCE:FACT}

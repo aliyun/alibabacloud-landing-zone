@@ -8,6 +8,7 @@ import com.aliyun.autowonder.dispatch.PackageContextAssembler;
 import com.aliyun.autowonder.mcp.ConversationMcpTokenService;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import com.aliyun.autowonder.skill.SkillDao;
+import com.aliyun.autowonder.squad.workflow.SquadWorkflowChannelSink;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -72,9 +74,95 @@ class ConversationCapabilityServiceTest {
                 anyLong(), any(), any(), any())).thenReturn(bundle());
     }
 
+    @Test
+    void legacyClarificationCannotMintCreatorCredentialsForAnUnknownSender() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER);
+        assertThrows(RuntimeException.class, () -> service.prepare(conversation("WORKITEM_CLARIFICATION", null), TURN_ID));
+        verify(tokenService, never()).issue(any(), anyLong());
+    }
+
+    @Test
+    void persistedWebSenderSelectsTurnCredentialAndProtocolMarker() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER);
+        var turns = mock(AgentConversationTurnDao.class);
+        service = new ConversationCapabilityService(bindingDao, skillDao, agentDao,
+                contextAssembler, packager, tokenService, secretCrypto, turns);
+        var conversation = conversation("WORKITEM_CLARIFICATION", null);
+        var turn = new AgentConversationTurnDO(); turn.setSubmittedUserId(7002L);
+        when(turns.findByConversationTurn(TENANT, CONVERSATION_ID, TURN_ID)).thenReturn(turn);
+        when(tokenService.issueForTurn(conversation, TURN_ID)).thenReturn("scoped-token");
+        var snapshot = service.prepare(conversation, TURN_ID);
+        assertEquals("scoped-token", snapshot.mcpToken());
+        assertEquals(1, snapshot.conversationActorProtocolVersion());
+        verify(tokenService, never()).issue(any(), anyLong());
+    }
+
     private TaskPackageResult bundle() {
         return new TaskPackageResult("oss-ref", "md5", 10L,
                 "https://download/capabilities", "sha-256", "content-hash");
+    }
+
+    @Test
+    void chiefWithoutCopiedSkillsReceivesOfficialCapabilities() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER).setKind(PlatformAgentSeeder.PLATFORM_KIND);
+        var snapshot = service.prepare(conversation(PlatformConversationChannel.CHANNEL, OWNER), TURN_ID);
+        org.junit.jupiter.api.Assertions.assertNotNull(snapshot.officialSystemPrompt());
+        org.mockito.ArgumentCaptor<List<Map<String, Object>>> capabilities =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(packager).buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
+                eq(AGENT_ID), eq(AGENT_VERSION_ID), capabilities.capture(), any(), any());
+        org.junit.jupiter.api.Assertions.assertTrue(capabilities.getValue().stream().anyMatch(
+                item -> "official:autowonder-workitem-operator".equals(item.get("id"))));
+        org.junit.jupiter.api.Assertions.assertTrue(capabilities.getValue().stream().anyMatch(
+                item -> "official:autowonder-sdlc-manager".equals(item.get("id"))));
+    }
+
+    @Test
+    void scopedChiefKeepsOfficialCapabilitiesAndPersistedActorTogether() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER).setKind(PlatformAgentSeeder.PLATFORM_KIND);
+        var turns = mock(AgentConversationTurnDao.class);
+        var resolver = new com.aliyun.autowonder.agent.ChiefEffectiveConfigResolver(
+                new com.aliyun.autowonder.mcp.PlatformSkillCatalog());
+        service = new ConversationCapabilityService(bindingDao, skillDao, agentDao,
+                contextAssembler, packager, tokenService, secretCrypto, turns, resolver);
+        var conversation = conversation(PlatformConversationChannel.CHANNEL, OWNER);
+        var turn = new AgentConversationTurnDO();
+        turn.setSubmittedUserId(OWNER);
+        when(turns.findByConversationTurn(TENANT, CONVERSATION_ID, TURN_ID)).thenReturn(turn);
+        when(tokenService.issueForTurn(conversation, TURN_ID)).thenReturn("current-actor-token");
+
+        var snapshot = service.prepare(conversation, TURN_ID);
+
+        assertEquals(1, snapshot.conversationActorProtocolVersion());
+        assertEquals("current-actor-token", snapshot.mcpToken());
+        assertEquals(resolver.resolve(List.of()).systemPrompt(), snapshot.officialSystemPrompt());
+        org.mockito.ArgumentCaptor<List<Map<String, Object>>> capabilities =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(packager).buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
+                eq(AGENT_ID), eq(AGENT_VERSION_ID), capabilities.capture(), any(), any());
+        org.junit.jupiter.api.Assertions.assertTrue(capabilities.getValue().stream().anyMatch(
+                item -> "official:autowonder-workitem-operator".equals(item.get("id"))));
+        verify(tokenService, never()).issue(any(), anyLong());
+    }
+
+    @Test
+    void chiefMissingRequiredWorkspaceExtensionFailsBeforePackaging() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER).setKind(PlatformAgentSeeder.PLATFORM_KIND);
+        var binding = new com.aliyun.autowonder.agent.AgentSkillDO();
+        binding.setTenantId(TENANT); binding.setSkillId(99L);
+        when(bindingDao.listByVersion(AGENT_VERSION_ID)).thenReturn(List.of(binding));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> service.prepare(conversation(PlatformConversationChannel.CHANNEL, OWNER), TURN_ID));
+        org.mockito.Mockito.verifyNoInteractions(packager, tokenService);
+    }
+
+    @Test
+    void restrictedChiefDoesNotReceiveOfficialIdentityOrSkills() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER).setKind(PlatformAgentSeeder.PLATFORM_KIND);
+        var snapshot = service.prepare(conversation(SquadWorkflowChannelSink.CHANNEL, OWNER), TURN_ID);
+        org.junit.jupiter.api.Assertions.assertNull(snapshot.officialSystemPrompt());
+        verify(packager).buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
+                eq(AGENT_ID), eq(AGENT_VERSION_ID), eq(List.of()), eq(List.of()), isNull());
     }
 
     private AgentConversationDO conversation(String channel, Long ownerUserId) {
@@ -164,10 +252,10 @@ class ConversationCapabilityServiceTest {
         verify(tokenService, never()).issue(any(), anyLong());
     }
 
-    /** 钉钉与工单澄清渠道的行为必须一字不变，否则会破坏存量会话。 */
+    /** IM 渠道仍保持旧身份规则；网页澄清另测持久化发送者。 */
     @Test
     void legacyChannelsKeepDerivingThePrincipalFromTheAgentCreator() {
-        for (String channel : new String[]{"WORKITEM_CLARIFICATION", "DINGTALK"}) {
+        for (String channel : new String[]{"DINGTALK"}) {
             agent(CHIEF_CREATOR, CHIEF_MODIFIER);
             AgentConversationDO conversation = conversation(channel, null);
 
@@ -180,7 +268,7 @@ class ConversationCapabilityServiceTest {
     @Test
     void legacyChannelFallsBackToTheAgentModifier() {
         agent(null, CHIEF_MODIFIER);
-        AgentConversationDO conversation = conversation("WORKITEM_CLARIFICATION", null);
+        AgentConversationDO conversation = conversation("DINGTALK", null);
 
         service.prepare(conversation, TURN_ID);
 
@@ -191,7 +279,7 @@ class ConversationCapabilityServiceTest {
     @Test
     void legacyChannelIgnoresAnUnexpectedOwnerColumn() {
         agent(CHIEF_CREATOR, CHIEF_MODIFIER);
-        AgentConversationDO conversation = conversation("WORKITEM_CLARIFICATION", OWNER);
+        AgentConversationDO conversation = conversation("DINGTALK", OWNER);
 
         service.prepare(conversation, TURN_ID);
 
@@ -202,12 +290,46 @@ class ConversationCapabilityServiceTest {
     @Test
     void legacyChannelWithoutAnyAgentIdentityFails() {
         agent(null, null);
-        AgentConversationDO conversation = conversation("WORKITEM_CLARIFICATION", null);
+        AgentConversationDO conversation = conversation("DINGTALK", null);
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> service.prepare(conversation, TURN_ID));
 
         assertEquals("conversation MCP principal is unavailable", thrown.getMessage());
+        verify(tokenService, never()).issue(any(), anyLong());
+    }
+
+    /** 工作流会话只做一次隔离分析：身份必须是 Owner，但能力包不许带技能与仓库。 */
+    @Test
+    void workflowConversationKeepsTheOwnerIdentityWithoutCapabilitiesOrRepos() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER);
+        AgentConversationDO conversation =
+                conversation(SquadWorkflowChannelSink.CHANNEL, OWNER);
+        when(tokenService.issue(conversation, OWNER)).thenReturn("awconversation_owner");
+        when(packager.buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
+                eq(AGENT_ID), eq(AGENT_VERSION_ID), eq(List.of()), eq(List.of()), isNull()))
+                .thenReturn(bundle());
+
+        ConversationCapabilitySnapshot snapshot = service.prepare(conversation, TURN_ID);
+
+        assertEquals("awconversation_owner", snapshot.mcpToken());
+        verify(tokenService).issue(conversation, OWNER);
+        verify(contextAssembler, never()).buildRepos(anyLong(), anyLong(), any());
+        verify(contextAssembler, never()).buildRepoMap(anyLong(), any());
+        verify(packager).buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
+                eq(AGENT_ID), eq(AGENT_VERSION_ID), eq(List.of()), eq(List.of()), isNull());
+    }
+
+    @Test
+    void workflowConversationWithoutOwnerFailsInsteadOfBorrowingTheAgentIdentity() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER);
+        AgentConversationDO conversation =
+                conversation(SquadWorkflowChannelSink.CHANNEL, null);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> service.prepare(conversation, TURN_ID));
+
+        assertEquals("platform conversation owner is unavailable", thrown.getMessage());
         verify(tokenService, never()).issue(any(), anyLong());
     }
 
@@ -274,9 +396,9 @@ class ConversationCapabilityServiceTest {
         assertEquals(Map.of(), snapshot.mcpSecrets());
     }
 
-    /** 需要私密 MCP 配置时必须走 KeyCenter 解密，缺 KeyCenter 直接失败而不是静默降级。 */
+    /** 需要私密 MCP 配置时必须走 SecretCrypto 解密，缺 SecretCrypto 直接失败而不是静默降级。 */
     @Test
-    void mcpSecretsAreDecryptedAndMissingKeyCenterFails() {
+    void mcpSecretsAreDecryptedAndMissingSecretCryptoFails() {
         agent(CHIEF_CREATOR, CHIEF_MODIFIER);
         AgentConversationDO conversation =
                 conversation(PlatformConversationChannel.CHANNEL, OWNER);
@@ -289,10 +411,10 @@ class ConversationCapabilityServiceTest {
         assertEquals(Map.of("ref-1", "cleartext"),
                 service.prepare(conversation, TURN_ID).mcpSecrets());
 
-        ConversationCapabilityService withoutKeyCenter = new ConversationCapabilityService(
+        ConversationCapabilityService withoutSecretCrypto = new ConversationCapabilityService(
                 bindingDao, skillDao, agentDao, contextAssembler, packager, tokenService, null);
         assertThrows(IllegalStateException.class,
-                () -> withoutKeyCenter.prepare(conversation, TURN_ID));
+                () -> withoutSecretCrypto.prepare(conversation, TURN_ID));
     }
 
     /** 平台智能体会话：仓库经 agent-aware 的 3 参入口装配，组装结果原样进入同一次包构建。 */
@@ -332,6 +454,11 @@ class ConversationCapabilityServiceTest {
         AgentDO normal = agent(CHIEF_CREATOR, CHIEF_MODIFIER);
         normal.setKind("NORMAL");
         AgentConversationDO conversation = conversation("WORKITEM_CLARIFICATION", null);
+        var turns = mock(AgentConversationTurnDao.class);
+        var turn = new AgentConversationTurnDO(); turn.setSubmittedUserId(7002L);
+        when(turns.findByConversationTurn(TENANT, CONVERSATION_ID, TURN_ID)).thenReturn(turn);
+        service = new ConversationCapabilityService(bindingDao, skillDao, agentDao,
+                contextAssembler, packager, tokenService, secretCrypto, turns);
         List<Map<String, Object>> repos = List.of(repoEntry(10L, "service", true));
         Map<String, Object> repoMap = Map.of("boundRepoIds", List.of(10L));
         when(contextAssembler.buildRepos(TENANT, AGENT_VERSION_ID, normal)).thenReturn(repos);
@@ -339,7 +466,7 @@ class ConversationCapabilityServiceTest {
         when(packager.buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
                 eq(AGENT_ID), eq(AGENT_VERSION_ID), anyList(), eq(repos), eq(repoMap)))
                 .thenReturn(bundle());
-        when(tokenService.issue(conversation, CHIEF_CREATOR)).thenReturn("mcp-token");
+        when(tokenService.issueForTurn(conversation, TURN_ID)).thenReturn("mcp-token");
 
         ConversationCapabilitySnapshot snapshot = service.prepare(conversation, TURN_ID);
 

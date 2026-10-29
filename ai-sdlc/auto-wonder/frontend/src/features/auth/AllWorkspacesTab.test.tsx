@@ -610,11 +610,8 @@ describe('AllWorkspacesTab', () => {
 
   it('keeps the modal open when the target merely leaves the current result page', async () => {
     const user = userEvent.setup();
-    let targetOnPage = true;
     useListHandler(() => pageEnvelope(
-      targetOnPage
-        ? [notMemberWorkspace]
-        : [{ ...notMemberWorkspace, id: 9, name: '别的空间' }],
+      [notMemberWorkspace],
       1,
       1,
       20,
@@ -626,15 +623,14 @@ describe('AllWorkspacesTab', () => {
     await user.click(within(card).getByRole('button', { name: /申请权限/ }));
     expect(await screen.findByText('申请加入「数据中台」')).toBeInTheDocument();
 
-    // A refreshed result page can omit this row without changing membership.
-    // Drive the real query refresh instead of typing behind the modal: its focus
-    // trap can redirect keystrokes under full-suite load. Search/debounce has its
-    // own coverage; this case checks the open dialog's response to a missing row.
-    targetOnPage = false;
+    // Refetch the current page while the modal is open. Typing behind its mask
+    // races the dialog's autofocus and is not the invariant this test exercises.
+    useListHandler(() => pageEnvelope([{ ...notMemberWorkspace, id: 9, name: '别的空间' }]));
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['workspaces', 'all'] });
     });
-    expect(await screen.findByText('别的空间')).toBeInTheDocument();
+    expect(await screen.findByText('别的空间', {},
+      { timeout: DEBOUNCED_FIND_TIMEOUT })).toBeInTheDocument();
 
     expect(screen.getByText('申请加入「数据中台」')).toBeInTheDocument();
     expect(screen.queryByText(/加入状态已更新/)).not.toBeInTheDocument();

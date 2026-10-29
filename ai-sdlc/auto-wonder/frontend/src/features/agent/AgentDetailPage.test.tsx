@@ -86,6 +86,17 @@ describe('AgentDetailPage', () => {
     expect(screen.getAllByText(/v2/).length).toBeGreaterThanOrEqual(1);
   });
 
+  it('shows current release identity and stable official capability names', async () => {
+    mockAgent({ kind: 'PLATFORM', businessBackground: 'legacy soul', responsibilities: 'legacy agent',
+      officialConfiguration: { responsibilities: 'current official agent', businessBackground: 'current official soul',
+        fingerprint: 'release', capabilities: [{ id: 'official:workitem', name: 'workitem-operator', type: 'SKILL' }] } });
+    renderPage();
+    expect(await screen.findByText('current official agent')).toBeInTheDocument();
+    expect(screen.getByText('current official soul')).toBeInTheDocument();
+    expect(screen.getByText('workitem-operator')).toBeInTheDocument();
+    expect(screen.queryByText('legacy agent')).not.toBeInTheDocument();
+  });
+
   it('renders business background and responsibilities from agent detail', async () => {
     mockAgent({
       roleName: '项目管理员',
@@ -347,6 +358,29 @@ describe('AgentDetailPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: /环境变量 \(1\)/ }));
     expect(await screen.findByText('API_KEY')).toBeInTheDocument();
     expect(screen.getByText('接口凭证')).toBeInTheDocument();
+  });
+
+  it('falls back to the repo id when the version detail has no repository name', async () => {
+    mockAgent();
+    server.use(
+      http.get('/api/agents/1/versions/2', () =>
+        ok({
+          id: 10, agentId: 1, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+          businessBackground: '', responsibilities: '', sdlcId: null, identityJson: null, evolutionMode: null,
+          reviewerId: null, reviewComment: null, reviewedAt: null, version: 1, gmtCreate: '2026-07-01',
+          repoPerms: [
+            { repoId: 31, permLevel: 'READ', allowedBranchPatterns: [] },
+          ],
+          skills: [], memoryRefs: [], environmentVariables: [],
+        })),
+    );
+
+    renderPage();
+
+    // 仓库已删除或跨租户时后端不返回名称，列表回退展示 #id
+    expect(await screen.findByRole('tab', { name: /仓库权限 \(1\)/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /仓库权限 \(1\)/ }));
+    expect(await screen.findByText('#31')).toBeInTheDocument();
   });
 
   it('warns about an unpublished draft and compares it with the effective config', async () => {

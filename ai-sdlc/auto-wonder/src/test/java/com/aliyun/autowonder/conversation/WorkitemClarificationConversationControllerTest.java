@@ -76,7 +76,7 @@ class WorkitemClarificationConversationControllerTest {
 
         controller.replyElicitation(10011L, 77L, "req-1", request);
 
-        verify(service).replyElicitation(1L, 10011L, 77L, "req-1", "accept", "{\"q0\":\"A\"}");
+        verify(service).replyElicitation(1L, 10011L, 77L, "req-1", "accept", "{\"q0\":\"A\"}", 42L);
     }
 
     /** S15：按轮次取事件端点返回该轮全部事件，并先校验会话归属。 */

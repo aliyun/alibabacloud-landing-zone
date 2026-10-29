@@ -22,6 +22,15 @@ public class AgentConversationElicitationDO {
     private String schemaJson;
     private String status;
     private String answerJson;
+    private Integer answerProtocolVersion;
+    private Integer dispatchAttempt;
+    private Long executorId;
+    private String answerId;
+    private String deliveryStatus;
+    /** Transient transport instruction; not persisted or exposed as a user decision. */
+    private boolean receiptOnly;
+    private Date deliveryDeadline;
+    private Date nextDeliveryAt;
     private Date gmtCreate;
     private Date gmtModified;
 }

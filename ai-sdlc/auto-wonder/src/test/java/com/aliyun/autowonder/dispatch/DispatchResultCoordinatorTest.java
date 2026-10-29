@@ -176,6 +176,32 @@ class DispatchResultCoordinatorTest {
         verify(workflows).onPaused(100,55);
         verifyNoInteractions(dispatches,handoffs);
     }
+    @Test void failureWhilePausingRejectsResultAndDefersWaiterReleaseAfterCommit() {
+        dispatch.setStatus(DispatchStatus.PAUSING);
+        input.put("success", false);
+        when(dispatches.onResult(100L, 1L, 55, false, null, null, false, false, null)).thenReturn(false);
+        when(dispatches.rejectProtocolResult(100, 1, 55, "RESULT_STATE_CONFLICT")).thenReturn(true);
+        when(dao.existsWaitingForPredecessor(100L, 55L)).thenReturn(true);
+
+        JSONObject ack = coordinator.handle(100, 1, input).ack();
+
+        assertEquals("REJECTED", ack.getString("disposition"));
+        assertEquals("RESULT_STATE_CONFLICT", ack.getString("reasonCode"));
+        var order = inOrder(store, workflows);
+        order.verify(store).insert(eq(100L), eq(1L), eq(input), anyString(), eq(ack), isNull());
+        order.verify(workflows).reconcileWaitersForPredecessor(100L, 55L);
+    }
+
+    @Test void acceptedTerminalFailureAlsoDefersWaiterRelease() {
+        input.put("success", false);
+        when(dispatches.onResult(100L, 1L, 55, false, null, null, false, false, null)).thenReturn(true);
+        when(dao.existsWaitingForPredecessor(100L, 55L)).thenReturn(true);
+
+        assertEquals("ACCEPTED", coordinator.handle(100, 1, input).ack().getString("disposition"));
+
+        verify(workflows).reconcileWaitersForPredecessor(100L, 55L);
+    }
+
     @Test void workflowPlanIsAppliedBeforeDecisionPersistence() {
         allowCompletion();
         JSONObject plan=JSON.parseObject("{\"targetAgentId\":9}");input.put("workflowPlan",plan);

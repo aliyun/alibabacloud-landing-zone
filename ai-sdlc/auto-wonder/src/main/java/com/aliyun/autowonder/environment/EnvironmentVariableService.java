@@ -96,13 +96,6 @@ public class EnvironmentVariableService {
         return toVO(persisted);
     }
 
-    public EnvironmentVariableValueVO reveal(long tenantId, long userId, long id) {
-        EnvironmentVariableDO variable = requireActive(tenantId, id);
-        String value = secretCrypto.decrypt(variable.getCredentialRef());
-        audit(tenantId, userId, "REVEAL", variable);
-        return new EnvironmentVariableValueVO(value);
-    }
-
     @Transactional
     public void delete(long tenantId, long userId, long id) {
         EnvironmentVariableDO variable = dao.findActiveByIdForUpdate(tenantId, id);

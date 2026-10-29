@@ -1,6 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { formatDateTime, formatNumber } from '@/shared/i18n/format';
-import { useState } from 'react';
+import { formatDateTime } from '@/shared/i18n/format';
 import { Alert, Button, Empty } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import type { ColumnsType } from 'antd/es/table';
@@ -14,6 +13,7 @@ const timeOptions: Intl.DateTimeFormatOptions = { month: '2-digit', day: '2-digi
 interface SlowTailTableProps {
   startDate: string;
   endDate: string;
+  workType: string;
 }
 
 function humanRatio(item: P90Workitem): number {
@@ -22,11 +22,9 @@ function humanRatio(item: P90Workitem): number {
   return item.humanDurationSeconds / total;
 }
 
-export function SlowTailTable({ startDate, endDate }: SlowTailTableProps) {
+export function SlowTailTable({ startDate, endDate, workType }: SlowTailTableProps) {
   const { t } = useTranslation('insights');
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
-  const { data, isLoading, isError, refetch } = useHumanAgentSlowTail(startDate, endDate, page, pageSize);
+  const { data, isLoading, isError, refetch } = useHumanAgentSlowTail(startDate, endDate, workType);
 
   const columns: ColumnsType<P90Workitem> = [
     {
@@ -98,15 +96,7 @@ export function SlowTailTable({ startDate, endDate }: SlowTailTableProps) {
       rowKey="workitemId"
       size="small"
       loading={isLoading}
-      pagination={{
-        current: page,
-        pageSize,
-        total: data?.total ?? 0,
-        onChange: (p) => setPage(p),
-        showSizeChanger: false,
-        size: 'small',
-        showTotal: total => t('slowTail.total', { count: total, total: formatNumber(total) }),
-      }}
+      pagination={false}
     />
   );
 }

@@ -12,6 +12,16 @@ public interface ExternalWorkitemLinkDao {
     ExternalWorkitemLinkDO findByExternalScope(@Param("tenantId") Long tenantId,
                                                @Param("bindingId") Long bindingId,
                                                @Param("externalWorkitemId") String externalWorkitemId);
+    ExternalWorkitemLinkDO findFirstByExternal(@Param("tenantId") Long tenantId,
+                                               @Param("provider") String provider,
+                                               @Param("externalWorkitemId") String externalWorkitemId);
+    ExternalWorkitemLinkDO findFirstByExternalForUpdate(@Param("tenantId") Long tenantId,
+                                                        @Param("provider") String provider,
+                                                        @Param("externalWorkitemId") String externalWorkitemId);
+    int takeoverBinding(@Param("id") Long id,
+                        @Param("tenantId") Long tenantId,
+                        @Param("bindingId") Long bindingId,
+                        @Param("externalProjectId") String externalProjectId);
     ExternalWorkitemLinkDO findByWorkitem(@Param("tenantId") Long tenantId, @Param("provider") String provider,
                                           @Param("workitemId") Long workitemId);
     List<ExternalWorkitemLinkDO> listByWorkitem(@Param("tenantId") Long tenantId, @Param("workitemId") Long workitemId);

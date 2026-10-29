@@ -11,6 +11,7 @@ import com.aliyun.openservices.log.common.LogItem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.ObjectUtils;
 
 import javax.annotation.PostConstruct;
@@ -38,6 +39,9 @@ public class BizLogProducer {
 
     private Producer producer;
 
+    @Value("${autowonder.telemetry.sls-enabled:true}")
+    private boolean slsEnabled = true;
+
     private ProducerConfig producerConfig = new ProducerConfig();
 
     public BizLogProducer(SlsProperties properties) {
@@ -46,7 +50,7 @@ public class BizLogProducer {
 
     @PostConstruct
     public void init() {
-        if (!properties.isEnabled()) {
+        if (!properties.isEnabled() || !slsEnabled) {
             return;
         }
         properties.validate();

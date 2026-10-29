@@ -33,4 +33,16 @@ public class ConversationExecutorRouter {
         return selector.select(agentId, preferredExecutorId, required);
     }
 
+    /** Same route requirements as selection, without permission to dispatch. */
+    public boolean canQueueOnOwner(long tenantId, long agentId, long agentVersionId,
+            Long ownerExecutorId, boolean platform) {
+        var bindings = refs.listByVersion(tenantId, agentVersionId);
+        String required = platform ? ConversationProtocolFeatures.TURN_EVENT : null;
+        if (bindings != null && !bindings.isEmpty()) {
+            required = required == null ? ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1
+                    : required + "," + ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1;
+        }
+        return selector.canQueueOnOwner(agentId, ownerExecutorId, required);
+    }
+
 }

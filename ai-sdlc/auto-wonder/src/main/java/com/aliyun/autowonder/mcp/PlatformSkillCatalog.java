@@ -17,6 +17,7 @@ public class PlatformSkillCatalog {
                     List.of("autowonder.create_workitem", "autowonder.list_workitems",
                             "autowonder.get_workitem", "autowonder.add_workitem_comment",
                             "autowonder.list_workitem_comments", "autowonder.update_workitem",
+                            "autowonder.update_workitem_tags",
                             "autowonder.delete_workitem", "autowonder.assign_workitem",
                             "autowonder.transition_workitem", "autowonder.pause_workitem",
                             "autowonder.resume_workitem", "autowonder.workitem_cli_upload_token",

@@ -31,5 +31,9 @@ public interface AgentConversationTurnEventDao {
             @Param("turnId") Long turnId,
             @Param("limit") int limit);
 
+    List<AgentConversationTurnEventDO> listByTurnAfter(
+            @Param("tenantId") Long tenantId, @Param("conversationId") Long conversationId,
+            @Param("turnId") Long turnId, @Param("afterId") long afterId, @Param("limit") int limit);
+
     int deleteExpiredBatch(@Param("cutoff") Date cutoff, @Param("limit") int limit);
 }

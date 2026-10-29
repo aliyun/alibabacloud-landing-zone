@@ -36,6 +36,7 @@ class PlatformConversationDaoTest {
     static final String JDBC_URL =
             "jdbc:h2:mem:platform_conversation_test;MODE=MySQL;DB_CLOSE_DELAY=-1";
 
+    static AgentConversationTurnDao turnDao;
     static AgentConversationDao conversationDao;
     static ConversationShareDao shareDao;
     static ConversationTurnArtifactDao turnArtifactDao;
@@ -46,6 +47,7 @@ class PlatformConversationDaoTest {
                 "mybatis-platform-conversation-test-config.xml")) {
             SqlSessionFactory factory = new SqlSessionFactoryBuilder().build(in);
             SqlSessionTemplate template = new SqlSessionTemplate(factory);
+            turnDao = template.getMapper(AgentConversationTurnDao.class);
             conversationDao = template.getMapper(AgentConversationDao.class);
             shareDao = template.getMapper(ConversationShareDao.class);
             turnArtifactDao = template.getMapper(ConversationTurnArtifactDao.class);
@@ -57,10 +59,28 @@ class PlatformConversationDaoTest {
     void cleanTables() throws Exception {
         try (Connection c = DriverManager.getConnection(JDBC_URL, "sa", "");
              Statement st = c.createStatement()) {
+            st.execute("DELETE FROM agent_conversation_turn");
             st.execute("DELETE FROM agent_conversation");
             st.execute("DELETE FROM conversation_share");
             st.execute("DELETE FROM conversation_turn_artifact");
         }
+    }
+
+    @Test
+    void turnSenderSurvivesDalRoundTripAndLegacyRemainsNull() {
+        for (Long actor : new Long[] {7001L, 7002L, null}) {
+            AgentConversationTurnDO turn = new AgentConversationTurnDO();
+            turn.setTenantId(TENANT);
+            turn.setConversationId(77L);
+            turn.setDirection("IN");
+            turn.setStatus("QUEUED");
+            turn.setExternalMsgId("actor-" + actor);
+            turn.setSubmittedUserId(actor);
+            assertEquals(1, turnDao.insert(turn));
+            assertEquals(actor, turnDao.findByExternalMsgId(TENANT, turn.getExternalMsgId()).getSubmittedUserId());
+            assertEquals(actor, turnDao.findByConversationTurn(TENANT, 77L, turn.getId()).getSubmittedUserId());
+        }
+        assertEquals(3, turnDao.listTurnsByConversation(TENANT, 77L).size());
     }
 
     private static void execScript(String resource) throws Exception {

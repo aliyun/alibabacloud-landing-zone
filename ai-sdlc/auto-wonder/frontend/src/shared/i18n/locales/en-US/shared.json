@@ -22,7 +22,7 @@
       "ENVIRONMENT": "Environment variables",
       "EVOLUTION": "Self-evolution (experimental)",
       "EXECUTOR": "Executors",
-      "INSIGHTS": "Data insights · Delivery analysis and execution audit",
+      "INSIGHTS": "Data insights · Delivery analysis",
       "INTEGRATION": "Platform integrations",
       "MCP": "MCP",
       "MEMORY": "Memory",
@@ -102,7 +102,9 @@
   "markdown": {
     "completed": "Completed task",
     "todo": "To-do task",
-    "openArtifact": "Open artifact {{label}}"
+    "openArtifact": "Open artifact {{label}}",
+    "mermaidLoading": "Rendering Mermaid diagram…",
+    "mermaidError": "Mermaid diagram failed to render; showing source"
   },
   "notifications": "Notifications",
   "error": {

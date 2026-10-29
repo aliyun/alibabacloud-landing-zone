@@ -82,4 +82,82 @@ class DingTalkStreamBotMessageListenerTest {
         listener.execute(sdk);
         assertEquals("existing-request", MDC.get("requestId"));
     }
+
+    @Test
+    void sharedScopeRoutesMatchingRobotMessagesToTheScopedHandler() {
+        DingTalkInboundService inbound = mock(DingTalkInboundService.class);
+        DingTalkStreamBotMessageListener listener = new DingTalkStreamBotMessageListener(inbound);
+        DingTalkStreamScope scope = DingTalkStreamScope.shared(50L, "ding-app", "ding-robot");
+
+        listener.execute(message("msg-1", "ding-robot"), scope);
+
+        verify(inbound).handle(argThat(msg -> "msg-1".equals(msg.msgId())), eq(scope));
+        verify(inbound, never()).handle(any());
+    }
+
+    @Test
+    void sharedScopeDropsMessagesAddressedToAnotherRobot() {
+        DingTalkInboundService inbound = mock(DingTalkInboundService.class);
+        DingTalkStreamBotMessageListener listener = new DingTalkStreamBotMessageListener(inbound);
+
+        Map<String, Object> ack = listener.execute(message("msg-1", "other-robot"),
+                DingTalkStreamScope.shared(50L, "ding-app", "ding-robot"));
+
+        assertNotNull(ack);
+        assertTrue(ack.containsKey("response"));
+        assertNull(ack.get("response"));
+        verify(inbound, never()).handle(any());
+        verify(inbound, never()).handle(any(), any());
+    }
+
+    @Test
+    void absentOrLegacyScopeKeepsTheLegacyHandler() {
+        DingTalkInboundService inbound = mock(DingTalkInboundService.class);
+        DingTalkStreamBotMessageListener listener = new DingTalkStreamBotMessageListener(inbound);
+
+        listener.execute(message("msg-1", "ding-robot"));
+        listener.execute(message("msg-2", "ding-robot"), DingTalkStreamScope.legacy());
+        listener.execute(message("msg-3", "ding-robot"),
+                new DingTalkStreamScope(null, null, "ding-robot", DingTalkStreamScope.MODE_SHARED));
+
+        verify(inbound, times(3)).handle(any());
+        verify(inbound, never()).handle(any(), any());
+    }
+
+    @Test
+    void scopedFactoryBindsTheScopeToEveryCallback() {
+        DingTalkInboundService inbound = mock(DingTalkInboundService.class);
+        DingTalkStreamBotMessageListener listener = new DingTalkStreamBotMessageListener(inbound);
+        DingTalkStreamScope scope = DingTalkStreamScope.shared(50L, "ding-app", "ding-robot");
+
+        listener.scoped(scope).execute(message("msg-1", "ding-robot"));
+
+        verify(inbound).handle(any(), eq(scope));
+    }
+
+    @Test
+    void plainMapBodiesWithoutTextOrMentionsAreStillParsed() {
+        DingTalkInboundService inbound = mock(DingTalkInboundService.class);
+        DingTalkStreamBotMessageListener listener = new DingTalkStreamBotMessageListener(inbound);
+
+        listener.execute(Map.<String, Object>of("conversationId", "cid-1"));
+
+        verify(inbound).handle(argThat(msg -> "cid-1".equals(msg.conversationId())
+                && msg.textContent() == null
+                && msg.atUsers().isEmpty()
+                && msg.msgId() == null));
+        assertNull(MDC.get("requestId"));
+    }
+
+    private static JSONObject message(String msgId, String robotCode) {
+        JSONObject body = new JSONObject(true);
+        body.put("msgId", msgId);
+        body.put("robotCode", robotCode);
+        body.put("conversationId", "cid-1");
+        body.put("msgtype", "text");
+        JSONObject text = new JSONObject(true);
+        text.put("content", "hello");
+        body.put("text", text);
+        return body;
+    }
 }

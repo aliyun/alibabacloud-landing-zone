@@ -56,6 +56,23 @@ class ExternalWorkitemViewServiceTest {
     }
 
     @Test
+    void pageWithNoResolvedReportersSkipsNullReporterIds() {
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalPrincipalDao principalDao = mock(ExternalPrincipalDao.class);
+        ExternalWorkitemLinkDO first = new ExternalWorkitemLinkDO();
+        first.setId(1L);
+        first.setWorkitemId(500L);
+        ExternalWorkitemLinkDO second = new ExternalWorkitemLinkDO();
+        second.setId(2L);
+        second.setWorkitemId(501L);
+
+        Map<Long, ExternalPrincipalVO> result = new ExternalWorkitemViewService(linkDao, principalDao)
+                .reportersByWorkitem(List.of(first, second));
+
+        assertEquals(Map.of(), result);
+    }
+
+    @Test
     void formatsAoneIdentityWhenTheSourceDoesNotProvideADisplayName() {
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalPrincipalDao principalDao = mock(ExternalPrincipalDao.class);

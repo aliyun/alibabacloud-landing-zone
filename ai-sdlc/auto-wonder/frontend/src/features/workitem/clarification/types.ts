@@ -18,11 +18,17 @@ export interface ClarificationConversation {
   turns: ClarificationTurn[];
   /** 仅详情接口填充：刷新页面后据此恢复未解决的问答卡片 */
   pendingElicitations?: ClarificationElicitation[] | null;
+  questionHistory?: ClarificationElicitation[] | null;
+  answerDeliveries?: ClarificationElicitation[] | null;
   /** 上次探针缓存的斜杠命令快照（详情接口返回，可能缺省）。 */
   availableCommands?: AcpSlashCommand[] | null;
 }
 
 export interface ClarificationElicitation {
+  answerId?: string | null;
+  answerJson?: string | null;
+  dispatchAttempt?: number | null;
+  deliveryStatus?: 'SAVED' | 'RECEIVED' | 'WRITTEN' | 'UNAVAILABLE' | 'UNKNOWN' | null;
   requestId: string;
   turnId: number;
   mode: string | null;
@@ -34,9 +40,10 @@ export interface ClarificationElicitation {
 }
 
 export type ConversationContentDisplay =
-  | { code: 'CANCELED' | 'EMPTY_OUTPUT'; args: Record<string, never> }
+  | { code: 'CANCELED' | 'EMPTY_OUTPUT' | 'QUESTION_EXPIRED'; args: Record<string, never> }
   | { code: 'REPLY_FAILED' | 'DISPATCH_REPLY_FAILED'; args: { detail: string } };
 export type ConversationErrorDisplay =
+  | { code: 'QUESTION_EXPIRED'; args: Record<string, never> }
   | { code: 'DISPATCH_FAILED' | 'EXECUTOR_COMPATIBILITY_FAILED'; args: { detail: string } }
   | { code: 'DELIVERY_ATTEMPTS_EXHAUSTED'; args: { attempts: number } };
 
@@ -126,6 +133,7 @@ export interface AcpEventData {
   toolCallId?: string;
   requestedSchema?: unknown;
   action?: AcpElicitationAction;
+  status?: string;
   content?: Record<string, unknown>;
   kind?: AcpToolKind;
   title?: string;
@@ -151,6 +159,7 @@ export interface ProviderEventPayload {
 }
 
 export interface ConversationRealtimeEvent {
+  dispatchAttempt?: number;
   conversationId: number;
   turnId: number;
   eventSeq: number;

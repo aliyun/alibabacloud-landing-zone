@@ -4,6 +4,7 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.workitem.WorkitemControlEventWriter;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,9 +14,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /** Durable cancellation intent, dispatch fencing and repair of dependent projections. */
@@ -56,6 +62,9 @@ public class DispatchRecoveryService {
     private ObjectProvider<DeliveryRestartOrchestrator> restartOrchestrator;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setRestartOrchestrator(ObjectProvider<DeliveryRestartOrchestrator> value) { restartOrchestrator = value; }
+    private WorkitemControlEventWriter controlEvents;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setControlEvents(WorkitemControlEventWriter value) { controlEvents = value; }
     private void audit(long tenantId, long subjectId, long userId, String action, String targetType) {
         if (audit == null) return;
         var record = new com.aliyun.autowonder.audit.AuditLogRecord();
@@ -80,9 +89,62 @@ public class DispatchRecoveryService {
                 Integer.class, d.getTenantId(), d.getWorkitemId());
     }
 
+    /** Control requests and async confirmations share this lock before touching control state. */
+    public void lockWorkitemControl(DispatchDO d) {
+        lockSubject(d);
+    }
+
     public boolean closed(long tenantId, long workitemId) {
         return !jdbc.queryForList("SELECT 1 FROM workitem_execution_control WHERE tenant_id=? AND workitem_id=? AND closed=1",
                 tenantId, workitemId).isEmpty();
+    }
+
+    public long controlEventId(long tenantId, long dispatchId) {
+        List<Long> rows = jdbc.queryForList(
+                "SELECT control_event_id FROM dispatch_recovery WHERE tenant_id=? AND dispatch_id=?",
+                Long.class, tenantId, dispatchId);
+        return rows.isEmpty() || rows.get(0) == null ? 0L : rows.get(0);
+    }
+
+    public void bindControlEvent(long tenantId, long dispatchId, long eventId) {
+        jdbc.update("INSERT IGNORE INTO dispatch_recovery (tenant_id,dispatch_id) VALUES (?,?)", tenantId, dispatchId);
+        jdbc.update("UPDATE dispatch_recovery SET control_event_id=?,gmt_modified=NOW() WHERE tenant_id=? AND dispatch_id=?",
+                eventId, tenantId, dispatchId);
+    }
+
+    public Map<Long, ControlState> controlStates(long tenantId, Collection<Long> dispatchIds) {
+        if (dispatchIds == null || dispatchIds.isEmpty()) return Map.of();
+        List<Long> ids = dispatchIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return Map.of();
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        List<Object> args = new ArrayList<>();
+        args.add(tenantId);
+        args.addAll(ids);
+        Map<Long, ControlState> result = new HashMap<>();
+        jdbc.query("SELECT dispatch_id,cancel_requested,stop_pending,forced,control_event_id,phase,reason "
+                        + "FROM dispatch_recovery WHERE tenant_id=? AND dispatch_id IN (" + placeholders + ")",
+                rs -> {
+                    result.put(rs.getLong("dispatch_id"), new ControlState(
+                            rs.getInt("cancel_requested") == 1,
+                            rs.getInt("stop_pending") == 1,
+                            rs.getInt("forced") == 1,
+                            rs.getLong("control_event_id"),
+                            rs.getString("phase"),
+                            rs.getString("reason")));
+                }, args.toArray());
+        return result;
+    }
+
+    public record ControlState(boolean cancelRequested, boolean stopPending, boolean forced,
+                               long controlEventId, String phase, String reason) {
+        public static ControlState none() {
+            return new ControlState(false, false, false, 0L, null, null);
+        }
+    }
+
+    public boolean canReopen(long tenantId, long workitemId) {
+        return closed(tenantId, workitemId) && dispatches.listByWorkitem(tenantId, workitemId).stream()
+                .allMatch(d -> DispatchStatus.isTerminal(d.getStatus()));
     }
 
     public void requireOpen(DispatchDO d) {
@@ -91,8 +153,16 @@ public class DispatchRecoveryService {
     }
 
     public void insert(DispatchDO d) {
+        insert(d, null);
+    }
+
+    public void insert(DispatchDO d, WorkitemControlEventWriter.ExecutionControlEvent creationEvent) {
         tx.executeWithoutResult(s -> {
             lockSubject(d); requireOpen(d); dispatches.insert(d);
+            if (creationEvent != null && controlEvents != null) {
+                controlEvents.recordExecution(d.getTenantId(), d.getWorkitemId(),
+                        creationEvent.setDispatchId(d.getId()));
+            }
             if ("CANONICAL_INTERACTION".equals(d.getResumeMode()) && d.getIdempotencyKey().startsWith("continue:")) {
                 jdbc.update("INSERT INTO workitem_comment_delivery (tenant_id,workitem_id,comment_id,target_agent_id,dispatch_id,status,retry_dispatch_id) "
                         + "SELECT tenant_id,workitem_id,comment_id,target_agent_id,?,'QUEUED',? FROM workitem_comment_delivery "
@@ -122,6 +192,7 @@ public class DispatchRecoveryService {
                     jdbc.update("INSERT INTO dispatch_recovery (tenant_id,dispatch_id,cancel_requested,stop_pending,forced,requested_at,reason) "
                             + "VALUES (?,?,1,1,1,NOW(),?) ON DUPLICATE KEY UPDATE cancel_requested=1,stop_pending=1,forced=1,requested_at=COALESCE(requested_at,NOW()),reason=VALUES(reason)",
                             d.getTenantId(), d.getId(), error);
+                    recordTimeoutStopIntent(d, error);
                 }
                 audit(d.getTenantId(), d.getId(), 0, "DISPATCH_" + status, "DISPATCH");
             }
@@ -158,7 +229,16 @@ public class DispatchRecoveryService {
 
     public Map<String, Object> cancel(long tenantId, long workitemId, long dispatchId, long userId, boolean force) {
         DispatchDO d = requireWorkitem(tenantId, workitemId, dispatchId);
-        tx.executeWithoutResult(s -> { lockSubject(d); cancelLocked(dispatches.findById(dispatchId), userId, force); });
+        tx.executeWithoutResult(s -> {
+            lockSubject(d);
+            CancelOutcome outcome = cancelLocked(dispatches.findById(dispatchId), userId, force);
+            if (outcome.changed()) {
+                String phase = force && outcome.stopPending() ? "UNCONFIRMED"
+                        : (DispatchStatus.PAUSING.equals(outcome.targetStatus()) ? "REQUESTED" : "CONFIRMED");
+                recordControlRequest(outcome.dispatch(), "CANCEL", phase, "USER", userId,
+                        outcome.dispatch().getError(), outcome.stopPending(), force, null);
+            }
+        });
         sendStop(dispatches.findById(dispatchId));
         // A forced cancel may have been the last blocker of a waiting restart round.
         advanceWaitingRestarts(tenantId, workitemId);
@@ -178,12 +258,15 @@ public class DispatchRecoveryService {
         sendStop(dispatches.findById(dispatchId));
     }
 
-    private void cancelLocked(DispatchDO d, long userId, boolean force) {
+    private CancelOutcome cancelLocked(DispatchDO d, long userId, boolean force) {
+        String fromStatus = d.getStatus();
         if (DispatchStatus.isTerminal(d.getStatus())) {
             projectTerminal(d, d.getStatus(), d.getError());
-            return;
+            return new CancelOutcome(d, fromStatus, d.getStatus(), false, false, false, 0L);
         }
-        if (!force && cancelRequested(d.getTenantId(), d.getId())) return;
+        if (!force && cancelRequested(d.getTenantId(), d.getId())) {
+            return new CancelOutcome(d, fromStatus, d.getStatus(), true, false, false, controlEventId(d.getTenantId(), d.getId()));
+        }
         boolean pendingStop = d.getExecutorId() != null && !Set.of("PENDING", "PACKAGING", "WAITING_FOR_PAUSE", "PAUSED").contains(d.getStatus());
         String target = pendingStop && !force ? DispatchStatus.PAUSING : DispatchStatus.CANCELED;
         String reason = pendingStop ? (force ? "CANCELED_STOP_UNCONFIRMED: 平台已结束，执行器停止未确认" : "CANCEL_REQUESTED: 正在取消") : "USER_CANCELED";
@@ -196,6 +279,104 @@ public class DispatchRecoveryService {
         // No new guidance may be delivered after a cancel request.
         projectTerminal(d, DispatchStatus.CANCELED, reason);
         audit(d.getTenantId(), d.getId(), userId, force ? "FORCE_CANCEL_DISPATCH" : "CANCEL_DISPATCH", "DISPATCH");
+        d.setStatus(target);
+        d.setError(reason);
+        return new CancelOutcome(d, fromStatus, target, pendingStop, force, true, 0L);
+    }
+
+    private record CancelOutcome(DispatchDO dispatch, String fromStatus, String targetStatus,
+                                 boolean stopPending, boolean forced, boolean changed, long controlEventId) {
+    }
+
+    /** Writes a new control intent and makes it the intent later confirmations refer to. */
+    public long recordControlRequest(DispatchDO d, String action, String phase, String origin, Long requestedById,
+                                     String reason, boolean stopPending, boolean forced, String mode) {
+        if (controlEvents == null || d == null || d.executionSourceType() != ExecutionSourceType.WORKITEM) return 0L;
+        long previous = controlEventId(d.getTenantId(), d.getId());
+        WorkitemControlEventWriter.ExecutionControlEvent event = new WorkitemControlEventWriter.ExecutionControlEvent()
+                .setAction(action)
+                .setPhase(phase)
+                .setOrigin(origin)
+                .setDispatchId(d.getId())
+                .setAgentId(d.getAgentId())
+                .setRequestedById(requestedById == null ? 0L : requestedById)
+                .setSourceDispatchId(d.getId())
+                .setSupersedesRequestEventId(forced || previous <= 0 ? null : previous)
+                .setRequestEventId(forced && previous > 0 ? previous : null)
+                .setParentRequestEventId(forced && previous > 0 ? previous : null)
+                .setStopPending(stopPending)
+                .setForced(forced)
+                .setReason(reason)
+                .setMode(mode)
+                .setActorType(requestedById == null || requestedById == 0L ? "SYSTEM" : "HUMAN")
+                .setActorRef(requestedById == null ? 0L : requestedById);
+        long eventId = controlEvents.recordExecution(d.getTenantId(), d.getWorkitemId(), event);
+        bindControlEvent(d.getTenantId(), d.getId(), eventId);
+        return eventId;
+    }
+
+    /** Writes an async result and links it to the intent that was active in this transaction. */
+    public long recordControlOutcome(DispatchDO d, String action, String phase, String origin, Long requestedById,
+                                     String reason, boolean stopPending, boolean forced) {
+        if (controlEvents == null || d == null || d.executionSourceType() != ExecutionSourceType.WORKITEM) return 0L;
+        long pointer = controlEventId(d.getTenantId(), d.getId());
+        WorkitemControlEventWriter.ControlIntent intent = pointer > 0
+                ? controlEvents.findIntent(d.getTenantId(), pointer).orElse(null) : null;
+        WorkitemControlEventWriter.ExecutionControlEvent event = new WorkitemControlEventWriter.ExecutionControlEvent()
+                .setAction(action)
+                .setPhase(phase)
+                .setOrigin(origin)
+                .setDispatchId(d.getId())
+                .setAgentId(d.getAgentId())
+                .setAgentName(intent == null ? null : intent.agentName())
+                .setRequestedById(requestedById == null ? 0L : requestedById)
+                .setRequestedByName(intent == null ? null : intent.requestedByName())
+                .setSourceDispatchId(d.getId())
+                .setRequestEventId(pointer > 0 ? pointer : null)
+                .setStopPending(stopPending)
+                .setForced(forced)
+                .setReason(reason)
+                .setActorType("SYSTEM")
+                .setActorRef(0L);
+        return controlEvents.recordExecution(d.getTenantId(), d.getWorkitemId(), event);
+    }
+
+    public long recordResumeOutcome(DispatchDO source, DispatchDO created, long userId, String mode) {
+        if (controlEvents == null || source == null || created == null
+                || source.executionSourceType() != ExecutionSourceType.WORKITEM) return 0L;
+        if (!"RESUME".equals(mode) && !"RETRY".equals(mode)) mode = "RETRY";
+        WorkitemControlEventWriter.ExecutionControlEvent event = new WorkitemControlEventWriter.ExecutionControlEvent()
+                .setAction("RESUME")
+                .setPhase("CONFIRMED")
+                .setOrigin("USER")
+                .setDispatchId(source.getId())
+                .setAgentId(source.getAgentId())
+                .setRequestedById(userId)
+                .setSourceDispatchId(source.getId())
+                .setTargetDispatchId(created.getId())
+                .setMode(mode)
+                .setStopPending(false)
+                .setForced(false)
+                .setActorType("HUMAN")
+                .setActorRef(userId);
+        return controlEvents.recordExecution(source.getTenantId(), source.getWorkitemId(), event);
+    }
+
+    public long recordPauseOutcome(DispatchDO d, String phase, String reason) {
+        if (controlEvents == null || d == null || d.executionSourceType() != ExecutionSourceType.WORKITEM) return 0L;
+        long pointer = controlEventId(d.getTenantId(), d.getId());
+        WorkitemControlEventWriter.ExecutionControlEvent intent = pointer > 0
+                ? controlEvents.findExecution(d.getTenantId(), pointer).orElse(null) : null;
+        return recordControlOutcome(d, "PAUSE", phase,
+                intent == null ? "LEGACY" : intent.getOrigin(),
+                intent == null ? 0L : intent.getRequestedById(),
+                reason, false, false);
+    }
+
+    private void recordTimeoutStopIntent(DispatchDO d, String reason) {
+        // The recovery.forced flag is also the existing system-timeout stop marker; the event
+        // keeps origin=TIMEOUT so it is never presented as a user force-end.
+        recordControlRequest(d, "STOP", "REQUESTED", "TIMEOUT", 0L, reason, true, false, null);
     }
 
     /** Persistent intent is the outbox: a failed WebSocket send is retried by sweep. */
@@ -216,13 +397,32 @@ public class DispatchRecoveryService {
             lockSubject(d);
             if (!cancelRequested(tenantId, dispatchId)) return false;
             d = dispatches.findById(dispatchId);
+            String terminalStatus = d.getStatus();
+            boolean timeout = DispatchStatus.TIMEOUT.equals(terminalStatus);
             if ((!DispatchStatus.isTerminal(d.getStatus()) || (DispatchStatus.CANCELED.equals(d.getStatus()) && !"USER_CANCELED".equals(d.getError()))) && dispatches.updateStatus(dispatchId, tenantId, DispatchStatus.CANCELED,
                     null, null, null, null, "USER_CANCELED", d.getVersion(), 0L) != 1) return false;
-            jdbc.update("UPDATE dispatch_recovery SET stop_pending=0,reason='USER_CANCELED',gmt_modified=NOW() WHERE tenant_id=? AND dispatch_id=?", tenantId, dispatchId);
+            int cleared = jdbc.update("UPDATE dispatch_recovery SET stop_pending=0"
+                    + (timeout ? "" : ",reason='USER_CANCELED'")
+                    + ",gmt_modified=NOW() WHERE tenant_id=? AND dispatch_id=? AND stop_pending=1", tenantId, dispatchId);
             if (DispatchStatus.isTerminal(d.getStatus())) {
                 projectTerminal(d, d.getStatus(), d.getError());
             } else {
                 projectTerminal(d, DispatchStatus.CANCELED, "USER_CANCELED");
+            }
+            if (cleared == 1) {
+                long pointer = d.executionSourceType() == ExecutionSourceType.WORKITEM ? controlEventId(tenantId, dispatchId) : 0L;
+                WorkitemControlEventWriter.ControlIntent intent = pointer > 0 && controlEvents != null
+                        ? controlEvents.findIntent(tenantId, pointer).orElse(null) : null;
+                String action = intent == null || "PAUSE".equals(intent.action())
+                        || "CLOSE".equals(intent.action()) || "REOPEN".equals(intent.action())
+                        ? "STOP" : intent.action();
+                String origin = intent == null ? "LEGACY" : intent.origin();
+                Long requestedBy = intent == null ? 0L : intent.requestedById();
+                boolean forced = intent != null && intent.forced();
+                if (timeout) action = "STOP";
+                if (DispatchStatus.TIMEOUT.equals(terminalStatus) && intent == null) origin = "TIMEOUT";
+                recordControlOutcome(d, action, "CONFIRMED", origin, requestedBy,
+                        timeout ? d.getError() : "USER_CANCELED", false, forced);
             }
             stoppedWorkitem[0] = d.getWorkitemId() == null ? 0L : d.getWorkitemId();
             return true;
@@ -232,6 +432,67 @@ public class DispatchRecoveryService {
             advanceWaitingRestarts(tenantId, stoppedWorkitem[0]);
         }
         return stopped;
+    }
+
+    /**
+     * Whether a WAITING_FOR_PAUSE rework may be released for this predecessor.
+     *
+     * <p>A database terminal status is not stop evidence by itself: a late result can
+     * terminalize a PAUSING row (RESULT_STATE_CONFLICT), and a forced cancel/timeout can
+     * leave the executor quarantine armed. Only an explicit pause fence, or a terminal
+     * result that no current authoritative executor session still owns, releases the
+     * barrier. Missing, stale or incomplete inventory keeps the waiter blocked.
+     */
+    public boolean canReleasePauseWaiter(DispatchDO predecessor) {
+        if (predecessor == null || predecessor.getId() == null) return false;
+        String status = predecessor.getStatus();
+        if (DispatchStatus.PAUSED.equals(status)) return true;
+        if (DispatchStatus.CANCELED.equals(status) && predecessor.getError() != null
+                && predecessor.getError().startsWith(DispatchFailureReason.PAUSE_CONFIRMATION_MISSING + ":")) {
+            return true;
+        }
+        // A user/system cancel or timeout keeps its own terminal semantics; only a
+        // normal runtime result can close a pause barrier without a pause receipt.
+        if (!DispatchStatus.SUCCEEDED.equals(status) && !DispatchStatus.FAILED.equals(status)) return false;
+        try {
+            ControlState state = controlStates(predecessor.getTenantId(), List.of(predecessor.getId()))
+                    .getOrDefault(predecessor.getId(), ControlState.none());
+            if (state.cancelRequested() || state.stopPending()) return false;
+            if (predecessor.getExecutorId() == null) return true;
+            if (executorRegistry == null) return false;
+            return executorRegistry.currentDispatchSnapshot(predecessor.getExecutorId())
+                    .filter(snapshot -> snapshot.authoritativeInventory() && snapshot.inventoryReady()
+                            && snapshot.inventoryError() == null)
+                    .map(snapshot -> !snapshot.ownedDispatchIds().contains(predecessor.getId())
+                            && !snapshot.runningDispatchIds().contains(predecessor.getId()))
+                    .orElse(false);
+        } catch (RuntimeException unavailable) {
+            log.warn("pause waiter release facts unavailable dispatchId={}", predecessor.getId(), unavailable);
+            return false;
+        }
+    }
+
+    /** True when a newer delivery-restart round was allocated after the waiting rework was queued. */
+    public boolean restartAfter(long tenantId, long workitemId, java.util.Date since) {
+        if (restartStore == null || since == null) return false;
+        // A failed lookup aborts the release transaction instead of looking like a restart.
+        return restartStore.createdAfter(tenantId, workitemId, since);
+    }
+
+    /** Fences a PAUSE_FAILED dispatch whose executor inventory proved the task was released. */
+    public boolean fencePauseFailed(DispatchDO current, String reason) {
+        if (current == null) return false;
+        return tx.execute(s -> {
+            lockSubject(current);
+            DispatchDO d = dispatches.findById(current.getId());
+            if (d == null || !DispatchStatus.PAUSE_FAILED.equals(d.getStatus())) return false;
+            if (!DispatchStatus.isTerminal(d.getStatus())
+                    && dispatches.updateStatus(d.getId(), d.getTenantId(), DispatchStatus.CANCELED,
+                    null, null, null, null, reason, d.getVersion(), 0L) != 1) return false;
+            projectTerminal(d, DispatchStatus.CANCELED, reason);
+            recordControlOutcome(d, "STOP", "CONFIRMED", "SYSTEM_FENCE", null, reason, false, false);
+            return true;
+        });
     }
 
     /** Resumes restart rounds that were waiting for this workitem's old executions to stop. */
@@ -257,7 +518,15 @@ public class DispatchRecoveryService {
      */
     public void requestRestartStop(long tenantId, long workitemId, long dispatchId, long userId) {
         DispatchDO d = requireWorkitem(tenantId, workitemId, dispatchId);
-        tx.executeWithoutResult(s -> { lockSubject(d); cancelLocked(dispatches.findById(dispatchId), userId, false); });
+        tx.executeWithoutResult(s -> {
+            lockSubject(d);
+            CancelOutcome outcome = cancelLocked(dispatches.findById(dispatchId), userId, false);
+            if (outcome.changed()) {
+                recordControlRequest(outcome.dispatch(), "STOP",
+                        DispatchStatus.PAUSING.equals(outcome.targetStatus()) ? "REQUESTED" : "CONFIRMED",
+                        "RESTART", userId, outcome.dispatch().getError(), outcome.stopPending(), false, null);
+            }
+        });
         sendStop(dispatches.findById(dispatchId));
     }
 
@@ -266,8 +535,25 @@ public class DispatchRecoveryService {
         tx.executeWithoutResult(s -> {
             DispatchDO subject = new DispatchDO(); subject.setTenantId(tenantId); subject.setWorkitemId(workitemId);
             subject.setSourceType("WORKITEM"); lockSubject(subject);
-            jdbc.update("UPDATE workitem_execution_control SET closed=1,modifier_id=?,gmt_modified=NOW() WHERE tenant_id=? AND workitem_id=?", userId, tenantId, workitemId);
-            for (DispatchDO d : dispatches.listByWorkitem(tenantId, workitemId)) cancelLocked(d, userId, force);
+            int closedRows = jdbc.update("UPDATE workitem_execution_control SET closed=1,modifier_id=?,gmt_modified=NOW() "
+                    + "WHERE tenant_id=? AND workitem_id=? AND closed=0", userId, tenantId, workitemId);
+            WorkitemControlEventWriter.DeliveryControlEvent event = new WorkitemControlEventWriter.DeliveryControlEvent()
+                    .setAction("CLOSE").setRequestedById(userId).setActorType("HUMAN").setActorRef(userId);
+            for (DispatchDO d : dispatches.listByWorkitem(tenantId, workitemId)) {
+                CancelOutcome outcome = cancelLocked(d, userId, force);
+                if (outcome.changed()) {
+                    event.addAffected(new WorkitemControlEventWriter.AffectedDispatch(
+                            outcome.dispatch().getId(), outcome.fromStatus(), outcome.targetStatus(), outcome.stopPending()));
+                }
+            }
+            if (closedRows == 1 || !event.getAffectedDispatches().isEmpty()) {
+                long eventId = controlEvents == null ? 0L : controlEvents.recordDelivery(tenantId, workitemId, event);
+                if (eventId > 0) {
+                    for (WorkitemControlEventWriter.AffectedDispatch affected : event.getAffectedDispatches()) {
+                        bindControlEvent(tenantId, affected.dispatchId(), eventId);
+                    }
+                }
+            }
             audit(tenantId, workitemId, userId, "CLOSE_DELIVERY", "WORKITEM");
         });
         for (DispatchDO d : dispatches.listByWorkitem(tenantId, workitemId)) sendStop(d);
@@ -280,7 +566,12 @@ public class DispatchRecoveryService {
             DispatchDO subject = new DispatchDO(); subject.setTenantId(tenantId); subject.setWorkitemId(workitemId); subject.setSourceType("WORKITEM"); lockSubject(subject);
             if (dispatches.listByWorkitem(tenantId, workitemId).stream().anyMatch(d -> !DispatchStatus.isTerminal(d.getStatus())))
                 throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.cancel_pending", new Object[0], "请先结束未完成的取消操作");
-            jdbc.update("UPDATE workitem_execution_control SET closed=0,modifier_id=?,gmt_modified=NOW() WHERE tenant_id=? AND workitem_id=?", userId, tenantId, workitemId);
+            int rows = jdbc.update("UPDATE workitem_execution_control SET closed=0,modifier_id=?,gmt_modified=NOW() "
+                    + "WHERE tenant_id=? AND workitem_id=? AND closed=1", userId, tenantId, workitemId);
+            if (rows == 1 && controlEvents != null) {
+                controlEvents.recordDelivery(tenantId, workitemId, new WorkitemControlEventWriter.DeliveryControlEvent()
+                        .setAction("REOPEN").setRequestedById(userId).setActorType("HUMAN").setActorRef(userId));
+            }
         });
         audit(tenantId, workitemId, userId, "REOPEN_DELIVERY", "WORKITEM");
         return state(tenantId, workitemId);
@@ -308,10 +599,11 @@ public class DispatchRecoveryService {
     public Map<String, Object> state(long tenantId, long workitemId) {
         validateWorkitem(tenantId, workitemId);
         var executions = dispatches.listByWorkitem(tenantId, workitemId).stream().map(d -> {
-            var details = jdbc.queryForList("SELECT cancel_requested,stop_pending,forced,retry_count,next_retry_at,phase,reason,requested_at FROM dispatch_recovery WHERE tenant_id=? AND dispatch_id=?", tenantId, d.getId());
+            var details = jdbc.queryForList("SELECT cancel_requested,stop_pending,forced,retry_count,next_retry_at,phase,reason,requested_at,control_event_id FROM dispatch_recovery WHERE tenant_id=? AND dispatch_id=?", tenantId, d.getId());
             Map<String, Object> row = new java.util.LinkedHashMap<>();
             row.put("dispatchId", d.getId()); row.put("status", d.getStatus()); row.put("error", d.getError());
             row.put("agentId", d.getAgentId()); row.put("attempt", d.getAttempt()); row.put("updatedAt", d.getGmtModified());
+            row.put("resumeMode", d.getResumeMode());
             var detail = details.isEmpty() ? new java.util.LinkedHashMap<String,Object>() : details.get(0);
             detail.put("max_retries", packageRetries);
             row.put("recovery", detail);
@@ -319,11 +611,34 @@ public class DispatchRecoveryService {
             String reason = d.getError() != null ? d.getError() : (String) detail.get("reason");
             row.put("errorCode", reason == null ? null : reason.split(":", 2)[0]);
             row.put("retryable", Set.of("FAILED", "TIMEOUT", "CANCELED", "PAUSED").contains(d.getStatus()));
+            long controlEventId = detail.get("control_event_id") instanceof Number number ? number.longValue() : 0L;
+            if (controlEventId > 0 && controlEvents != null) {
+                controlEvents.findIntent(tenantId, controlEventId).ifPresent(intent -> {
+                    Map<String, Object> control = new java.util.LinkedHashMap<>();
+                    control.put("action", intent.action());
+                    control.put("phase", intent.phase());
+                    control.put("origin", intent.origin());
+                    control.put("requestedById", intent.requestedById());
+                    control.put("requestedByName", intent.requestedByName());
+                    control.put("stopPending", intent.stopPending());
+                    control.put("forced", intent.forced());
+                    row.put("control", control);
+                });
+            }
             return row;
         }).toList();
         var restarts = restartStore == null ? List.<Map<String, Object>>of()
                 : restartStore.listRounds(tenantId, workitemId, 10);
-        return Map.of("closed", closed(tenantId, workitemId), "executions", executions, "restarts", restarts);
+        boolean closed = closed(tenantId, workitemId);
+        boolean allTerminal = dispatches.listByWorkitem(tenantId, workitemId).stream()
+                .allMatch(d -> DispatchStatus.isTerminal(d.getStatus()));
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("closed", closed);
+        result.put("executions", executions);
+        result.put("restarts", restarts);
+        result.put("canReopen", closed && allTerminal);
+        result.put("reopenReasonKey", allTerminal ? null : "dispatch.recovery.cancel_pending");
+        return result;
     }
 
     public boolean ready(DispatchDO d) {

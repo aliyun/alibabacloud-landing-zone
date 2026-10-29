@@ -1,26 +1,26 @@
-import { formatDateTime } from '@/shared/i18n/format';
 import { i18n } from '@/shared/i18n';
 import { useTranslation } from 'react-i18next';
 import { getAgentRoleLabel } from '@/features/agent/constants';
 import { useMemo, useState } from 'react';
-import { Badge, Button, Card, Popconfirm, Space, Switch, Tag, Tooltip, Typography, message } from 'antd';
+import { Button, Card, Popconfirm, Space, Tag, Typography, message } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
 import { listAgents } from '@/features/agent/api';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { DingTalkBindingDrawer } from './DingTalkBindingDrawer';
 import {
   deleteDingTalkBinding,
   listDingTalkBindings,
-  updateDingTalkBinding,
   type DingTalkBinding,
   type TransportMode,
 } from './dingtalkApi';
+import { GroupBindingDetailDrawer, type GroupBindingDetailModel } from '../GroupBindingDetailDrawer';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
-const { Text } = Typography;
 const transportLabelKeys = new Map([['STREAM', 'stream'], ['HTTP_CALLBACK', 'http']] as const);
+const SHARED_MODE = 'SHARED';
 
 export function DingTalkBindingPanel() {
   const { t } = useTranslation(['integration', 'agent']);
@@ -29,7 +29,7 @@ export function DingTalkBindingPanel() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<'create' | 'edit'>('create');
   const [editing, setEditing] = useState<DingTalkBinding | null>(null);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<DingTalkBinding | null>(null);
 
   const { data: bindings = [], isLoading } = useQuery({
     queryKey: ['dingtalk-bindings'],
@@ -49,28 +49,10 @@ export function DingTalkBindingPanel() {
     return map;
   }, [agents, t]);
 
-  const toggleMutation = useMutation({
-    mutationFn: (binding: DingTalkBinding) =>
-      updateDingTalkBinding(binding.id, {
-        appKey: binding.appKey,
-        robotCode: binding.robotCode,
-        agentId: binding.agentId,
-        transportMode: binding.transportMode,
-        streamEnv: binding.streamEnv,
-        baseUrl: binding.baseUrl ?? undefined,
-        regionId: binding.regionId ?? undefined,
-        status: binding.status === 'ENABLED' ? 'DISABLED' : 'ENABLED',
-      }),
-    onSuccess: () => {
-      message.success(i18n.t('integration:statusUpdated'));
-      queryClient.invalidateQueries({ queryKey: ['dingtalk-bindings'] });
-    },
-    onError: (error: Error) => message.error(error.message || i18n.t('integration:updateFailed')),
-  });
-
   const deleteMutation = useMutation({
     mutationFn: (id: number) => deleteDingTalkBinding(id),
     onSuccess: () => {
+      setDetail(null);
       message.success(i18n.t('integration:bindingDeleted'));
       queryClient.invalidateQueries({ queryKey: ['dingtalk-bindings'] });
     },
@@ -87,115 +69,102 @@ export function DingTalkBindingPanel() {
 
   function openEdit(record: DingTalkBinding) {
     runAccessCommand('ADMIN', t('editDingCommand'), () => {
+      setDetail(null);
       setDrawerMode('edit');
       setEditing(record);
       setDrawerOpen(true);
     });
   }
 
+  /** Saving the binding is enough: close the form and show the refreshed list. */
+  function handleSaved() {
+    setDrawerOpen(false);
+    setEditing(null);
+    setDetail(null);
+  }
+
+  function diagnosticLabel(record: DingTalkBinding): string {
+    if (record.bindingMode === SHARED_MODE) {
+      return record.lastError ? t('failed') : t('sharedHealthManaged');
+    }
+    if (record.transportMode === 'STREAM') {
+      if (record.streamStatus === 'CONNECTED') return t('connected');
+      if (record.streamStatus === 'CONNECTING') return t('connecting');
+      if (record.streamStatus === 'FAILED') return record.streamError || record.lastError || t('connectionFailed');
+      return record.streamStatus && record.streamStatus !== 'NOT_CONNECTED'
+        ? record.streamStatus
+        : t('disconnected');
+    }
+    if (record.lastError) return t('failed');
+    if (record.lastSuccessAt) return t('healthy');
+    return t('noCallback');
+  }
+
+  function toDetailModel(record: DingTalkBinding): GroupBindingDetailModel {
+    const transportKey = transportLabelKeys.get(record.transportMode as TransportMode);
+    return {
+      bindingMode: record.bindingMode,
+      groupId: record.bindingMode === SHARED_MODE ? record.groupId : null,
+      agentLabel: agentNameById.get(record.agentId) || `#${record.agentId}`,
+      robotIdentity: record.appKey,
+      transportLabel: transportKey ? t(transportKey) : record.transportMode,
+      enabled: record.status === 'ENABLED',
+      diagnostics: [{ label: t('health'), value: diagnosticLabel(record) }],
+    };
+  }
+
   const columns: ColumnsType<DingTalkBinding> = [
-    { title: t('robot'), dataIndex: 'robotCode', width: 180, render: (v) => <Text code>{v}</Text> },
+    {
+      title: t('groupIdOrMode'),
+      key: 'group',
+      width: 260,
+      render: (_, record) => (
+        <Space direction="vertical" size={2} style={{ minWidth: 0, maxWidth: '100%' }}>
+          <EllipsisText tooltip={record.bindingMode === SHARED_MODE ? record.groupId ?? t('notAvailable') : record.appKey} style={{ maxWidth: 250 }}>
+            <Typography.Text code>{record.bindingMode === SHARED_MODE ? (record.groupId || t('notAvailable')) : record.appKey}</Typography.Text>
+          </EllipsisText>
+          <Tag color={record.bindingMode === SHARED_MODE ? 'blue' : 'default'} style={{ marginInlineEnd: 0 }}>
+            {record.bindingMode === SHARED_MODE ? t('sharedMode') : t('legacyMode')}
+          </Tag>
+        </Space>
+      ),
+    },
     {
       title: t('linkedAgent'),
       dataIndex: 'agentId',
-      render: (agentId: number) => agentNameById.get(agentId) || `#${agentId}`,
-    },
-    {
-      title: t('transport'),
-      dataIndex: 'transportMode',
-      width: 110,
-      render: (v: TransportMode) => {
-        const key = transportLabelKeys.get(v);
-        return <Tag>{key ? t(key) : v}</Tag>;
-      },
-    },
-    {
-      title: t('health'),
-      key: 'health',
-      width: 120,
-      render: (_, record) => {
-        if (record.transportMode === 'STREAM') {
-          if (record.streamStatus === 'CONNECTED') {
-            const title = record.streamStatusUpdatedAt
-              ? t('healthUpdated', { time: formatDateTime(record.streamStatusUpdatedAt, { dateStyle: 'medium', timeStyle: 'medium' }) })
-              : undefined;
-            return (
-              <Tooltip title={title}>
-                <Badge status="success" text={t('connected')} />
-              </Tooltip>
-            );
-          }
-          if (record.streamStatus === 'CONNECTING') {
-            return <Badge status="processing" text={t('connecting')} />;
-          }
-          if (record.streamStatus === 'FAILED') {
-            const title = record.streamError || record.lastError || undefined;
-            return (
-              <Tooltip title={title}>
-                <Badge status="error" text={t('connectionFailed')} />
-              </Tooltip>
-            );
-          }
-          const label = record.streamStatus && record.streamStatus !== 'NOT_CONNECTED' ? record.streamStatus : t('disconnected');
-          return <Badge status="default" text={label} />;
-        }
-        if (record.lastError) {
-          return (
-            <Tooltip title={record.lastError}>
-              <Badge status="error" text={t('failed')} />
-            </Tooltip>
-          );
-        }
-        if (record.lastSuccessAt) {
-          return (
-            <Tooltip title={t('lastSuccess', { time: formatDateTime(record.lastSuccessAt, { dateStyle: 'medium', timeStyle: 'medium' }) })}>
-              <Badge status="success" text={t('healthy')} />
-            </Tooltip>
-          );
-        }
-        return <Badge status="default" text={t('noCallback')} />;
+      width: 220,
+      render: (agentId: number) => {
+        const label = agentNameById.get(agentId) || `#${agentId}`;
+        return <EllipsisText tooltip={label}>{label}</EllipsisText>;
       },
     },
     {
       title: t('status'),
       dataIndex: 'status',
-      width: 110,
-      render: (_, record) => (
-        <Switch aria-label={t('toggleDing')}
-          checked={record.status === 'ENABLED'}
-          loading={toggleMutation.isPending}
-          checkedChildren={t('enabled')}
-          unCheckedChildren={t('disabled')}
-          onChange={() =>
-            runAccessCommand('ADMIN', t('toggleDing'), () => toggleMutation.mutate(record))
-          }
-        />
-      ),
+      width: 100,
+      render: (status: DingTalkBinding['status']) => {
+        const label = status === 'ENABLED' ? t('statusEnabled')
+          : status === 'DISABLED' ? t('statusDisabled') : status;
+        const color = status === 'ENABLED' ? 'green' : status === 'DISABLED' ? 'default' : 'red';
+        return <Tag color={color}>{label}</Tag>;
+      },
     },
     {
       title: t('actions'),
       key: 'actions',
-      width: 140,
+      width: 180,
+      fixed: 'right',
       render: (_, record) => (
-        <Space>
+        <Space size={4}>
+          <Button type="link" size="small" onClick={() => setDetail(record)}>{t('detail')}</Button>
           <Button type="link" size="small" onClick={() => openEdit(record)}>{t('edit')}</Button>
           <Popconfirm
-            title={t('confirmDingDelete')}
-            okText={t('delete')}
+            title={t('confirmDeleteBinding')}
+            description={t('deleteHelp')}
+            okText={t('deleteBinding')}
             cancelText={t('cancel')}
             okButtonProps={{ danger: true }}
-            open={deleteConfirmId === record.id}
-            onOpenChange={(open) => {
-              if (!open) {
-                setDeleteConfirmId(null);
-                return;
-              }
-              runAccessCommand('ADMIN', t('deleteDing'), () => setDeleteConfirmId(record.id));
-            }}
-            onConfirm={() => {
-              setDeleteConfirmId(null);
-              runAccessCommand('ADMIN', t('deleteDing'), () => deleteMutation.mutate(record.id));
-            }}
+            onConfirm={() => runAccessCommand('ADMIN', t('deleteBinding'), () => deleteMutation.mutate(record.id))}
           >
             <Button type="link" size="small" danger>{t('delete')}</Button>
           </Popconfirm>
@@ -206,7 +175,7 @@ export function DingTalkBindingPanel() {
 
   return (
     <Card title={t('dingTitle')} extra={
-      <Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={openCreate}>{t('newBinding')}</Button>
+      <Button type="primary" icon={<PlusOutlined aria-hidden="true" />} aria-label={t('newBinding')} onClick={openCreate}>{t('newBinding')}</Button>
     }>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>{t('dingDescription')}</Typography.Paragraph>
       <Table
@@ -223,7 +192,20 @@ export function DingTalkBindingPanel() {
         mode={drawerMode}
         record={editing}
         onClose={() => setDrawerOpen(false)}
-        onSaved={() => undefined}
+        onSaved={handleSaved}
+        onExistingBinding={(binding) => {
+          setDrawerOpen(false);
+          setEditing(null);
+          setDetail(binding);
+        }}
+      />
+      <GroupBindingDetailDrawer
+        open={detail !== null}
+        model={detail ? toDetailModel(detail) : null}
+        onClose={() => setDetail(null)}
+        onEdit={() => { if (detail) openEdit(detail); }}
+        onDelete={() => { if (detail) deleteMutation.mutate(detail.id); }}
+        deleteLoading={deleteMutation.isPending}
       />
     </Card>
   );

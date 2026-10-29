@@ -22,6 +22,27 @@
           AND external_workitem_id = #{externalWorkitemId}
         LIMIT 1
     </select>
+    <select id="findFirstByExternal" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        SELECT l.* FROM external_workitem_link l
+        JOIN workitem w ON w.id = l.workitem_id AND w.tenant_id = l.tenant_id AND w.is_deleted = 0
+        WHERE l.tenant_id = #{tenantId} AND l.provider = #{provider}
+          AND l.external_workitem_id = #{externalWorkitemId}
+        ORDER BY l.id ASC
+        LIMIT 1
+    </select>
+    <select id="findFirstByExternalForUpdate" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        SELECT * FROM external_workitem_link
+        WHERE tenant_id = #{tenantId} AND provider = #{provider}
+          AND external_workitem_id = #{externalWorkitemId}
+        ORDER BY id ASC
+        LIMIT 1
+        FOR UPDATE
+    </select>
+    <update id="takeoverBinding">
+        UPDATE external_workitem_link
+        SET binding_id = #{bindingId}, external_project_id = #{externalProjectId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND binding_id = 0
+    </update>
     <select id="findByWorkitem" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
         SELECT * FROM external_workitem_link
         WHERE tenant_id = #{tenantId} AND provider = #{provider} AND workitem_id = #{workitemId}

@@ -3,8 +3,8 @@
 Workspace administrators can manage encrypted environment variables and bind them
 to digital-worker versions. Values are resolved for each task and conversation
 turn; changing a value takes effect on the next execution. Removing a binding
-requires publishing the updated worker version. Lists expose only `**`; reveal
-responses are single-value and `Cache-Control: no-store`.
+requires publishing the updated worker version. Lists expose only `**`. Version 1.1.0 removes the plaintext reveal endpoint and
+UI; task/conversation injection still resolves encrypted values at execution time.
 
 Community uses `SecretCrypto` with AES-256-GCM and `enc:v1:` references. Preserve
 `AUTOWONDER_SECRET_MASTER_KEY` across upgrades: it must be standard Base64 for
@@ -17,7 +17,7 @@ This release does not implement online key rotation.
 
 Upgrade executors to the runtime version resolved from the release's
 `application.yml` before enabling environment-bound workers on the new Platform.
-The recommended runtime is 0.2.163. The runtime must advertise
+The recommended runtime is resolved from this release, currently 0.3.30. The runtime must advertise
 `AGENT_ENVIRONMENT_VARIABLES_V1`. An incompatible runtime must reject a bound
 task or conversation; unbound work remains compatible.
 

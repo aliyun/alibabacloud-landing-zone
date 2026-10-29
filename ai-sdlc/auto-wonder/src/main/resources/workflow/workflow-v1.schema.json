@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "autowonder://squad-workflow/v1",
+  "title": "Squad workflow analysis result",
+  "description": "Version 1.0 contract for autowonder.submit_squad_workflow. All identifiers are JSON strings; unknown fields are rejected.",
+  "x-analysisVersion": "squad-workflow-v1",
+  "x-errorExpected": {
+    "INVALID_JSON": "a single JSON object produced from the provided input",
+    "RESULT_TOO_LARGE": "a result no larger than 1 MiB of UTF-8 JSON",
+    "SCHEMA_VERSION_UNSUPPORTED": "schemaVersion \"1.0\"",
+    "INPUT_HASH_MISMATCH": "the inputHash supplied in the analysis input",
+    "UNKNOWN_FIELD": "a field defined by schemaVersion 1.0",
+    "REQUIRED_FIELD_MISSING": "the field declared required by schemaVersion 1.0",
+    "TYPE_MISMATCH": "a JSON value of the declared type",
+    "EMPTY_VALUE": "a non-empty value",
+    "VALUE_TOO_LONG": "a value within the declared length limit",
+    "ENUM_INVALID": "one of the declared enum values",
+    "LIMIT_EXCEEDED": "an array within the declared size limit",
+    "ID_DUPLICATE": "a unique identifier within its array",
+    "REFERENCE_NOT_FOUND": "an id defined in the same result",
+    "EVIDENCE_SOURCE_NOT_FOUND": "a sourceId from the analysis input",
+    "EVIDENCE_FIELD_NOT_FOUND": "a fieldPath present on the referenced source",
+    "EVIDENCE_QUOTE_NOT_FOUND": "a non-empty continuous substring of the referenced field content",
+    "MEMBER_NOT_COVERED": "exactly one MEMBER node for every input member",
+    "MEMBER_DUPLICATED": "at most one MEMBER node per input member",
+    "MEMBER_AGENT_REQUIRED": "a known input agentId on every MEMBER node",
+    "NON_MEMBER_AGENT_FORBIDDEN": "agentId null on non-MEMBER nodes",
+    "STEP_SUMMARY_UNKNOWN_STEP": "a stepId belonging to the member sdlcBinding",
+    "STEP_SUMMARY_DUPLICATED": "at most one summary per stepId",
+    "STEP_SUMMARY_FORBIDDEN": "an empty stepSummaries array on non-MEMBER nodes",
+    "MAIN_PATH_REWORK_FORBIDDEN": "isMainPath false on REWORK and ESCALATION edges",
+    "MAIN_PATH_MISSING": "at least one edge with isMainPath true when edges exist",
+    "FINDING_UNKNOWN_REF": "nodeIds and edgeIds defined in the same result",
+    "MISSING_CONFIGURATION_UNSUPPORTED": "a member whose input entry lists missingConfiguration",
+    "MISSING_CONFIGURATION_UNDISCLOSED": "a MISSING_CONFIGURATION finding for every member with missingConfiguration",
+    "ISOLATED_MEMBER": "an edge endpoint or a finding reference for every MEMBER node",
+    "REVIEW_CHECK_INVALID": "the exact seven review checks, each PASSED",
+    "REVIEW_STATUS_INVALID": "review.status \"PASSED\"",
+    "REVIEW_SUMMARY_INVALID": "a short non-empty review summary"
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "inputHash", "workflow", "review"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "inputHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "edges", "findings"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "label", "agentId", "responsibility", "stepSummaries", "evidenceRefs"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "kind": { "enum": ["MEMBER", "HUMAN", "EXTERNAL", "UNRESOLVED"] },
+              "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "agentId": { "type": ["string", "null"], "maxLength": 128 },
+              "responsibility": { "type": "string", "minLength": 1, "maxLength": 2000 },
+              "stepSummaries": {
+                "type": "array",
+                "maxItems": 200,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["stepId", "label", "description", "evidenceRefs"],
+                  "properties": {
+                    "stepId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                    "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+                    "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                    "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" }
+                  }
+                }
+              },
+              "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "source", "target", "kind", "condition", "isMainPath", "evidenceRefs"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "source": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "target": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "kind": { "enum": ["HANDOFF", "REWORK", "ESCALATION"] },
+              "condition": { "type": "string", "minLength": 1, "maxLength": 2000 },
+              "isMainPath": { "type": "boolean" },
+              "evidenceRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidenceRef" } }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "summary", "nodeIds", "edgeIds", "evidenceRefs"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "kind": { "enum": ["MISSING_CONFIGURATION", "AMBIGUOUS_TARGET", "CONFLICT", "INFORMATION"] },
+              "summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
+              "nodeIds": { "type": "array", "maxItems": 200, "items": { "type": "string" } },
+              "edgeIds": { "type": "array", "maxItems": 200, "items": { "type": "string" } },
+              "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" }
+            }
+          }
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "checks", "summary"],
+      "properties": {
+        "status": { "const": "PASSED" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["memberCoverage", "evidenceAccuracy", "routeCompleteness", "targetResolution", "mainPathConsistency", "uncertaintyDisclosure", "schemaIntegrity"],
+          "properties": {
+            "memberCoverage": { "const": "PASSED" },
+            "evidenceAccuracy": { "const": "PASSED" },
+            "routeCompleteness": { "const": "PASSED" },
+            "targetResolution": { "const": "PASSED" },
+            "mainPathConsistency": { "const": "PASSED" },
+            "uncertaintyDisclosure": { "const": "PASSED" },
+            "schemaIntegrity": { "const": "PASSED" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidenceRefs": {
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/evidenceRef" }
+    },
+    "evidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "fieldPath", "quote"],
+      "properties": {
+        "sourceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "fieldPath": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "quote": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    }
+  }
+}

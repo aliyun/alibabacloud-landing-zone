@@ -21,6 +21,7 @@ public class DingTalkSourceContext {
     private String sessionWebhook;
     private Long sessionWebhookExpiredTime;
     private Long createAt;
+    private String routeSnapshot;
 
     public DingTalkSourceContext() {}
 
@@ -68,6 +69,7 @@ public class DingTalkSourceContext {
         json.put("sessionWebhook", sessionWebhook);
         json.put("sessionWebhookExpiredTime", sessionWebhookExpiredTime);
         json.put("createAt", createAt);
+        json.put("routeSnapshot", routeSnapshot);
         return json.toJSONString();
     }
 
@@ -91,6 +93,7 @@ public class DingTalkSourceContext {
         context.setSessionWebhook(object.getString("sessionWebhook"));
         context.setSessionWebhookExpiredTime(object.getLong("sessionWebhookExpiredTime"));
         context.setCreateAt(object.getLong("createAt"));
+        context.setRouteSnapshot(object.getString("routeSnapshot"));
         return context;
     }
 
@@ -218,5 +221,13 @@ public class DingTalkSourceContext {
 
     public void setCreateAt(Long createAt) {
         this.createAt = createAt;
+    }
+
+    public String getRouteSnapshot() {
+        return routeSnapshot;
+    }
+
+    public void setRouteSnapshot(String routeSnapshot) {
+        this.routeSnapshot = routeSnapshot;
     }
 }

@@ -78,6 +78,138 @@ class WorkitemDaoMappingTest {
     }
 
     @Test
+    void creatorIdsFilterAppliesToBothListAndCountOnlyWhenProvided() throws Exception {
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        var params = new java.util.HashMap<String, Object>();
+        params.put("tenantId", 7L);
+        params.put("currentUserId", 42L);
+        params.put("pendingDecisionOnly", false);
+
+        for (String statement : java.util.List.of("list", "count")) {
+            var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+
+            params.put("creatorIds", java.util.List.of(12L, 34L));
+            String sql = mapped.getBoundSql(params).getSql().replaceAll("\\s+", " ");
+            assertTrue(sql.contains("w.creator_id IN ( ? , ? )"),
+                    "creatorIds must bind as a placeholder IN list on the local creator column");
+
+            params.put("creatorIds", java.util.List.of());
+            assertFalse(mapped.getBoundSql(params).getSql().contains("w.creator_id IN"),
+                    "an empty creator selection must not add a filter");
+
+            params.remove("creatorIds");
+            assertFalse(mapped.getBoundSql(params).getSql().contains("w.creator_id IN"),
+                    "an absent creator filter must not change existing queries");
+        }
+    }
+
+    @Test
+    void tagConditionsRenderLogicalJsonFiltersOnBothListAndCount() throws Exception {
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        var params = new java.util.HashMap<String, Object>();
+        params.put("tenantId", 7L);
+        params.put("currentUserId", 42L);
+        params.put("pendingDecisionOnly", false);
+
+        for (String statement : java.util.List.of("list", "count")) {
+            var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+
+            params.put("tagConditions", java.util.List.of(
+                    new WorkitemTagCondition("AND", java.util.List.of("前端", "P1")),
+                    new WorkitemTagCondition("OR", java.util.List.of("废弃")),
+                    new WorkitemTagCondition("IN", java.util.List.of("紧急")),
+                    new WorkitemTagCondition("NOT", java.util.List.of("历史"))));
+            // foreach 生成的占位符之间没有空格，这里用宽松的空白匹配，避免断言依赖 MyBatis 的换行展开
+            String sql = mapped.getBoundSql(params).getSql();
+            assertTrue(java.util.regex.Pattern.compile(
+                            "JSON_CONTAINS\\(w\\.tags,\\s*JSON_ARRAY\\(\\s*\\?\\s*,\\s*\\?\\s*\\)\\)", java.util.regex.Pattern.DOTALL)
+                            .matcher(sql).find(),
+                    "AND must require every tag to be present");
+            assertTrue(java.util.regex.Pattern.compile(
+                            "JSON_OVERLAPS\\(w\\.tags,\\s*JSON_ARRAY\\(\\s*\\?\\s*\\)\\)", java.util.regex.Pattern.DOTALL)
+                            .matcher(sql).find(),
+                    "OR/IN must match any tag");
+            assertTrue(java.util.regex.Pattern.compile(
+                            "\\(w\\.tags IS NULL OR NOT JSON_OVERLAPS\\(w\\.tags,\\s*JSON_ARRAY\\(\\s*\\?\\s*\\)\\)\\)",
+                            java.util.regex.Pattern.DOTALL)
+                            .matcher(sql).find(),
+                    "NOT must exclude matches and also accept untagged rows");
+
+            params.put("tagConditions", java.util.List.of());
+            String withoutConditions = mapped.getBoundSql(params).getSql();
+            assertFalse(withoutConditions.contains("JSON_CONTAINS"));
+            assertFalse(withoutConditions.contains("JSON_OVERLAPS"));
+
+            params.remove("tagConditions");
+            String absentConditions = mapped.getBoundSql(params).getSql();
+            assertFalse(absentConditions.contains("JSON_CONTAINS"));
+            assertFalse(absentConditions.contains("JSON_OVERLAPS"));
+        }
+    }
+
+    @Test
+    void creatorIdsFilterCombinesWithOtherFiltersAndKeepsCountInSync() throws Exception {
+        var ds = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:creator-filter;MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", "");
+        try (var connection = ds.getConnection(); var statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE workitem (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                    + "work_type VARCHAR(20), creator_id BIGINT, is_deleted INT DEFAULT 0, gmt_create TIMESTAMP)");
+            statement.execute("""
+                    INSERT INTO workitem (id,tenant_id,work_type,creator_id,is_deleted,gmt_create) VALUES
+                    (1,7,'REQ',12,0,'2026-01-01 00:00:01'),(2,7,'BUG',12,0,'2026-01-01 00:00:02'),
+                    (3,7,'REQ',34,0,'2026-01-01 00:00:03'),(4,7,'REQ',99,0,'2026-01-01 00:00:04'),
+                    (5,8,'REQ',12,0,'2026-01-01 00:00:05'),(6,7,'REQ',12,1,'2026-01-01 00:00:06'),
+                    (7,7,'REQ',NULL,0,'2026-01-01 00:00:07')
+                    """);
+        }
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                new org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory(), ds));
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        try (var session = new org.apache.ibatis.session.SqlSessionFactoryBuilder()
+                .build(configuration).openSession()) {
+            var params = new java.util.HashMap<String, Object>();
+            params.put("tenantId", 7L);
+            params.put("currentUserId", 42L);
+            params.put("pendingDecisionOnly", false);
+            params.put("offset", 0);
+            params.put("limit", 100);
+            params.put("creatorIds", java.util.List.of(12L, 34L));
+
+            java.util.List<WorkitemDO> rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+            org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(3L, 2L, 1L),
+                    rows.stream().map(WorkitemDO::getId).toList(),
+                    "creators combine with OR while tenant, deletion and null-creator rows stay excluded");
+            org.junit.jupiter.api.Assertions.assertEquals(3L,
+                    (long) session.selectOne(WorkitemDao.class.getName() + ".count", params),
+                    "count must match the creator-filtered list");
+
+            params.put("workType", "REQ");
+            rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+            org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(3L, 1L),
+                    rows.stream().map(WorkitemDO::getId).toList(),
+                    "creator filter must AND with workType");
+            org.junit.jupiter.api.Assertions.assertEquals(2L,
+                    (long) session.selectOne(WorkitemDao.class.getName() + ".count", params),
+                    "count must stay in sync when creator and workType combine");
+        }
+    }
+
+    @Test
     void listOrdersWorkitemsByCreateTimeDescThenIdDesc() throws Exception {
         String xml = new String(
                 getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
@@ -406,6 +538,43 @@ class WorkitemDaoMappingTest {
         int tagIdx = xml.indexOf("JSON_CONTAINS(w.tags");
         assertTrue(tagIdx > xml.indexOf("<sql id=\"listFilter\">") && tagIdx < filterEnd,
                 "tag filter must live inside listFilter so list and count share it");
+    }
+
+    @Test
+    void listTagOptionsUnfoldsTagsJsonScopedByTenantAndLimit() throws Exception {
+        String xml = new String(
+                getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
+                StandardCharsets.UTF_8);
+
+        int start = xml.indexOf("<select id=\"listTagOptions\"");
+        assertTrue(start > 0, "listTagOptions select must exist");
+        String block = xml.substring(start, xml.indexOf("</select>", start));
+        assertTrue(block.contains("JSON_TABLE(w.tags, '$[*]'"),
+                "tag options must unfold the tags JSON array");
+        assertTrue(block.contains("w.tenant_id = #{tenantId}"),
+                "tag options must stay inside one workspace");
+        assertTrue(block.contains("w.is_deleted = 0"),
+                "deleted workitems must not contribute tag options");
+        assertTrue(block.contains("GROUP BY jt.tag"),
+                "duplicate tags across workitems must collapse");
+        assertTrue(block.contains("ORDER BY COUNT(*) DESC, jt.tag ASC"),
+                "frequent tags first, ties broken deterministically");
+        assertTrue(block.contains("LIMIT #{limit}"),
+                "tag option count must be bounded");
+
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + ".listTagOptions");
+        var params = new java.util.HashMap<String, Object>();
+        params.put("tenantId", 7L);
+        params.put("limit", 200);
+        String sql = mapped.getBoundSql(params).getSql().replaceAll("\\s+", " ");
+        assertTrue(sql.contains("WHERE w.tenant_id = ?"));
+        assertTrue(sql.endsWith("LIMIT ?"));
     }
 
     @Test

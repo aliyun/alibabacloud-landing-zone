@@ -126,7 +126,100 @@ const ordinaryEventKeys = {
   EXTERNAL_BUSINESS_OWNER_CHANGE: eventKeys.EXTERNAL_BUSINESS_OWNER_CHANGE,
   EXTERNAL_LIFECYCLE_CHANGE: eventKeys.EXTERNAL_LIFECYCLE_CHANGE,
 } as const;
+function executionControlContent(item: TimelineItem, contextDispatchId?: number): string | null {
+  const control = item.executionControl;
+  if (!control) return null;
+  const dispatch = control.dispatchId;
+  const action = control.action;
+  const phase = control.phase;
+  let key = 'executionControl.unknown';
+  if (action === 'START') {
+    key = 'executionControl.startConfirmed';
+  } else if (action === 'PAUSE') {
+    key = phase === 'REQUESTED' ? 'executionControl.pauseRequested'
+      : phase === 'CONFIRMED' ? 'executionControl.pauseConfirmed'
+        : 'executionControl.pauseFailed';
+  } else if (action === 'CANCEL') {
+    key = phase === 'REQUESTED' ? 'executionControl.cancelRequested'
+      : phase === 'UNCONFIRMED' ? 'executionControl.cancelUnconfirmed'
+        : 'executionControl.cancelConfirmed';
+  } else if (action === 'STOP') {
+    if (phase === 'REQUESTED') {
+      key = control.origin === 'TIMEOUT' ? 'executionControl.timeoutStopRequested'
+        : control.origin === 'RESTART' ? 'executionControl.restartStopRequested'
+          : 'executionControl.stopRequested';
+    } else {
+      key = control.origin === 'TIMEOUT' ? 'executionControl.timeoutStopConfirmed'
+        : 'executionControl.stopConfirmed';
+    }
+  } else if (action === 'RESUME') {
+    key = 'executionControl.resumeConfirmed';
+  }
+  if (contextDispatchId !== undefined) {
+    key = key.replace('executionControl.', 'executionControl.short.');
+    if (action === 'RESUME') key = contextDispatchId === control.sourceDispatchId
+      ? 'executionControl.short.resumeTo' : 'executionControl.short.resumeFrom';
+  }
+  let text = String(i18n.t(`workitem:${key}` as never, {
+    dispatch,
+    source: control.sourceDispatchId ?? dispatch,
+    target: control.targetDispatchId ?? dispatch,
+  } as never));
+  if (contextDispatchId !== undefined) return text;
+  if (control.agentName || control.agentId) {
+    text += ` · ${String(i18n.t('workitem:executionControl.agent', {
+      name: control.agentName || '—',
+      id: control.agentId ?? '-',
+    }))}`;
+  }
+  const operator = control.requestedByName || item.operatorDisplayName;
+  if (operator) text += ` · ${String(i18n.t('workitem:executionControl.operator', { name: operator }))}`;
+  if (control.reason) text += ` · ${String(i18n.t('workitem:executionControl.reason', { reason: control.reason }))}`;
+  return text;
+}
+
+function deliveryControlContent(item: TimelineItem): string | null {
+  const control = item.deliveryControl;
+  if (!control) return null;
+  const key = control.action === 'REOPEN' ? 'executionControl.deliveryReopened' : 'executionControl.deliveryClosed';
+  let text = String(i18n.t(`workitem:${key}` as never, { count: control.affectedDispatches?.length ?? 0 } as never));
+  const affected = (control.affectedDispatches ?? []).map((dispatch) => {
+    const status = dispatch.toStatus || dispatch.fromStatus;
+    const suffix = dispatch.stopPending
+      ? ` · ${String(i18n.t('workitem:executionControl.stopUnconfirmedShort'))}` : '';
+    return String(i18n.t('workitem:executionControl.affectedItem', {
+      id: dispatch.dispatchId,
+      status: status ? runtimeStatusLabel(status) : '—',
+    })) + suffix;
+  });
+  if (affected.length) {
+    text += ` · ${String(i18n.t('workitem:executionControl.affected', {
+      list: affected.join(i18n.language === 'en-US' ? ', ' : '、'),
+    }))}`;
+  }
+  const operator = control.requestedByName || item.operatorDisplayName;
+  if (operator) text += ` · ${String(i18n.t('workitem:executionControl.operator', { name: operator }))}`;
+  return text;
+}
+
+export function executionControlSummary(item: TimelineItem, dispatchId: number): string {
+  const execution = executionControlContent(item, dispatchId);
+  if (execution) return execution;
+  const control = item.deliveryControl;
+  if (!control) return item.content;
+  const key = control.action === 'REOPEN' ? 'reopened' : 'closed';
+  let text = String(i18n.t(`workitem:executionControl.short.${key}`));
+  if (control.affectedDispatches.find(affected => affected.dispatchId === dispatchId)?.stopPending) {
+    text += ` · ${String(i18n.t('workitem:executionControl.stopUnconfirmedShort'))}`;
+  }
+  return text;
+}
+
 export function timelineSystemContent(item: TimelineItem): string {
+  const execution = executionControlContent(item);
+  if (execution) return execution;
+  const delivery = deliveryControlContent(item);
+  if (delivery) return delivery;
   const code = item.eventType ?? '';
   if (!Object.prototype.hasOwnProperty.call(eventKeys, code)) return item.content;
   const key = eventKeys[code as keyof typeof eventKeys];

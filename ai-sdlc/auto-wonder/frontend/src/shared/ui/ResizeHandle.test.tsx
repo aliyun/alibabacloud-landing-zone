@@ -142,4 +142,17 @@ describe('ResizeHandle', () => {
     firePointer('pointermove', handle, { clientX: 0, clientY: 100 });
     expect(onChange).toHaveBeenLastCalledWith(240);
   });
+
+  it('supports keyboard resizing with accessible value metadata', () => {
+    const onChange = vi.fn();
+    render(<ResizeHandle direction="horizontal" value={400} min={320} max={720} onChange={onChange} />);
+    const handle = screen.getByRole('separator');
+
+    expect(handle).toHaveAttribute('tabindex', '0');
+    expect(handle).toHaveAttribute('aria-valuenow', '400');
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(onChange).toHaveBeenLastCalledWith(410);
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(onChange).toHaveBeenLastCalledWith(390);
+  });
 });

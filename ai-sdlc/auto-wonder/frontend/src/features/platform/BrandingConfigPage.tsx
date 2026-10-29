@@ -3,7 +3,7 @@ import { i18n } from '@/shared/i18n';
 import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Form, Input, Radio, Space, Switch, Tabs, Tag, Typography, Upload, message } from 'antd';
+import { Alert, Button, Card, Form, Input, Modal, Radio, Space, Switch, Tabs, Tag, Typography, Upload, message } from 'antd';
 import { SaveOutlined, UploadOutlined, EyeOutlined, EyeInvisibleOutlined, InfoCircleFilled, CloseCircleFilled } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UploadRequestOption } from 'rc-upload/lib/interface';
@@ -11,10 +11,13 @@ import {
   BRANDING_ADMIN_QUERY_KEY,
   BRANDING_QUERY_KEY,
   DEFAULT_BRANDING,
+  IM_SELECTION_QUERY_KEY,
   PLATFORM_IM_CHANNELS_QUERY_KEY,
   THEME_PRESETS,
+  getImSelection,
   getPlatformImChannels,
   getAdminBranding,
+  selectImProvider,
   updateDingTalkImChannel,
   updateFeishuImChannel,
   selectedImProvider,
@@ -25,6 +28,9 @@ import {
   type UpdateDingTalkImChannelParams,
   type UpdatePlatformBrandingParams,
 } from './brandingApi';
+import { GroupChatConfigPanel } from './GroupChatConfigPanel';
+import { ImIdentityConflictAlert } from '@/shared/ui/ImIdentityConflictAlert';
+import './messageChannel.css';
 import { PlatformAdminPanel } from './PlatformAdminPanel';
 import { SsoConfigPanel } from './SsoConfigPanel';
 import { UserManagementPanel } from './UserManagementPanel';
@@ -88,9 +94,17 @@ export function BrandingConfigPage() {
     queryFn: getPlatformImChannels,
     retry: false,
   });
+  const { data: imSelection } = useQuery({
+    queryKey: IM_SELECTION_QUERY_KEY,
+    queryFn: getImSelection,
+    retry: false,
+  });
 
-  const [provider, setProvider] = useState('DINGTALK');
   const [activeTab, setActiveTab] = useState(readPlatformConfigTab);
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [notificationDirty, setNotificationDirty] = useState(false);
+  const [groupChatDirty, setGroupChatDirty] = useState(false);
+  const [imConflictError, setImConflictError] = useState<unknown>(null);
   const isPlatformAdmin = data?.canManage === true;
   // 管理员专属页签（企业 SSO、用户管理）不会对非管理员渲染；历史存储值落回品牌配置，避免空白页。
   const resolvedActiveTab = !isPlatformAdmin && ADMIN_ONLY_TAB_KEYS.has(activeTab)
@@ -98,8 +112,8 @@ export function BrandingConfigPage() {
     : activeTab;
   useLocalizedValidation(form, !error && resolvedActiveTab === BRANDING_TAB_KEY);
   useLocalizedValidation(imForm, !error && !imChannelsError);
+  const provider = imSelection?.provider ?? (imChannels ? selectedImProvider(imChannels) : 'DINGTALK');
   const providerLabel = provider === 'FEISHU' ? t('feishu') : provider === 'DINGTALK' ? t('dingtalk') : provider;
-  useEffect(() => { if (imChannels) setProvider(selectedImProvider(imChannels)); }, [imChannels]);
   const current = data || DEFAULT_BRANDING;
   const imChannel = imChannels?.find((item) => item.provider === provider) || EMPTY_IM_CHANNEL;
   const selectedTheme = Form.useWatch('themeKey', form) || current.themeKey;
@@ -129,6 +143,8 @@ export function BrandingConfigPage() {
         robotCode: channel.robotCode || '',
         appSecret: '',
       });
+      // Server data replaces the draft, so the section is no longer dirty for switch warnings.
+      setNotificationDirty(false);
     }
   }, [imForm, imChannels, provider]);
 
@@ -157,8 +173,31 @@ export function BrandingConfigPage() {
         queryClient.invalidateQueries({ queryKey: ['settings', 'NOTIFY'] }),
       ]);
       imForm.setFieldValue('appSecret', '');
+      setNotificationDirty(false);
     },
-    onError: (error: Error) => message.error(error.message || i18n.t('platform:imSaveFailed')),
+    onError: (error: Error) => {
+      setImConflictError(error);
+      message.error(error.message || i18n.t('platform:imSaveFailed'));
+    },
+  });
+
+  const selectionMutation = useMutation({
+    mutationFn: (next: string) => selectImProvider(next, imSelection?.generation ?? 0),
+    onSuccess: async (saved) => {
+      queryClient.setQueryData(IM_SELECTION_QUERY_KEY, saved);
+      setSwitchOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: PLATFORM_IM_CHANNELS_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ['user-im-identities'] }),
+        queryClient.invalidateQueries({ queryKey: ['notify-prefs'] }),
+        queryClient.invalidateQueries({ queryKey: ['settings', 'NOTIFY'] }),
+      ]);
+      message.success(i18n.t('platform:imSelectionSaved'));
+    },
+    onError: async (error: Error) => {
+      message.error(error.message || i18n.t('platform:imSelectionSaveFailed'));
+      await queryClient.invalidateQueries({ queryKey: IM_SELECTION_QUERY_KEY });
+    },
   });
 
   const logoMutation = useMutation({
@@ -189,6 +228,7 @@ export function BrandingConfigPage() {
   };
 
   const handleImSubmit = async () => {
+    setImConflictError(null);
     let values: ImRobotFormValues;
     try {
       values = await imForm.validateFields();
@@ -354,84 +394,123 @@ export function BrandingConfigPage() {
     </>
   );
 
+  const otherProvider = provider === 'FEISHU' ? 'DINGTALK' : 'FEISHU';
+  const otherProviderLabel = otherProvider === 'FEISHU' ? t('feishu') : t('dingtalk');
+  const imDirty = notificationDirty || groupChatDirty;
   const notificationPane = (
-    <Card styles={{ body: { padding: 18 } }}>
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Card styles={{ body: { padding: 18 } }}>
+        <div className="aw-channel-header">
+          <div>
+            <Text strong>{t('currentChannel', { provider: providerLabel })}</Text>
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('currentChannelHint')}</Text>
+            </div>
+          </div>
+          <Button
+            onClick={() => setSwitchOpen(true)}
+            disabled={isImChannelsLoading || selectionMutation.isPending || imMutation.isPending}
+          >
+            {t('switchChannel')}
+          </Button>
+        </div>
+      </Card>
+
       {imChannelsError ? (
-        <Alert
-          type="error"
-          showIcon
-          icon={<CloseCircleFilled aria-hidden="true" />}
-          message={t('imLoadFailed')}
-          description={imChannelsError instanceof Error ? imChannelsError.message : t('retryLater')}
-        />
+        <Card styles={{ body: { padding: 18 } }}>
+          <Alert
+            type="error"
+            showIcon
+            icon={<CloseCircleFilled aria-hidden="true" />}
+            message={t('imLoadFailed')}
+            description={imChannelsError instanceof Error ? imChannelsError.message : t('retryLater')}
+          />
+        </Card>
       ) : (
-        <Form
-          form={imForm}
-          layout="vertical"
-          disabled={isImChannelsLoading || imMutation.isPending}
-          initialValues={{
-            enabled: false,
-            appKey: '',
-            appSecret: '',
-            robotCode: '',
-          }}
+        <Card
+          title={t('notificationSection')}
+          extra={
+            <Button
+              type="primary"
+              icon={<SaveOutlined aria-hidden="true" />}
+              aria-label={t('saveIm')}
+              loading={imMutation.isPending}
+              disabled={isImChannelsLoading}
+              onClick={handleImSubmit}
+            >
+              {t('saveIm')}
+            </Button>
+          }
+          styles={{ body: { padding: 18 } }}
         >
-          <div style={{ display: 'grid', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-              <div>
-                <Text strong>{t('robot', { provider: providerLabel })}</Text>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>{t('providerHint')}</Text>
-                </div>
-              </div>
+          <Form
+            form={imForm}
+            name="imNotification"
+            layout="vertical"
+            className="aw-im-form"
+            disabled={isImChannelsLoading || imMutation.isPending}
+            initialValues={{
+              enabled: false,
+              appKey: '',
+              appSecret: '',
+              robotCode: '',
+            }}
+            onValuesChange={() => {
+              setImConflictError(null);
+              setNotificationDirty(true);
+            }}
+          >
+            <div className="aw-channel-section">
+              <Typography.Text type="secondary">{t('notificationSectionHint')}</Typography.Text>
               <Space size={[8, 8]} wrap>
                 <Tag color={imEnabled ? 'green' : 'default'}>{imEnabled ? t('enabled') : t('disabled')}</Tag>
                 <Tag color={hasImSecret ? 'green' : 'default'}>{hasImSecret ? t('secretConfigured') : t('secretMissing')}</Tag>
                 <Tag color={imReady ? 'green' : 'orange'}>{imReady ? t('ready') : t('notReady')}</Tag>
               </Space>
-            </div>
 
-            <Form.Item label={t('imChannel')} extra={t('channelHint')}>
-              <Radio.Group value={provider} onChange={(event) => setProvider(event.target.value)}
-                options={[{ label: t('dingtalk'), value: 'DINGTALK' }, { label: t('feishu'), value: 'FEISHU' }]} />
-            </Form.Item>
-            <Form.Item label={t('enableSwitch')} name="enabled" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Switch aria-label={t('enableRobot', { provider: providerLabel })} />
-            </Form.Item>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-              <Form.Item label={provider === 'FEISHU' ? t('appId') : t('appKey')} name="appKey" validateTrigger={[]} rules={[({ getFieldValue }) => ({ validator: (_, value) => !getFieldValue('enabled') || value ? Promise.resolve() : Promise.reject(new Error(t('appKeyRequired'))) })]}>
-                <Input placeholder={provider === 'FEISHU' ? 'cli_xxxxxx' : 'dingxxxxxx'} />
+              <Form.Item label={t('enableSwitch')} name="enabled" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Switch aria-label={t('enableRobot', { provider: providerLabel })} />
               </Form.Item>
-              {provider === 'DINGTALK' && <Form.Item label={t('robotCode')} name="robotCode" validateTrigger={[]} rules={[({ getFieldValue }) => ({ validator: (_, value) => !getFieldValue('enabled') || value ? Promise.resolve() : Promise.reject(new Error(t('robotCodeRequired'))) })]}>
-                <Input placeholder="robot_xxxxxx" />
-              </Form.Item>}
-              <Form.Item
-                label={t('appSecret')}
-                name="appSecret"
-                validateTrigger={[]}
-                rules={[({ getFieldValue }) => ({ validator: (_, value) => !getFieldValue('enabled') || value || imChannel.secretConfigured ? Promise.resolve() : Promise.reject(new Error(t('appSecretRequired'))) })]}
-                extra={imChannel.secretConfigured ? t('keepSecretHint') : undefined}
-              >
-                <Input.Password iconRender={visible => <Button type="text" htmlType="button" aria-label={t(visible ? 'hideSecret' : 'showSecret')} disabled={isImChannelsLoading || imMutation.isPending} icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />} />} placeholder={imChannel.secretConfigured ? t('keepSecret') : t('secretPlaceholder')} />
-              </Form.Item>
-            </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <Button
-                type="primary"
-                icon={<SaveOutlined aria-hidden="true" />}
-                aria-label={t('saveIm')}
-                loading={imMutation.isPending}
-                onClick={handleImSubmit}
-              >
-                {t('saveIm')}
-              </Button>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+                <Form.Item label={provider === 'FEISHU' ? t('appId') : t('appKey')} name="appKey" validateTrigger={[]} rules={[({ getFieldValue }) => ({ validator: (_, value) => !getFieldValue('enabled') || value ? Promise.resolve() : Promise.reject(new Error(t('appKeyRequired'))) })]}>
+                  <Input placeholder={provider === 'FEISHU' ? 'cli_xxxxxx' : 'dingxxxxxx'} />
+                </Form.Item>
+                {provider === 'DINGTALK' && <Form.Item label={t('robotCode')} name="robotCode" validateTrigger={[]} rules={[({ getFieldValue }) => ({ validator: (_, value) => !getFieldValue('enabled') || value ? Promise.resolve() : Promise.reject(new Error(t('robotCodeRequired'))) })]}>
+                  <Input placeholder="robot_xxxxxx" />
+                </Form.Item>}
+                <Form.Item
+                  label={t('appSecret')}
+                  name="appSecret"
+                  validateTrigger={[]}
+                  rules={[({ getFieldValue }) => ({ validator: (_, value) => !getFieldValue('enabled') || value || imChannel.secretConfigured ? Promise.resolve() : Promise.reject(new Error(t('appSecretRequired'))) })]}
+                  extra={imChannel.secretConfigured ? t('keepSecretHint') : undefined}
+                >
+                  <Input.Password iconRender={visible => <Button type="text" htmlType="button" aria-label={t(visible ? 'hideSecret' : 'showSecret')} disabled={isImChannelsLoading || imMutation.isPending} icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />} />} placeholder={imChannel.secretConfigured ? t('keepSecret') : t('secretPlaceholder')} />
+                </Form.Item>
+              </div>
+
+              {imConflictError != null && <ImIdentityConflictAlert error={imConflictError} />}
             </div>
-          </div>
-        </Form>
+          </Form>
+        </Card>
       )}
-    </Card>
+      {isPlatformAdmin && <GroupChatConfigPanel provider={provider} onDirtyChange={setGroupChatDirty} />}
+
+      <Modal
+        open={switchOpen}
+        title={t('switchChannelTitle')}
+        okText={t('confirmSwitchChannel', { provider: otherProviderLabel })}
+        cancelText={t('cancel')}
+        confirmLoading={selectionMutation.isPending}
+        onOk={() => selectionMutation.mutate(otherProvider)}
+        onCancel={() => setSwitchOpen(false)}
+        destroyOnClose
+      >
+        <p>{t('switchChannelBody')}</p>
+        {imDirty && <Alert type="warning" showIcon message={t('switchChannelDirty')} />}
+      </Modal>
+    </Space>
   );
 
   return (

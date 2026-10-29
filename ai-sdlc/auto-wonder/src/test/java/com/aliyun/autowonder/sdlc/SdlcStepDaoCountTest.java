@@ -106,7 +106,7 @@ class SdlcStepDaoCountTest {
         SdlcStepDO deleted = insertStep(9L, 2);
         insertStep(9L, 3);
 
-        assertEquals(1, dao.softDelete(deleted.getId(), TENANT, USER));
+        assertEquals(1, dao.softDelete(deleted.getId(), TENANT, 9L, -1, USER));
 
         // 验收口径：软删除的步骤不计入步骤数，与详情页 listBySdlc 的可见步骤一致
         assertEquals(2, countsBySdlcId(dao.countBySdlcIds(List.of(9L))).get(9L));

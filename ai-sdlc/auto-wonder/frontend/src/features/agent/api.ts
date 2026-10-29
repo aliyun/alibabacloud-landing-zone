@@ -11,6 +11,12 @@ export interface Agent {
   avatarUrl: string | null;
   status: AgentStatus;
   kind?: AgentKind | null;
+  officialConfiguration?: {
+    responsibilities: string;
+    businessBackground: string;
+    fingerprint: string;
+    capabilities: Array<{ id: string; name: string; type: string }>;
+  };
   onlineVersionId: number | null;
   editingVersionId: number | null;
   latestVersionNo: number | null;

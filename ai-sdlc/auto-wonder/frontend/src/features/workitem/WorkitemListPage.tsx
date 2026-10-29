@@ -4,21 +4,23 @@ import { Trans, useTranslation } from 'react-i18next';
 import { i18n } from '@/shared/i18n';
 import { formatDateTime } from '@/shared/i18n/format';
 import { useMemo, useState } from 'react';
-import { Button, Tag, Space, Select, Card, Segmented, Popconfirm, Tooltip, Input } from 'antd';
+import { Button, Tag, Space, Select, Card, Segmented, Popconfirm, Tooltip, Input, AutoComplete, Typography } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined, StarOutlined, StarFilled, ExclamationCircleFilled, CloseOutlined, CloseCircleFilled, SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { useDeleteWorkitem, useWorkitemList, useWorkitemKanbanColumns, useToggleWatch } from './hooks';
+import { useDeleteWorkitem, useWorkitemList, useWorkitemKanbanColumns, useToggleWatch, useWorkitemTagOptions } from './hooks';
+import { WorkitemTagsCell } from './components/WorkitemTagsCell';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { WorkitemKanban } from './components/WorkitemKanban';
-import { WorkitemAdvancedFilter } from './components/WorkitemAdvancedFilter';
+import { EMPTY_ADVANCED_FILTER, WorkitemAdvancedFilter, type WorkitemAdvancedFilterState } from './components/WorkitemAdvancedFilter';
 import { WorkitemHealthBadge } from './components/WorkitemHealthBadge';
 import { HumanInterventionBadge } from './components/HumanInterventionBadge';
 import { ScheduledExecutionBadge } from './components/ScheduledExecutionBadge';
-import { workTypeMap, STATUS_COLUMNS, getPriorityMeta } from './constants';
+import { workTypeMap, STATUS_COLUMNS, STATUS_FILTER_COLUMNS, getPriorityMeta } from './constants';
 import { displayNameWithoutId } from './nameDisplay';
 import { readWorkitemViewPreference, writeWorkitemViewPreference, type WorkitemViewMode } from './viewPreference';
-import { EMPTY_CREATED_TIME_RANGE, toCreatedTimeQuery, type CreatedTimeRangeDraft } from './createdTimeFilter';
+import { toCreatedTimeQuery } from './createdTimeFilter';
+import { serializeTagConditions } from './tagConditionFilter';
 import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import type { Workitem } from '@/shared/types/workitem';
 import type { WorkitemStatusCategory } from './api';
@@ -204,13 +206,30 @@ export function WorkitemListPage() {
   const [scope, setScope] = useState<Scope>(readScopePreference);
   const [keyword, setKeyword] = useState<string | undefined>();
   const [tag, setTag] = useState<string | undefined>();
-  const [createdRange, setCreatedRange] = useState<CreatedTimeRangeDraft>(EMPTY_CREATED_TIME_RANGE);
+  const [tagInput, setTagInput] = useState('');
+  const [advancedFilter, setAdvancedFilter] = useState<WorkitemAdvancedFilterState>(EMPTY_ADVANCED_FILTER);
   const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
+  const { data: tagOptions, isError: tagOptionsError } = useWorkitemTagOptions();
 
   const isKanban = viewMode === 'kanban';
-  const createdQuery = useMemo(() => toCreatedTimeQuery(createdRange), [createdRange]);
+  const createdQuery = useMemo(() => toCreatedTimeQuery(advancedFilter.created), [advancedFilter.created]);
+  const creatorQuery = advancedFilter.creatorIds.length
+    ? { creatorIds: advancedFilter.creatorIds.join(',') }
+    : {};
+  const tagConditionsQuery = useMemo(
+    () => serializeTagConditions(advancedFilter.tagConditions),
+    [advancedFilter.tagConditions],
+  );
   // 高级筛选与其他筛选条件以 AND 组合，表格与看板共用同一份查询条件
-  const baseQuery = { workType, ...scopeToQuery(scope), keyword, tag, ...createdQuery };
+  const baseQuery = {
+    workType,
+    ...scopeToQuery(scope),
+    keyword,
+    tag,
+    ...(tagConditionsQuery ? { tagConditions: tagConditionsQuery } : {}),
+    ...createdQuery,
+    ...creatorQuery,
+  };
 
   // 表格视图用全量分页查询；看板视图下只取 total 给页面标题用
   const { data, isLoading } = useWorkitemList(
@@ -226,7 +245,15 @@ export function WorkitemListPage() {
   );
   const showDecisionSummary = isKanban && scope === 'ALL' && !!user && visibleColumnKeys.includes('PENDING_DECISION');
   const [myPendingColumn] = useWorkitemKanbanColumns(
-    { workType, keyword, tag, ...createdQuery, pendingDecisionOnly: true },
+    {
+      workType,
+      keyword,
+      tag,
+      ...(tagConditionsQuery ? { tagConditions: tagConditionsQuery } : {}),
+      ...createdQuery,
+      ...creatorQuery,
+      pendingDecisionOnly: true,
+    },
     showDecisionSummary ? ['PENDING_DECISION'] : [], {}, 1, showDecisionSummary,
   );
   const kanbanItems = useMemo(() => {
@@ -279,6 +306,10 @@ export function WorkitemListPage() {
         const meta = getPriorityMeta(p);
         return <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>;
       },
+    },
+    {
+      title: t('fields.tags'), dataIndex: 'tags', width: 160,
+      render: (_: unknown, record: Workitem) => <WorkitemTagsCell workitem={record} maxVisible={3} />,
     },
     {
       title: t('fields.assignee'), dataIndex: 'assigneeName', width: 120,
@@ -352,10 +383,16 @@ export function WorkitemListPage() {
     setSize(nextSize);
   };
 
-  const handleCreatedRangeApply = (range: CreatedTimeRangeDraft) => {
-    setCreatedRange(range);
-    setPage(1);
-    setColumnSizes({});
+  // 应用创建者条件后顶部范围的「我的」类筛选不再有意义，统一回到「全部」；
+  // handleScopeChange 负责写偏好并重置页码与列宽。
+  const handleAdvancedFilterApply = (next: WorkitemAdvancedFilterState) => {
+    setAdvancedFilter(next);
+    if (next.creatorIds.length > 0 && scope !== 'ALL') {
+      handleScopeChange('ALL');
+    } else {
+      setPage(1);
+      setColumnSizes({});
+    }
   };
 
   return (
@@ -406,7 +443,7 @@ export function WorkitemListPage() {
           style={{ width: 120 }}
           value={statusCategory}
           onChange={(v) => { setStatusCategory(v); setPage(1); setColumnSizes({}); }}
-          options={STATUS_COLUMNS.map(col => ({ value: col.key as StatusCategory, label: col.title }))}
+          options={STATUS_FILTER_COLUMNS.map(col => ({ value: col.key as StatusCategory, label: col.title }))}
         />
         <Button size="small" aria-label={t('list.clearStatus')} title={t('list.clearStatus')} icon={<CloseOutlined aria-hidden="true" />} disabled={!statusCategory} onClick={() => { setStatusCategory(undefined); setPage(1); setColumnSizes({}); }} />
         <Input.Search
@@ -416,14 +453,44 @@ export function WorkitemListPage() {
           onSearch={(v) => { setKeyword(v || undefined); setPage(1); setColumnSizes({}); }}
           style={{ width: 220 }}
         />
-        <Input.Search
-          enterButton={<Button aria-label={t('list.tagFilter')} icon={<SearchOutlined aria-hidden="true" />} />}
-          allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('list.clearTag')} /> }}
-          placeholder={t('list.tagFilter')}
-          onSearch={(v) => { setTag(v?.trim() || undefined); setPage(1); setColumnSizes({}); }}
+        <AutoComplete
+          value={tagInput}
+          options={(tagOptions ?? []).map((value) => ({ value }))}
+          onChange={(value) => {
+            setTagInput(value);
+            if (!value) {
+              setTag(undefined);
+              setPage(1);
+              setColumnSizes({});
+            }
+          }}
+          onSelect={(value) => {
+            setTagInput(value);
+            setTag(value);
+            setPage(1);
+            setColumnSizes({});
+          }}
           style={{ width: 160 }}
-        />
-        <WorkitemAdvancedFilter applied={createdRange} onApply={handleCreatedRangeApply} />
+        >
+          <Input.Search
+            enterButton={<Button aria-label={t('list.tagFilter')} icon={<SearchOutlined aria-hidden="true" />} />}
+            allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('list.clearTag')} /> }}
+            placeholder={t('list.tagFilter')}
+            onSearch={(v) => {
+              const next = v?.trim() || undefined;
+              setTag(next);
+              setTagInput(v ?? '');
+              setPage(1);
+              setColumnSizes({});
+            }}
+          />
+        </AutoComplete>
+        {tagOptionsError ? (
+          <Typography.Text type="warning" data-testid="workitem-tag-options-error">
+            {t('tags.loadFailed')}
+          </Typography.Text>
+        ) : null}
+        <WorkitemAdvancedFilter applied={advancedFilter} onApply={handleAdvancedFilterApply} />
       </Space>
 
       {kanbanTransition.dialog}
@@ -452,7 +519,7 @@ export function WorkitemListPage() {
           dataSource={items}
           loading={isLoading}
           tableLayout="fixed"
-          scroll={{ x: 1040 }}
+          scroll={{ x: 1200 }}
           pagination={{
             current: page,
             pageSize: size,

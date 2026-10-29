@@ -16,7 +16,7 @@
 .participation-scope-summary .participation-help { margin: 0; }
 .participation-scope strong { color: var(--aw-accent-text); font-variant-numeric: tabular-nums; }
 .participation-state { display: grid; place-items: center; min-height: 300px; }
-.participation-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.participation-stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
 .participation-stat .ant-card-body { padding: 16px 20px; }
 .participation-stat .ant-statistic-title { font-size: 12px; color: var(--aw-muted); margin-bottom: 8px; }
 .participation-stat .ant-statistic-content { font-size: clamp(18px, 1.7vw, 26px); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.025em; color: var(--aw-text); }
@@ -88,6 +88,43 @@
 .insight-panel-state { display: grid; place-items: center; min-height: 160px; }
 .metric-card-kpis { display: flex; flex-wrap: wrap; column-gap: 18px; row-gap: 12px; }
 .metric-card-kpis.is-centered { justify-content: center; column-gap: 56px; row-gap: 16px; }
+/* 成本分析面板专用：保留卡片容器，三项 credits 作为版块视觉中心；共享指标卡样式不动。 */
+.cost-card { background: var(--aw-panel); border: 1px solid var(--aw-border); border-radius: 10px; padding: 28px 20px; }
+.cost-card .metric-card-kpis { flex-wrap: nowrap; column-gap: 120px; row-gap: 0; }
+.cost-kpi { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.cost-kpi-value { color: var(--aw-text); font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cost-kpi-label { color: var(--aw-muted); font-size: 13px; line-height: 1.4; white-space: nowrap; }
+@container (max-width: 899.98px) {
+  .cost-card .metric-card-kpis { column-gap: 72px; }
+}
+@container (max-width: 599.98px) {
+  .cost-card .metric-card-kpis { column-gap: clamp(20px, 6cqi, 40px); }
+  .cost-kpi-value { font-size: 24px; }
+  .cost-kpi-label { font-size: 12px; }
+}
+/* 成本分析面板：头部到统计块的顶部间距按设计固定 20px，统计块与构成条同栅格。 */
+.insight-panel--cost .insight-panel-body { gap: 12px; margin-top: 20px; }
+/* 来源构成紧凑条：12px 100% 堆叠条 + 单行图例，整块高度受控在 130px 内。 */
+.cost-composition { padding: 12px 18px 14px; background: #fbfcfd; border: 1px solid var(--aw-border); border-radius: 10px; }
+:root[data-appearance=dark] .cost-composition { background: var(--aw-panel); }
+.cost-composition-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cost-composition-head h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--aw-text); }
+.cost-composition-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border: 1px dashed color-mix(in srgb, var(--aw-warning) 55%, var(--aw-border)); border-radius: 999px; background: var(--aw-panel); color: var(--aw-muted); font-size: 12px; line-height: 18px; }
+.cost-composition-chip.is-locked { border-style: solid; background: color-mix(in srgb, var(--aw-warning) 12%, var(--aw-panel)); color: color-mix(in srgb, var(--aw-warning) 72%, var(--aw-text)); font-weight: 500; }
+.cost-composition-total { margin-left: auto; color: var(--aw-muted); font-size: 12px; white-space: nowrap; }
+.cost-composition-total b { margin-left: 4px; color: var(--aw-text); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cost-composition-total b, .cost-composition-legend b, .cost-composition-share { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.cost-composition-bar { display: flex; gap: 2px; height: 12px; margin: 10px 0; border-radius: 6px; overflow: hidden; background: var(--aw-raised); }
+.cost-composition-bar i { display: block; height: 100%; min-width: 2px; transition: width .3s ease; }
+.cost-composition-bar i:hover { filter: brightness(1.12); }
+.cost-composition-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 0; padding: 0; list-style: none; }
+.cost-composition-legend li { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12px; color: var(--aw-muted); }
+.cost-composition-legend i { width: 8px; height: 8px; border-radius: 2px; flex: none; align-self: center; }
+.cost-composition-legend span { min-width: 0; }
+.cost-composition-legend b { color: var(--aw-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cost-composition-share { color: var(--aw-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cost-composition-empty { margin: 10px 0 2px; color: var(--aw-muted); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .cost-composition-bar i { transition: none; } }
 /* grid 居中会把 Spin 外层收缩为内容宽度（空占位宽度为 0），导致 tip 逐字换行；补满面板宽度使其单行居中。 */
 .insight-panel-state .ant-spin-nested-loading { width: 100%; }
 
@@ -113,9 +150,6 @@
 @keyframes insight-ping { 0% { transform: scale(.6); opacity: .7; } 80%, 100% { transform: scale(1.5); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .insight-live-badge i::after { animation: none; } }
 
-.insight-realtime-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; align-items: stretch; }
-.insight-realtime-grid > .ant-card { display: flex; flex-direction: column; }
-.insight-realtime-grid > .ant-card > .ant-card-body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
 .insight-squad-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 12px; }
 .insight-workstation-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); gap: 10px; }
 .insight-truncate { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -133,6 +167,16 @@
 .insight-realtime-metric { color: var(--aw-accent-text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .insight-caption { font-size: 12px; color: var(--aw-muted); margin: 0 0 12px; }
 .insight-member-page > .ant-card, .insight-member-page > .ant-alert { margin-bottom: 16px; }
+.insight-member-page .participation-stats { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.insight-stat-area .ant-card-body { padding: 16px 18px 18px; }
+.insight-stat-area-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.insight-stat-area .participation-stats { margin-bottom: 0; }
+.insight-stat-area-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 0; font-size: 11.5px; color: var(--aw-muted); }
+.insight-stat-area-foot .dot-sep { width: 3px; height: 3px; border-radius: 50%; background: currentColor; flex: none; }
+/* 全局统计周期用虚线 chip、本区工单类型用实心 chip，视觉上区分两个组件的作用域。 */
+.insight-scope-chip { display: inline-flex; align-items: center; font-size: 11.5px; line-height: 18px; padding: 2px 10px; border-radius: 999px; border: 1px dashed var(--aw-border); color: var(--aw-muted); white-space: nowrap; }
+.insight-scope-chip.is-global, .insight-scope-chip.is-specific { border-color: color-mix(in srgb, var(--aw-warning) 45%, transparent); background: color-mix(in srgb, var(--aw-warning) 10%, transparent); color: var(--aw-accent-text); }
+.insight-scope-chip.is-specific { border-style: solid; }
 .insight-member-bar { display: flex; gap: 12px; align-items: center; }
 .insight-member-bar strong { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
 .insight-member-bar > span { display: block; flex: 1; height: 7px; border-radius: 4px; background: var(--aw-border); overflow: hidden; }
@@ -141,9 +185,79 @@
 .participation-chart-table thead th:not(:first-child) { text-align: right; }
 .participation-chart-table thead { position: sticky; top: 0; }
 .participation-chart-legend button:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 4px; }
+.insight-realtime {
+  --insight-cat-req: var(--aw-warning);
+  --insight-cat-bug: var(--aw-error);
+  --insight-cat-task: var(--aw-muted);
+  --insight-st-todo: var(--aw-muted);
+  --insight-st-doing: var(--aw-warning);
+  --insight-st-done: var(--aw-success);
+  --insight-st-cancel: var(--aw-border);
+}
+.insight-panel--ov { background: var(--aw-panel); border-color: var(--aw-border); }
+.insight-panel--ov::before { background: linear-gradient(90deg, var(--insight-cat-task), color-mix(in srgb, var(--insight-cat-task) 32%, transparent) 55%, transparent); }
+.insight-panel-glyph--ov { background: var(--aw-raised); color: var(--aw-text); }
+.insight-panel--pl { background: var(--aw-panel); border-color: var(--aw-border); }
+.insight-panel--pl::before { background: linear-gradient(90deg, var(--aw-success), color-mix(in srgb, var(--aw-success) 32%, transparent) 55%, transparent); }
+.insight-panel-glyph--pl { background: color-mix(in srgb, var(--aw-success) 14%, var(--aw-panel)); color: var(--aw-success); }
+
+.insight-ov-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.insight-subcard { min-width: 0; padding: 15px 18px 16px; border: 1px solid var(--aw-border); border-radius: 10px; background: var(--aw-panel); }
+.insight-subcard-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.insight-subcard-head h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--aw-text); }
+.insight-subcard-hint { font-size: 11px; color: var(--aw-muted); }
+.insight-cat-row { display: grid; grid-template-columns: 3.2em minmax(0,1fr) auto; align-items: center; gap: 12px; margin: 11px 0; }
+.insight-cat-label { font-size: 12.5px; color: var(--aw-text); white-space: nowrap; }
+.insight-cat-track { display: block; height: 10px; border-radius: 6px; background: var(--aw-raised); overflow: hidden; }
+.insight-cat-fill { display: block; height: 100%; border-radius: 6px; transition: width .6s cubic-bezier(.22,.8,.28,1); }
+.insight-cat-number { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 6px; white-space: nowrap; }
+.insight-cat-value { color: var(--aw-text); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.insight-cat-pct { color: var(--aw-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.insight-sub-foot { margin: 12px 0 0; font-size: 11px; line-height: 1.6; color: var(--aw-muted); }
+
+.insight-status-stack { display: flex; height: 14px; margin: 4px 0 13px; border-radius: 7px; overflow: hidden; background: var(--aw-raised); }
+.insight-status-seg { display: block; height: 100%; min-width: 0; border: 0; padding: 0; transition: filter .15s, width .6s cubic-bezier(.22,.8,.28,1); }
+.insight-status-seg:hover { filter: brightness(1.08) saturate(1.05); }
+.insight-status-seg:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--aw-accent-text); outline-offset: 2px; }
+.insight-status-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.insight-status-item { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--aw-text); }
+.insight-status-item i { width: 8px; height: 8px; border-radius: 2.5px; flex: none; }
+.insight-status-item b { color: var(--aw-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.insight-status-pct { font-size: 11px; color: var(--aw-muted); font-variant-numeric: tabular-nums; }
+
+.insight-pl-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px dashed color-mix(in srgb, var(--aw-success) 45%, var(--aw-border)); border-radius: 999px; background: color-mix(in srgb, var(--aw-success) 8%, var(--aw-panel)); color: var(--aw-muted); font-size: 12px; font-weight: 500; }
+.insight-pl-chip b { color: var(--aw-text); font-variant-numeric: tabular-nums; }
+.insight-pl-realtime { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: rgba(var(--aw-accent-rgb), .12); color: var(--aw-accent-text); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.insight-pl-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.insight-pl-card { position: relative; min-width: 0; padding: 16px 18px 15px; border: 1px solid var(--aw-border); border-radius: 10px; background: var(--aw-panel); overflow: hidden; }
+.insight-pl-card::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: currentColor; opacity: .35; }
+.insight-pl-card.is-ok { color: var(--aw-success); }
+.insight-pl-card.is-bad { color: var(--aw-error); }
+.insight-pl-card.is-warn { color: var(--aw-warning); }
+.insight-pl-card.is-neutral { color: var(--aw-muted); }
+.insight-pl-card.has-tip { cursor: help; }
+.insight-pl-card.has-tip:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 2px; }
+.insight-pl-tip-dot { position: absolute; top: 12px; right: 12px; color: var(--aw-muted); }
+.insight-pl-label { display: block; margin-bottom: 9px; font-size: 12px; color: var(--aw-muted); }
+.insight-pl-value { display: block; font-size: clamp(22px, 2.4vw, 29px); font-weight: 600; line-height: 1.2; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: currentColor; white-space: nowrap; }
+.insight-pl-sub { display: block; margin-top: 7px; font-size: 11px; line-height: 1.6; color: var(--aw-muted); font-variant-numeric: tabular-nums; }
+.insight-pl-tip { font-variant-numeric: tabular-nums; }
+.insight-realtime-blocks { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+.insight-realtime-state { margin-top: 16px; }
+
+.insight-flash { border-radius: 4px; }
+.insight-flash.is-flash { animation: insight-flash .6s ease-out; }
+@keyframes insight-flash { 0% { background: color-mix(in srgb, var(--aw-warning) 22%, transparent); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .insight-flash.is-flash { animation: none; } }
+
 @container (max-width: 900px) {
-  .insight-realtime-grid { grid-template-columns: minmax(0,1fr); }
+  .insight-ov-grid { grid-template-columns: minmax(0,1fr); }
+  .insight-pl-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .participation-chart-grid { grid-template-columns: minmax(0,1fr); }
+}
+@container (max-width: 520px) {
+  .insight-pl-grid { grid-template-columns: minmax(0,1fr); }
+  .insight-subcard { padding: 13px 14px 14px; }
 }
 @container (max-width: 720px) {
   .insight-panel { padding: 14px; }
@@ -153,6 +267,8 @@
 @container (max-width: 560px) {
   .participation-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .insight-toolbar .ant-picker { max-width: 100%; }
+  .insight-scope-divider span { white-space: normal; text-align: center; }
+  .insight-panel-tools .ant-segmented { max-width: 100%; overflow-x: auto; }
   .insight-activity-row { gap: 8px; }
   .insights-page .ant-card-head-wrapper { flex-wrap: wrap; gap: 8px; padding: 12px 0; }
   .insights-page .ant-card-head-title { white-space: normal; }
@@ -164,3 +280,6 @@
 .participation-stat-detail { margin-top: 10px; font-size: 11px; line-height: 1.6; color: var(--aw-muted); overflow-wrap: anywhere; }
 .participation-stat-detail .is-human { color: var(--insight-human); }
 .participation-stat-detail .is-agent { color: var(--insight-agent); }
+.stage-duration-bar { display: grid; gap: 6px; font-variant-numeric: tabular-nums; }
+.stage-duration-bar small { color: var(--aw-muted); }
+.stage-duration-bar progress { width: 100%; height: 6px; accent-color: var(--insight-agent); }

@@ -1,3 +1,4 @@
+import { protectBigInts } from './protectBigInts';
 import { i18n, normalizeLocale } from '@/shared/i18n';
 import axios, { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { ApiError, ErrorCodes } from '@/shared/types/common';
@@ -5,62 +6,6 @@ import type { ApiResult } from '@/shared/types/common';
 import { useAuthStore } from '@/shared/auth/store';
 import { refreshCurrentMembership } from '@/shared/auth/refreshCurrentMembership';
 
-// Convert integer literals exceeding Number.MAX_SAFE_INTEGER to strings before parsing,
-// so their precision survives JSON.parse. Must be string-aware: a bare regex over the raw
-// text also matches digits inside string values (e.g. escaped JSON in a contentMd field),
-// which corrupts the payload and makes the whole response unparseable.
-function protectBigInts(text: string): string {
-  let out = '';
-  let inString = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      out += ch;
-      if (ch === '\\') {
-        i++;
-        if (i < text.length) out += text[i];
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      out += ch;
-      continue;
-    }
-    // Outside a string, digits can only be part of a number value (JSON keys are quoted).
-    if (ch === '-' || (ch >= '0' && ch <= '9')) {
-      let j = i;
-      if (text[j] === '-') j++;
-      const intStart = j;
-      while (j < text.length && text[j] >= '0' && text[j] <= '9') j++;
-      const intDigits = j - intStart;
-      let isInteger = true;
-      if (text[j] === '.') {
-        isInteger = false;
-        j++;
-        while (j < text.length && text[j] >= '0' && text[j] <= '9') j++;
-      }
-      if (text[j] === 'e' || text[j] === 'E') {
-        isInteger = false;
-        j++;
-        if (text[j] === '+' || text[j] === '-') j++;
-        while (j < text.length && text[j] >= '0' && text[j] <= '9') j++;
-      }
-      const token = text.slice(i, j);
-      if (isInteger && intDigits >= 16 && Number(token) > Number.MAX_SAFE_INTEGER) {
-        out += `"${token}"`;
-      } else {
-        out += token;
-      }
-      i = j - 1;
-      continue;
-    }
-    out += ch;
-  }
-  return out;
-}
 
 function safeParse(text: string) {
   return JSON.parse(protectBigInts(text));

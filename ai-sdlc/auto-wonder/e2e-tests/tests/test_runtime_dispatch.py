@@ -12,6 +12,8 @@ import time
 import signal
 import hashlib
 import shutil
+import contextlib
+import io
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "e2e-tests/runtime_dispatch.py"
@@ -382,10 +384,15 @@ with tempfile.TemporaryDirectory() as directory:
                     patch.object(Path, "home", return_value=Path(directory)):
                 with self.assertRaises(OSError):
                     runtime.run_scenario(Path("unused"), Path(directory),
-                                         "http://127.0.0.1:7001", "http://127.0.0.1:9000")
+                                         "http://127.0.0.1:7001", "http://127.0.0.1:9000",
+                                         {"runtimeVersion": "9.8.7", "sourceRuntimeVersion": "9.8.6",
+                                          "runtimeRecommendationSource": "lifecycle-app.env"})
             evidence = json.loads((Path(directory) / "runtime-dispatch.json").read_text())
             self.assertFalse(evidence["cleanup"])
             self.assertEqual(evidence["verdict"], "FAIL")
+            self.assertEqual(evidence["runtimeVersion"], "9.8.7")
+            self.assertEqual(evidence["sourceRuntimeVersion"], "9.8.6")
+            self.assertEqual(evidence["runtimeRecommendationSource"], "lifecycle-app.env")
             self.assertNotIn("UNIT_TEST_PRIVATE_CLEANUP_ERROR", json.dumps(evidence))
 
     def test_artifact_request_omits_bearer_header(self):
@@ -438,6 +445,126 @@ with tempfile.TemporaryDirectory() as directory:
             thread.join()
 
 
+class RecommendationTests(unittest.TestCase):
+    def source(self, root, version="9.8.7"):
+        path = root / "src/main/resources/application.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("other:\n  recommended-version: 1.0.0\n"
+                        "autowonder:\n  runtime:\n    recommended-version: "
+                        "${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:" + version + "}\n")
+        return path
+
+    def resolve(self, *args):
+        fn = getattr(runtime, "resolve_runtime_recommendation", None)
+        self.assertTrue(callable(fn), "source recommendation resolver is missing")
+        return fn(*args)
+
+    def test_source_changes_are_followed_without_a_helper_version_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for version in ("9.8.7", "10.2.1-rc.2"):
+                self.source(root, version)
+                with patch.dict(os.environ, {"AUTOWONDER_RUNTIME_RECOMMENDED_VERSION": "1.0.0"}), \
+                        patch.object(runtime.subprocess, "run") as child:
+                    result = self.resolve(root)
+                self.assertEqual(result["runtimeVersion"], version)
+                self.assertEqual(result["sourceRuntimeVersion"], version)
+                child.assert_not_called()
+
+    def test_invalid_or_missing_source_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for value in ("", "latest", "0.3.30; echo private", "1.2", "${OTHER:1.2.3}"):
+                self.source(root, value)
+                with self.subTest(value=value), self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_SOURCE_RECOMMENDATION_INVALID"):
+                    self.resolve(root)
+            self.source(root).write_text("autowonder:\n  other: 1.2.3\n")
+            with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_SOURCE_RECOMMENDATION_INVALID"):
+                self.resolve(root)
+
+    def test_duplicate_recommendation_is_not_silently_selected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self.source(root)
+            path.write_text(path.read_text() + "    recommended-version: 1.2.3\n")
+            with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_SOURCE_RECOMMENDATION_INVALID"):
+                self.resolve(root)
+
+    def test_live_default_and_explicit_lifecycle_override_must_agree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.source(root)
+            state = root / "state"
+            state.mkdir()
+            for content, effective in (("UNRELATED_SECRET=DO_NOT_EMIT\n", "9.8.7"),
+                    ("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=8.7.6\nUNRELATED_SECRET=DO_NOT_EMIT\n", "8.7.6")):
+                (state / "app.env").write_text(content)
+                with patch.object(runtime.Api, "call", return_value={"recommendedRuntimeVersion": effective}) as api:
+                    result = self.resolve(root, state, "http://127.0.0.1:7001")
+                api.assert_called_once_with("GET", "/api/platform/branding/public")
+                self.assertEqual(result["sourceRuntimeVersion"], "9.8.7")
+                self.assertEqual(result["runtimeVersion"], effective)
+                self.assertNotIn("DO_NOT_EMIT", json.dumps(result))
+                with patch.object(runtime.Api, "call", return_value={"recommendedRuntimeVersion": "1.0.0"}):
+                    with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_RECOMMENDATION_MISMATCH"):
+                        self.resolve(root, state, "http://127.0.0.1:7001")
+
+    def test_malformed_live_api_or_transport_failure_never_falls_back(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.source(root)
+            state = root / "state"
+            state.mkdir()
+            (state / "app.env").write_text("")
+            for body in ({}, None, {"recommendedRuntimeVersion": "latest"}, {"recommendedRuntimeVersion": 123}):
+                with self.subTest(body=body), patch.object(runtime.Api, "call", return_value=body):
+                    with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_RECOMMENDATION_API_INVALID"):
+                        self.resolve(root, state, "http://127.0.0.1:7001")
+            with patch.object(runtime.Api, "call", side_effect=runtime.CheckFailure("API_TRANSPORT_FAILURE")):
+                with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_RECOMMENDATION_API_FAILED"):
+                    self.resolve(root, state, "http://127.0.0.1:7001")
+
+    def test_invalid_deployment_snapshot_or_incomplete_context_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.source(root)
+            state = root / "state"
+            state.mkdir()
+            for args in ((root, state), (root, None, "http://127.0.0.1:7001")):
+                with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_RECOMMENDATION_CONTEXT_REQUIRED"):
+                    self.resolve(*args)
+            with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_DEPLOYMENT_ENV_REQUIRED"):
+                self.resolve(root, state, "http://127.0.0.1:7001")
+            for content in ("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=\n",
+                            "AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=DO_NOT_EMIT\n",
+                            "AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=8.7.6\nAUTOWONDER_RUNTIME_RECOMMENDED_VERSION=9.8.7\n"):
+                (state / "app.env").write_text(content)
+                with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_DEPLOYMENT_RECOMMENDATION_INVALID"):
+                    self.resolve(root, state, "http://127.0.0.1:7001")
+
+    def test_print_version_needs_no_runtime_or_token_and_follows_exact_project(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.source(root)
+            env = dict(os.environ)
+            env.pop("QODER_PERSONAL_ACCESS_TOKEN", None)
+            env.pop("AW_E2E_RUNTIME_PACKAGE", None)
+            result = subprocess.run([sys.executable, str(HELPER), "--print-recommended-version", "--project-root", str(root)],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "9.8.7\n")
+
+    def test_run_requires_live_context_before_any_runtime_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.source(root)
+            with patch.object(sys, "argv", [str(HELPER), "--run", "--project-root", str(root)]), \
+                    patch.object(runtime, "preflight") as child, contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(runtime.main(), 1)
+            child.assert_not_called()
+            self.assertIn("RUNTIME_RECOMMENDATION_CONTEXT_REQUIRED", error.getvalue())
+
+
 class PreflightTests(unittest.TestCase):
     def test_lifecycle_propagates_runtime_helper_failure(self):
         # Real lifecycle script; fake only external services and the expensive
@@ -462,7 +589,9 @@ class PreflightTests(unittest.TestCase):
             node.write_text("#!/bin/sh\nexit 0\n")
             node.chmod(0o700)
             (e2e / "runtime_dispatch.py").write_text(
-                "import sys\nsys.exit(0 if '--preflight' in sys.argv else 17)\n")
+                "import json,pathlib,sys\n"
+                "with (pathlib.Path(__file__).parent/'helper-args.jsonl').open('a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
+                "sys.exit(0 if '--preflight' in sys.argv else 17)\n")
             state_base = Path(directory) / "state"
             namespace = state_base / hashlib.sha256(str(fixture).encode()).hexdigest()[:12]
             run = namespace / "test-run"
@@ -481,25 +610,41 @@ class PreflightTests(unittest.TestCase):
             self.assertNotIn("VERDICT=PASS", result.stdout)
             evidence = json.loads((run / "result.json").read_text())
             self.assertEqual(evidence["verdict"], "FAIL")
+            invocations = [json.loads(line) for line in (e2e / "helper-args.jsonl").read_text().splitlines()]
+            self.assertEqual(len(invocations), 2)
+            for args in invocations:
+                for option, value in (("--project-root", str(fixture)), ("--state-dir", str(run)),
+                                      ("--base-url", "http://127.0.0.1:17001")):
+                    self.assertIn(option, args)
+                    self.assertEqual(args[args.index(option) + 1], value)
 
     def test_runtime_self_check_must_succeed_before_resource_creation(self):
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory)
             (package / "vendor").mkdir()
-            (package / "package.json").write_text(json.dumps({"name": "autowonder", "version": "0.2.163"}))
+            (package / "package.json").write_text(json.dumps({"name": "autowonder", "version": "9.8.7"}))
             binary = package / "vendor/autowonder-daemon-darwin-arm64"
             binary.write_text("#!/bin/sh\nexit 1\n")
             binary.chmod(0o700)
             env = {"QODER_PERSONAL_ACCESS_TOKEN": "unit-test-only", "AW_E2E_RUNTIME_PACKAGE": directory}
-            completed = subprocess.CompletedProcess([], 0, json.dumps({"package": "autowonder", "version": "0.2.163", "goos": "darwin", "goarch": "arm64"}))
+            completed = subprocess.CompletedProcess([], 0, json.dumps({"package": "autowonder", "version": "9.8.7", "goos": "darwin", "goarch": "arm64"}))
             with patch.dict(os.environ, env), patch.object(runtime.platform, "system", return_value="Darwin"), \
                     patch.object(runtime.platform, "machine", return_value="arm64"), \
                     patch.object(runtime.shutil, "which", return_value="/test/qodercli"), \
-                    patch.object(runtime.subprocess, "run", return_value=completed):
-                self.assertEqual(runtime.preflight(), binary.resolve())
+                    patch.object(runtime.subprocess, "run", return_value=completed) as child:
+                self.assertEqual(runtime.preflight("9.8.7"), binary.resolve())
+                self.assertEqual(child.call_args.args[0][-2:], ["--expected-version", "9.8.7"])
+                self.assertEqual(child.call_args.kwargs["env"], {"PATH": os.environ.get("PATH", "")})
+                (package / "package.json").write_text(json.dumps({"name": "autowonder", "version": "1.0.0"}))
+                with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_VERSION_MISMATCH"):
+                    runtime.preflight("9.8.7")
+                (package / "package.json").write_text(json.dumps({"name": "autowonder", "version": "9.8.7"}))
+                completed.stdout = json.dumps({"package": "autowonder", "version": "1.0.0", "goos": "darwin", "goarch": "arm64"})
+                with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_SELF_CHECK_FAILED"):
+                    runtime.preflight("9.8.7")
                 completed.returncode = -9
                 with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_SELF_CHECK_FAILED"):
-                    runtime.preflight()
+                    runtime.preflight("9.8.7")
 
     def test_missing_token_fails_explicitly(self):
         env = dict(os.environ)

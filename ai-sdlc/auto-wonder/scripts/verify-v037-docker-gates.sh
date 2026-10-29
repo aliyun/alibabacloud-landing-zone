@@ -21,8 +21,16 @@ test_classes=(
   V037LegacyArtifactServiceFlowMySqlTest
   MemoryBehaviorLoopMySqlTest
   MemoryTopicTransactionMySqlTest
+  DispatchControlEventMySqlTest
   ExecutorLaunchConfigRecoveryMySqlTest
   DispatchResultConcurrencyMySqlTest
+  InteractionWaiterRecoveryMySqlTest
+  ExternalWorkitemLinkConcurrencyMySqlTest
+  ExternalWorkitemIdentityMigrationMySqlTest
+  SharedGroupChannelMySqlTest
+  InsightsDeliveryMySqlTest
+  SquadWorkflowConcurrencyMySqlTest
+  SdlcStructureMySqlTest
 )
 report_classes=(
   com.aliyun.autowonder.scheduledtask.DockerReleaseGateIT
@@ -35,8 +43,16 @@ report_classes=(
   com.aliyun.autowonder.artifact.V037LegacyArtifactServiceFlowMySqlTest
   com.aliyun.autowonder.memory.store.MemoryBehaviorLoopMySqlTest
   com.aliyun.autowonder.memory.store.MemoryTopicTransactionMySqlTest
+  com.aliyun.autowonder.dispatch.DispatchControlEventMySqlTest
   com.aliyun.autowonder.executor.ExecutorLaunchConfigRecoveryMySqlTest
   com.aliyun.autowonder.dispatch.DispatchResultConcurrencyMySqlTest
+  com.aliyun.autowonder.guidance.InteractionWaiterRecoveryMySqlTest
+  com.aliyun.autowonder.integration.ExternalWorkitemLinkConcurrencyMySqlTest
+  com.aliyun.autowonder.integration.ExternalWorkitemIdentityMigrationMySqlTest
+  com.aliyun.autowonder.integration.SharedGroupChannelMySqlTest
+  com.aliyun.autowonder.insights.InsightsDeliveryMySqlTest
+  com.aliyun.autowonder.squad.workflow.SquadWorkflowConcurrencyMySqlTest
+  com.aliyun.autowonder.sdlc.SdlcStructureMySqlTest
 )
 test_selector="$(IFS=,; echo "${test_classes[*]}")"
 

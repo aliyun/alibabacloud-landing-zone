@@ -22,10 +22,10 @@ public interface DispatchRuntimeEventDao {
     List<DispatchRuntimeEventDO> listByDispatchInArrivalOrder(@Param("tenantId") Long tenantId,
                                                                @Param("dispatchId") Long dispatchId);
 
-    /** Rows newer than a client cursor, so a backfill read does not reproject the whole history. */
-    List<DispatchRuntimeEventDO> listByDispatchAfterSeq(@Param("tenantId") Long tenantId,
-                                                        @Param("dispatchId") Long dispatchId,
-                                                        @Param("afterSeq") long afterSeq);
+    /** Rows arrived after a client cursor, so a backfill read does not reproject the whole history. */
+    List<DispatchRuntimeEventDO> listByDispatchAfterId(@Param("tenantId") Long tenantId,
+                                                       @Param("dispatchId") Long dispatchId,
+                                                       @Param("afterId") long afterId);
 
     DispatchRuntimeEventDO findLatestByDispatchAndType(@Param("tenantId") Long tenantId,
                                                        @Param("dispatchId") Long dispatchId,

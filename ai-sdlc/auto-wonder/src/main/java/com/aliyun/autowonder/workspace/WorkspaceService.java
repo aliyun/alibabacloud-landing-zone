@@ -530,9 +530,9 @@ public class WorkspaceService {
 
     /**
      * F2: logical delete. Members and business data are kept, the name is released in the same
-     * statement, and ACTIVE scheduled tasks are paused inside this transaction (D5). The dispatch
-     * half is published as an event because it calls remote executors, which must not happen while
-     * row locks are held.
+     * statement, ACTIVE scheduled tasks are paused and platform shared bots are disabled inside
+     * this transaction (D5). The dispatch half is published as an event because it calls remote
+     * executors, which must not happen while row locks are held.
      */
     @Transactional
     public WorkspaceVO deleteWorkspace(long workspaceId, long operatorId) {
@@ -543,13 +543,16 @@ public class WorkspaceService {
                     "工作空间已被删除");
         }
         int pausedTasks = deletionLinkage.pauseScheduledTasks(workspaceId, operatorId);
+        int disabledBindings = deletionLinkage.disableSharedBindings(workspaceId, operatorId);
 
         AuditLogRecord audit = audit(workspaceId, operatorId, "ORG_DELETED", "ORG", workspaceId);
         audit.detail("name", workspace.getName())
                 .detail("operatorId", operatorId)
                 // scheduled_task has no reason column, so the mandated pause reason is kept here.
                 .detail("reason", WorkspaceDeletionLinkage.DELETION_REASON)
-                .detail("pausedScheduledTasks", pausedTasks);
+                .detail("pausedScheduledTasks", pausedTasks)
+                // P3: a deleted workspace must not keep receiving into its shared group bots.
+                .detail("disabledSharedBindings", disabledBindings);
         auditLogService.recordRequired(audit);
 
         eventPublisher.publishEvent(

@@ -37,6 +37,59 @@ export interface UpdateDingTalkImChannelParams {
   robotCode: string;
 }
 
+export interface ImSelection {
+  provider: 'DINGTALK' | 'FEISHU' | string;
+  generation: number;
+  activatedAt: string | null;
+}
+
+export interface GroupChatConfig {
+  provider: 'DINGTALK' | 'FEISHU' | string;
+  configured: boolean;
+  ready: boolean;
+  desiredEnabled: boolean;
+  selected: boolean;
+  appKey: string | null;
+  robotCode: string | null;
+  secretConfigured: boolean;
+  verificationTokenConfigured: boolean;
+  encryptKeyConfigured: boolean;
+  version: number | null;
+  routeVersion: number;
+  selectionGeneration: number;
+  status: 'ACTIVE' | 'DRAINING' | 'PAUSED' | 'DISABLED' | 'ERROR' | string;
+  drainingCount: number;
+  failedCount: number;
+  unknownCount: number;
+}
+
+/** Workspace-visible summary of the selected shared group-chat bot; never contains secrets. */
+export interface GroupChatPublicConfig {
+  provider: 'DINGTALK' | 'FEISHU' | string;
+  configured: boolean;
+  ready: boolean;
+  desiredEnabled: boolean;
+  appKey: string | null;
+  robotCode: string | null;
+  selectionGeneration: number;
+  status: 'ACTIVE' | 'DRAINING' | 'PAUSED' | 'DISABLED' | 'ERROR' | string;
+  drainingCount: number;
+  failedCount: number;
+  unknownCount: number;
+}
+
+export interface UpdateGroupChatConfigParams {
+  appKey?: string;
+  appId?: string;
+  appSecret?: string;
+  robotCode?: string;
+  verificationToken?: string;
+  encryptKey?: string;
+  clearEncryptKey?: boolean;
+  enabled: boolean;
+  version?: number | null;
+}
+
 export const DEFAULT_BRANDING: PlatformBranding = {
   platformName: 'AutoWonder',
   logoUrl: '/logo.svg',
@@ -44,7 +97,7 @@ export const DEFAULT_BRANDING: PlatformBranding = {
   primaryColor: '#f97316',
   domain: null,
   mcpBaseUrl: '',
-  recommendedRuntimeVersion: '0.3.22',
+  recommendedRuntimeVersion: '0.3.30',
   deploymentVersion: 'x.x.x',
   communityEdition: false,
   canManage: false,
@@ -53,6 +106,9 @@ export const DEFAULT_BRANDING: PlatformBranding = {
 export const BRANDING_QUERY_KEY = ['platform-branding', 'public'] as const;
 export const BRANDING_ADMIN_QUERY_KEY = ['platform-branding', 'admin'] as const;
 export const PLATFORM_IM_CHANNELS_QUERY_KEY = ['platform-im-channels'] as const;
+export const IM_SELECTION_QUERY_KEY = ['platform-im-selection'] as const;
+export const GROUP_CHAT_PUBLIC_QUERY_KEY = ['im-group-config-public'] as const;
+export const groupChatQueryKey = (provider: string) => ['platform-im-group-chat', provider] as const;
 
 export const THEME_PRESETS = [
   { key: 'aliyun-orange', name: '阿里橙', primaryColor: '#f97316' },
@@ -100,6 +156,40 @@ export async function updateFeishuImChannel(params: UpdateDingTalkImChannelParam
 export function selectedImProvider(channels: PlatformImChannel[]): string {
   return channels.find((channel) => channel.selected)?.provider
     ?? channels.find((channel) => channel.enabled)?.provider ?? 'DINGTALK';
+}
+
+export async function getImSelection(): Promise<ImSelection> {
+  const resp = await apiClient.get<ImSelection>('/api/platform/im-channels/selection');
+  return resp.data;
+}
+
+export async function selectImProvider(provider: string, expectedGeneration: number): Promise<ImSelection> {
+  const resp = await apiClient.put<ImSelection>('/api/platform/im-channels/selection', {
+    provider,
+    expectedGeneration,
+  });
+  return resp.data;
+}
+
+export async function getGroupChatConfig(provider: string): Promise<GroupChatConfig> {
+  const resp = await apiClient.get<GroupChatConfig>(`/api/platform/im-channels/${provider}/group-chat`);
+  return resp.data;
+}
+
+export async function getPublicGroupChatConfig(): Promise<GroupChatPublicConfig> {
+  const resp = await apiClient.get<GroupChatPublicConfig>('/api/integrations/channels/group-config');
+  return resp.data;
+}
+
+export async function updateGroupChatConfig(
+  provider: string,
+  params: UpdateGroupChatConfigParams,
+): Promise<GroupChatConfig> {
+  const resp = await apiClient.put<GroupChatConfig>(
+    `/api/platform/im-channels/${provider}/group-chat`,
+    params,
+  );
+  return resp.data;
 }
 
 export async function uploadBrandingLogo(file: File): Promise<{ logoUrl: string }> {

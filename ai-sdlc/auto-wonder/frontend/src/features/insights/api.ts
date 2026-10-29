@@ -1,5 +1,5 @@
 import { apiClient } from '@/shared/api/client';
-import type { InsightMetrics, InsightAuditPage, InsightWorker, TimeRange, Granularity, HumanAgentParticipation, HumanAgentSlowTailPage, RequirementDeliveryReport } from './types';
+import type { InsightMetrics, InsightAuditPage, InsightWorker, TimeRange, HumanAgentParticipation, HumanAgentSlowTail, MemberDeliveryReport, StageDurationReport } from './types';
 
 export async function getInsightMetrics(params: {
   workerId?: number;
@@ -36,13 +36,25 @@ export async function getInsightWorkers(): Promise<InsightWorker[]> {
   return resp.data;
 }
 
+export async function getStageDuration(params: {
+  startDate: string;
+  endDate: string;
+  squadId?: number;
+  sdlcId?: number;
+}): Promise<StageDurationReport> {
+  const resp = await apiClient.get<StageDurationReport>('/api/insights/stage-duration', {
+    params: { start_date: params.startDate, end_date: params.endDate, squad_id: params.squadId, sdlc_id: params.sdlcId },
+  });
+  return resp.data;
+}
+
 export async function getHumanAgentParticipation(params: {
   startDate: string;
   endDate: string;
-  granularity: Granularity;
+  workType?: string;
 }): Promise<HumanAgentParticipation> {
   const resp = await apiClient.get<HumanAgentParticipation>('/api/insights/human-agent-participation', {
-    params: { start_date: params.startDate, end_date: params.endDate, granularity: params.granularity },
+    params: participationParams(params),
   });
   return resp.data;
 }
@@ -50,25 +62,37 @@ export async function getHumanAgentParticipation(params: {
 export async function getHumanAgentSlowTail(params: {
   startDate: string;
   endDate: string;
-  page: number;
-  pageSize: number;
-}): Promise<HumanAgentSlowTailPage> {
-  const resp = await apiClient.get<HumanAgentSlowTailPage>('/api/insights/human-agent-participation/slowest', {
-    params: { start_date: params.startDate, end_date: params.endDate, page: params.page, page_size: params.pageSize },
+  workType?: string;
+}): Promise<HumanAgentSlowTail> {
+  const resp = await apiClient.get<HumanAgentSlowTail>('/api/insights/human-agent-participation/slowest', {
+    params: participationParams(params),
   });
+  return resp.data;
+}
+
+/** 仅选中具体类型时才加入 work_type 键；ALL/缺省时 params 与改动前逐键一致。 */
+function participationParams(params: { startDate: string; endDate: string; workType?: string }) {
+  const query: Record<string, string> = { start_date: params.startDate, end_date: params.endDate };
+  if (params.workType && params.workType !== 'ALL') {
+    query.work_type = params.workType;
+  }
+  return query;
+}
+
+/** summary 的工单类型只收敛统计卡；members 明细由后端保持全类型，表格不随类型变化。 */
+export async function getMemberDelivery(params: {
+  startDate: string;
+  endDate: string;
+  workType?: string;
+}): Promise<MemberDeliveryReport> {
+  const query: Record<string, string> = { start_date: params.startDate, end_date: params.endDate };
+  if (params.workType && params.workType !== 'ALL') {
+    query.work_type = params.workType;
+  }
+  const resp = await apiClient.get<MemberDeliveryReport>('/api/insights/member-delivery', { params: query });
   return resp.data;
 }
 
 export async function forceRefreshParticipation(): Promise<void> {
   await apiClient.post('/api/insights/human-agent-participation/refresh');
-}
-
-export async function getRequirementDelivery(params: {
-  startDate: string;
-  endDate: string;
-}): Promise<RequirementDeliveryReport> {
-  const resp = await apiClient.get<RequirementDeliveryReport>('/api/insights/requirement-delivery', {
-    params: { start_date: params.startDate, end_date: params.endDate },
-  });
-  return resp.data;
 }

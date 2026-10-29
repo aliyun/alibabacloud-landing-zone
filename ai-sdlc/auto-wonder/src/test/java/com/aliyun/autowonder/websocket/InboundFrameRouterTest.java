@@ -299,6 +299,34 @@ class InboundFrameRouterTest {
     }
 
     @Test
+    void computeInventoryValidSubsetRetainsOwners() {
+        router.route(session(1L, 10L, 100L), heartbeat(
+                "runningConversationTurnIds", List.of(10L, 20L),
+                "computingConversationTurnIds", List.of(10L),
+                "protocolFeatures", List.of("dispatch_inventory_v1", "CONVERSATION_COMPUTE_INVENTORY_V1")));
+        ArgumentCaptor<ExecutorDispatchSnapshot> snapshot = ArgumentCaptor.forClass(ExecutorDispatchSnapshot.class);
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), snapshot.capture(), any(), isNull(), isNull());
+        assertEquals(java.util.Set.of(10L), snapshot.getValue().capacityConversationTurnIds());
+        assertEquals(java.util.Set.of(10L,20L), snapshot.getValue().runningConversationTurnIds());
+    }
+
+    @Test
+    void malformedComputeInventoryFallsBackWithoutClosingSession() throws Exception {
+        for (Object invalid : List.of(List.of(30L), List.of(10L,10L), List.of(-1L), List.of("10"),
+                List.of(1.5), "[]", java.util.Collections.nCopies(51,10L))) {
+            reset(presenceManager);
+            ExecutorSession es = session(1L, 10L, 100L);
+            router.route(es, heartbeat("runningConversationTurnIds", List.of(10L,20L),
+                    "computingConversationTurnIds", invalid,
+                    "protocolFeatures", List.of("dispatch_inventory_v1", "CONVERSATION_COMPUTE_INVENTORY_V1")));
+            ArgumentCaptor<ExecutorDispatchSnapshot> snapshot = ArgumentCaptor.forClass(ExecutorDispatchSnapshot.class);
+            verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), snapshot.capture(), any(), isNull(), isNull());
+            assertEquals(java.util.Set.of(10L,20L), snapshot.getValue().capacityConversationTurnIds());
+            verify(es.getSession(), never()).close();
+        }
+    }
+
+    @Test
     void heartbeatWithoutInventoryProtocolRemainsOnlineWithoutAuthoritativeReconciliation() throws Exception {
         Session ws = mock(Session.class);
         when(ws.getId()).thenReturn("legacy-session");
@@ -338,6 +366,25 @@ class InboundFrameRouterTest {
                 snapshot.capture(), isNull(), isNull(), isNull());
         assertTrue(snapshot.getValue().hasConversationActivityReport());
         assertTrue(snapshot.getValue().runningConversationTurnIds().isEmpty());
+    }
+
+    @Test
+    void heartbeatPreservesCapabilitiesBeyondLegacyTwentyEntryLimit() {
+        var features = new java.util.ArrayList<String>();
+        for (int i = 0; i < 20; i++) features.add("CAPABILITY_" + i);
+        features.add("EXECUTOR_UPDATE_V1");
+        router.route(session(1L, 10L, 100L), heartbeat("protocolFeatures", features));
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), any(),
+                eq(features), isNull(), isNull());
+    }
+
+    @Test
+    void heartbeatCapabilityParsingRemainsBounded() {
+        var features = new java.util.ArrayList<String>();
+        for (int i = 0; i < 80; i++) features.add("CAPABILITY_" + i);
+        router.route(session(1L, 10L, 100L), heartbeat("protocolFeatures", features));
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), any(),
+                eq(features.subList(0, 64)), isNull(), isNull());
     }
 
     @Test
@@ -534,6 +581,20 @@ class InboundFrameRouterTest {
                         "\"checkpointSeq\":42,\"checkpointSha256\":\"sha256:abc\"}");
         verify(pauseService).onPaused(100L, 1L, 55L, 42L, "sha256:abc");
         verify(guidanceService).requeueDeliveredForDispatch(100L, 55L);
+    }
+
+    @Test
+    void taskPausedWithoutDurableReceiptAcknowledgesWithoutConfirmingTheCheckpoint() throws Exception {
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        when(pauseService.onPaused(100L, 1L, 55L, 42L, "sha256:abc")).thenReturn(false);
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_PAUSED\",\"dispatchId\":55," +
+                        "\"checkpointSeq\":42,\"checkpointSha256\":\"sha256:abc\"}");
+
+        verify(basicRemote).sendText(argThat(text -> text.contains("\"accepted\":false")
+                && !text.contains("pauseCheckpointConfirmed")));
+        verify(guidanceService, never()).requeueDeliveredForDispatch(anyLong(), anyLong());
     }
 
     @Test

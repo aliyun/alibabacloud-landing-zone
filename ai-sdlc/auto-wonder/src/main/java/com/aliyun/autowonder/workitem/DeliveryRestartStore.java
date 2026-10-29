@@ -114,6 +114,13 @@ public class DeliveryRestartStore {
                 "已被第 " + round + " 轮重启取代", tenantId, workitemId, round);
     }
 
+    /** True when a restart intent was allocated after the given instant. */
+    public boolean createdAfter(long tenantId, long workitemId, Date since) {
+        return !jdbc.queryForList("SELECT 1 FROM workitem_delivery_restart WHERE tenant_id=? AND workitem_id=? "
+                        + "AND gmt_create > ? LIMIT 1", tenantId, workitemId, new Timestamp(since.getTime()))
+                .isEmpty();
+    }
+
     public Integer currentRound(long tenantId, long workitemId) {
         var rows = jdbc.queryForList(
                 "SELECT MAX(restart_round) AS max_round FROM workitem_delivery_restart "

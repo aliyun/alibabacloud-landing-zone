@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Card, Tag, Badge, Button, Space, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Alert, Typography, Dropdown, Tooltip, Segmented, Collapse, Drawer, Descriptions } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined, DeleteOutlined, CopyOutlined, CheckCircleFilled, CloseCircleFilled, InfoCircleFilled, CodeOutlined, EyeOutlined, EyeInvisibleOutlined, CodeSandboxOutlined, DownOutlined, BugOutlined, TeamOutlined, CloudUploadOutlined, LinkOutlined } from '@ant-design/icons';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import {
   listExecutors, createExecutor, deleteExecutor, getExecutorToken, getExecutorModelCatalog, restartExecutor,
   getExecutorLaunchConfig, updateExecutorLaunchConfig, buildExecutorLaunchCommand, previewExecutorLaunchCommand,
@@ -18,12 +18,11 @@ import {
 } from './api';
 import { listAgents } from '@/features/agent/api';
 import type { Agent } from '@/features/agent/api';
-import { listSquadsWithMembers } from '@/features/squad/api';
-import { SquadFilterBar } from '@/features/squad/SquadFilterBar';
+import { SquadFilterBar, useSquadOptions } from '@/features/squad/SquadFilterBar';
 import { SquadTags } from '@/features/squad/SquadTags';
-import { buildSquadNameById, groupBySquad, type SquadGroup } from '@/features/squad/squadGrouping';
+import { groupBySquad, type SquadGroup } from '@/features/squad/squadGrouping';
 import { Link } from 'react-router-dom';
-import { buildAgentSquadNameMap, formatAgentSquadLabel } from './agentSquadLabel';
+import { formatAgentSquadLabel } from './agentSquadLabel';
 import { buildExecutorAgentGroups, type ExecutorAgentGroup } from './executorAgentGroups';
 import type { ExecutorVO, IssuedExecutorVO, ExecutorLaunchConfig, ExecutorUpdateVO, ExecutorUpdateAllResultVO, ExecutorUpdateSkipVO } from './api';
 import type { DebugShell, StartupOs } from './api';
@@ -437,22 +436,19 @@ export function ExecutorListPage() {
     queryFn: () => listAgents({ page: 1, size: 100 }),
   });
 
-  const squadsQuery = useQuery({
-    queryKey: ['squads', 'executor-agent-options'],
-    queryFn: () => listSquadsWithMembers(),
-  });
-  const squadNameMap = useMemo(
-    () => buildAgentSquadNameMap(squadsQuery.data ?? []),
-    [squadsQuery.data],
-  );
-  const agentOptionLabel = (agent: Agent) => squadsQuery.data
-    ? formatAgentSquadLabel(agent.name, squadNameMap.get(agent.id))
-    : agent.name;
-  const squadOptions = useMemo(
-    () => (squadsQuery.data ?? []).map((squad) => ({ value: squad.id, label: squad.name })),
-    [squadsQuery.data],
-  );
-  const squadNameById = useMemo(() => buildSquadNameById(squadOptions), [squadOptions]);
+  const { options: squadOptions, nameById: squadNameById, isLoading: squadsLoading } = useSquadOptions();
+  // 归属标签直接取 Agent 列表自带的 squadNames：与小队详情里的成员同源，但不再为每个小队各发一次详情请求。
+  const agentSquadNamesById = useMemo(() => {
+    const namesByAgentId = new Map<number, string[]>();
+    for (const agent of agents) {
+      const squadNames = agent.squadNames;
+      if (squadNames?.length) {
+        namesByAgentId.set(agent.id, squadNames);
+      }
+    }
+    return namesByAgentId;
+  }, [agents]);
+  const agentOptionLabel = (agent: Agent) => formatAgentSquadLabel(agent.name, agentSquadNamesById.get(agent.id));
 
   const [detailId, setDetailId] = useState<number | null>(null);
   const restartMut = useMutation({
@@ -486,6 +482,8 @@ export function ExecutorListPage() {
   const { data: executors = [], isLoading } = useQuery({
     queryKey: ['executors', selectedAgentId, squadFilter],
     queryFn: () => listExecutors(selectedAgentId, squadFilter),
+    // 切换筛选时保留上一份列表，避免每次筛选都先闪回空表再等新数据。
+    placeholderData: keepPreviousData,
     refetchInterval: detailId !== null || (startupTarget !== null && commandRequest) ? 3000 : 10000,
   });
 
@@ -516,11 +514,9 @@ export function ExecutorListPage() {
     (agentId, agentName) => {
       const name = agentName ?? agentNameById.get(agentId);
       if (!name) return null;
-      return squadsQuery.data
-        ? formatAgentSquadLabel(name, squadNameMap.get(agentId))
-        : name;
+      return formatAgentSquadLabel(name, agentSquadNamesById.get(agentId));
     },
-  ), [agentNameById, visibleExecutors, squadNameMap, squadsQuery.data, t]);
+  ), [agentNameById, agentSquadNamesById, visibleExecutors, t]);
 
   const squadGroups = useMemo(
     () => groupBySquad(visibleExecutors, (executor) => executor.squadIds, squadNameById),
@@ -1094,7 +1090,7 @@ export function ExecutorListPage() {
               setSquadGrouped(next);
               writeViewPreference(EXECUTORS_VIEW_STORAGE_KEY, next ? 'squad' : 'agent');
             }}
-            loading={squadsQuery.isLoading}
+            loading={squadsLoading}
             listLabel={squadT('groupByAgent')}
             groupLabel={squadT('groupBySquad')}
           />

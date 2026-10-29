@@ -29,7 +29,18 @@ public class TenantInterceptor implements Interceptor {
      * 需要跨项目读取，因此豁免租户改写；未登记的语句一律保持隔离，禁止按前缀或表名放行。
      */
     static final Set<String> CROSS_TENANT_STATEMENTS = Set.of(
-            "com.aliyun.autowonder.workitem.WorkitemDao.findTenantIdById");
+            "com.aliyun.autowonder.workitem.WorkitemDao.findTenantIdById",
+            // 空间级看板按调用者可管理的空间集合聚合：scope 由 SpaceDashboardService.resolveScope
+            // 判定并作为 workspaceIds 下传，结果必须跨当前 token 绑定的租户，否则会被改写成仅当前
+            // 空间。逐条精确登记，禁止按前缀或表名放行。
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardDao.listScopedWorkspaces",
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardDao.countAgents",
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardDao.countSquads",
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardDao.countDistinctHumans",
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardDao.countCreatedWorkitems",
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardDao.countCompletedWorkitems",
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardDao.countInProgressWorkitems",
+            "com.aliyun.autowonder.spacedashboard.SpaceDashboardDao.sumCredits");
 
     @Override
     public Object intercept(Invocation invocation) throws Throwable {
