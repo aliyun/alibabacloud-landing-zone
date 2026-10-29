@@ -10,6 +10,8 @@ import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.repo.RepoDO;
+import com.aliyun.autowonder.repo.RepoDao;
 import com.aliyun.autowonder.skill.SkillDO;
 import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.squad.SquadAttributionService;
@@ -35,6 +37,7 @@ class AgentServiceTest {
     ExecutorDao executorDao;
     ExecutorRegistry executorRegistry;
     SkillDao capabilityDao;
+    RepoDao repoDao;
     SquadMemberDao squadMemberDao;
     AgentService service;
 
@@ -49,6 +52,7 @@ class AgentServiceTest {
         executorDao = mock(ExecutorDao.class);
         executorRegistry = mock(ExecutorRegistry.class);
         capabilityDao = mock(SkillDao.class);
+        repoDao = mock(RepoDao.class);
         squadMemberDao = mock(SquadMemberDao.class);
         service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 executorDao, executorRegistry);
@@ -58,6 +62,14 @@ class AgentServiceTest {
     private AgentService serviceWithCapabilities() {
         return new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 executorDao, executorRegistry, capabilityDao);
+    }
+
+    /** 生产装配含仓库目录依赖；默认 service 不注入该依赖，用于验证依赖缺失时的兜底。 */
+    private AgentService serviceWithRepositories() {
+        AgentService withRepos = new AgentService(agentDao, versionDao, repoPermDao, skillDao,
+                memoryRefDao, workspaceDao, executorDao, executorRegistry);
+        withRepos.setRepoDao(repoDao);
+        return withRepos;
     }
 
     /** 生产装配含小队成员依赖；默认 service 不注入该依赖，用于验证依赖缺失时的兜底。 */
@@ -311,6 +323,8 @@ class AgentServiceTest {
         assertEquals(11L, vo.getRepoPerms().get(0).getRepoId());
         assertEquals("WRITE", vo.getRepoPerms().get(0).getPermLevel());
         assertEquals(List.of("develop", "release/*"), vo.getRepoPerms().get(0).getAllowedBranchPatterns());
+        // 展示名依赖缺失时保持 null，前端回退为 id
+        assertNull(vo.getRepoPerms().get(0).getRepoName());
         assertEquals(22L, vo.getSkills().get(0).getSkillId());
         assertEquals(33L, vo.getMemoryRefs().get(0).getMemoryId());
         assertEquals("ORG", vo.getMemoryRefs().get(0).getSource());
@@ -383,6 +397,76 @@ class AgentServiceTest {
         assertEquals(22L, vo.getSkills().get(0).getSkillId());
         assertNull(vo.getSkills().get(0).getSkillName());
         verify(capabilityDao, never()).findById(anyLong());
+    }
+
+    @Test
+    void getVersion_resolves_repository_names_for_bound_repo_perms() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(versionDao.findByAgentAndNo(1L, 1)).thenReturn(versionRow(10L, 1, "DRAFT"));
+
+        AgentRepoPermDO bound = new AgentRepoPermDO();
+        bound.setRepoId(30L);
+        bound.setPermLevel("WRITE");
+        when(repoPermDao.listByVersion(10L)).thenReturn(List.of(bound));
+
+        RepoDO repo = new RepoDO();
+        repo.setId(30L);
+        repo.setTenantId(100L);
+        repo.setName("frontend-app");
+        when(repoDao.findById(30L)).thenReturn(repo);
+
+        AgentVersionVO vo = serviceWithRepositories().getVersion(1L, 1, 100L);
+
+        assertEquals(30L, vo.getRepoPerms().get(0).getRepoId());
+        assertEquals("frontend-app", vo.getRepoPerms().get(0).getRepoName());
+    }
+
+    @Test
+    void getVersion_falls_back_to_id_when_repo_name_is_unresolvable() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(versionDao.findByAgentAndNo(1L, 1)).thenReturn(versionRow(10L, 1, "DRAFT"));
+
+        AgentRepoPermDO deleted = new AgentRepoPermDO();
+        deleted.setRepoId(30L);
+        AgentRepoPermDO blankTenant = new AgentRepoPermDO();
+        blankTenant.setRepoId(31L);
+        AgentRepoPermDO foreignTenant = new AgentRepoPermDO();
+        foreignTenant.setRepoId(32L);
+        when(repoPermDao.listByVersion(10L)).thenReturn(List.of(deleted, blankTenant, foreignTenant));
+
+        RepoDO withoutTenant = new RepoDO();
+        withoutTenant.setId(31L);
+        withoutTenant.setName("无租户仓库");
+        when(repoDao.findById(31L)).thenReturn(withoutTenant);
+        RepoDO otherTenant = new RepoDO();
+        otherTenant.setId(32L);
+        otherTenant.setTenantId(200L);
+        otherTenant.setName("其他租户仓库");
+        when(repoDao.findById(32L)).thenReturn(otherTenant);
+
+        AgentVersionVO vo = serviceWithRepositories().getVersion(1L, 1, 100L);
+
+        // 仓库行已删除(findById 返回 null)、无租户、跨租户时都只保留 id，由前端回退展示
+        assertEquals(30L, vo.getRepoPerms().get(0).getRepoId());
+        assertNull(vo.getRepoPerms().get(0).getRepoName());
+        assertNull(vo.getRepoPerms().get(1).getRepoName());
+        assertNull(vo.getRepoPerms().get(2).getRepoName());
+    }
+
+    @Test
+    void getVersion_keeps_repository_names_null_without_the_repo_dependency() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(versionDao.findByAgentAndNo(1L, 1)).thenReturn(versionRow(10L, 1, "DRAFT"));
+
+        AgentRepoPermDO bound = new AgentRepoPermDO();
+        bound.setRepoId(30L);
+        when(repoPermDao.listByVersion(10L)).thenReturn(List.of(bound));
+
+        AgentVersionVO vo = service.getVersion(1L, 1, 100L);
+
+        assertEquals(30L, vo.getRepoPerms().get(0).getRepoId());
+        assertNull(vo.getRepoPerms().get(0).getRepoName());
+        verify(repoDao, never()).findById(anyLong());
     }
 
     @Test
@@ -1101,7 +1185,7 @@ class AgentServiceTest {
     }
 
     @Test
-    void editConfig_other_fields_on_platform_agent_allowed() {
+    void editConfig_official_identity_on_platform_agent_is_read_only() {
         AgentDO agent = platformAgent(9L, 100L, "ONLINE");
         agent.setEditingVersionId(10L);
         when(agentDao.findById(9L)).thenReturn(agent);
@@ -1119,9 +1203,58 @@ class AgentServiceTest {
         req.setResponsibilities("# 新 AGENT.md");
         req.setSdlcId(null);
 
-        service.editConfig(9L, req, 100L, 7L);
-
-        verify(versionDao).updateConfig(eq(10L), eq(100L), isNull(), isNull(), isNull(),
-                eq("# 新 AGENT.md"), isNull(), isNull(), eq(0), eq(7L));
+        BizException error = assertThrows(BizException.class, () -> service.editConfig(9L, req, 100L, 7L));
+        assertEquals("14014", error.getCode());
+        verify(versionDao, never()).updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(), any(), anyLong());
     }
+    @Test
+    void chiefOfficialRoundTripPreservesStoredIdentityAndAllowsSpaceSettings() {
+        var resolver = new ChiefEffectiveConfigResolver(new com.aliyun.autowonder.mcp.PlatformSkillCatalog());
+        service.setChiefConfig(resolver);
+        AgentDO agent = platformAgent(9L, 100L, "ONLINE");
+        agent.setEditingVersionId(10L);
+        when(agentDao.findById(9L)).thenReturn(agent);
+        AgentVersionDO draft = new AgentVersionDO();
+        draft.setId(10L); draft.setTenantId(100L); draft.setAgentId(9L);
+        draft.setStatus("DRAFT"); draft.setVersion(0);
+        draft.setBusinessBackground("legacy soul"); draft.setResponsibilities("legacy agent");
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(), any(), anyLong())).thenReturn(1);
+        for (boolean legacy : new boolean[]{true, false}) {
+            UpdateConfigRequest req = new UpdateConfigRequest();
+            req.setBusinessBackground(legacy ? "legacy soul" : resolver.officialSoulMd());
+            req.setResponsibilities(legacy ? "legacy agent" : resolver.officialAgentMd());
+            req.setEvolutionMode("ASSISTED");
+            req.setProvidedFields(java.util.Set.of("businessBackground", "responsibilities", "evolutionMode"));
+            service.editConfig(9L, req, 100L, 7L);
+        }
+        verify(versionDao, times(2)).updateConfig(eq(10L), eq(100L), isNull(), isNull(),
+                eq("legacy soul"), eq("legacy agent"), isNull(), contains("ASSISTED"), eq(0), eq(7L));
+        UpdateAgentRequest patch = new UpdateAgentRequest();
+        patch.setId(9L);
+        patch.setProvidedFields(java.util.Set.of("responsibilities"));
+        patch.setResponsibilities("attempted override");
+        assertThrows(BizException.class, () -> service.updateAgent(patch, 100L, 7L));
+        patch.setResponsibilities(resolver.officialAgentMd());
+        service.updateAgent(patch, 100L, 7L);
+        verify(versionDao).updateConfig(eq(10L), eq(100L), isNull(), isNull(),
+                eq("legacy soul"), eq("legacy agent"), isNull(), isNull(), eq(0), eq(7L));
+        UpdateConfigRequest clear = new UpdateConfigRequest();
+        clear.setProvidedFields(java.util.Set.of("responsibilities"));
+        assertThrows(BizException.class, () -> service.editConfig(9L, clear, 100L, 7L));
+    }
+
+    @Test
+    void chiefDetailShowsOfficialReleaseSeparatelyFromStoredWorkspaceConfig() {
+        var resolver = new ChiefEffectiveConfigResolver(new com.aliyun.autowonder.mcp.PlatformSkillCatalog());
+        service.setChiefConfig(resolver);
+        AgentDO agent = platformAgent(9L, 100L, "ONLINE");
+        when(agentDao.findById(9L)).thenReturn(agent);
+        AgentVO view = service.get(9L, 100L);
+        assertEquals(resolver.officialView(), view.getOfficialConfiguration());
+        agent.setKind("STANDARD");
+        assertNull(service.get(9L, 100L).getOfficialConfiguration());
+        verify(versionDao, never()).updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(), any(), anyLong());
+    }
+
 }

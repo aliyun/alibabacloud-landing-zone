@@ -5,11 +5,12 @@ import type { ReactNode, DragEvent } from 'react';
 import { Badge, Button, Card, Tag, Typography, Empty, Spin, theme } from 'antd';
 import { LinkOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { workTypeMap, getPriorityMeta, STATUS_COLUMNS, statusCategoryOf } from '../constants';
+import { workTypeMap, getPriorityMeta, CANCELED_STATUS_COLUMN, STATUS_COLUMNS, statusCategoryOf } from '../constants';
 import { displayNameWithoutId } from '../nameDisplay';
 import { groupPendingDecisionsByAssignee, isMyPendingDecision } from '../decisionGrouping';
 import { WorkitemHealthBadge } from './WorkitemHealthBadge';
 import { ScheduledExecutionBadge } from './ScheduledExecutionBadge';
+import { WorkitemTagsCell } from './WorkitemTagsCell';
 import type { Workitem } from '@/shared/types/workitem';
 
 const { Text, Paragraph } = Typography;
@@ -78,6 +79,9 @@ function WorkitemCard({ item, ...dragProps }: { item: Workitem } & CardDragProps
           gmtCreate={item.gmtCreate}
         />
       </Paragraph>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+        <WorkitemTagsCell workitem={item} maxVisible={2} />
+      </div>
       {item.sourceType === 'EXTERNAL' && (
         <div style={{ marginBottom: 6, fontSize: 12 }} onClick={(event) => event.stopPropagation()}>
           {item.sourceUrl ? (
@@ -181,21 +185,23 @@ export function WorkitemKanban({
       onDragEnd={resetDrag}
     />
   );
+  const visibleColumns = useMemo(
+    () => (columnKeys
+      ? [...STATUS_COLUMNS, CANCELED_STATUS_COLUMN].filter(col => columnKeys.includes(col.key))
+      : STATUS_COLUMNS),
+    [columnKeys],
+  );
   const grouped = useMemo(() => {
     const groups: Record<string, Workitem[]> = {};
-    STATUS_COLUMNS.forEach(col => { groups[col.key] = []; });
+    visibleColumns.forEach(col => { groups[col.key] = []; });
     items.forEach(item => {
-      // CANCELED 分类在看板中隐藏（规格 3.1 优先级 0），未知分类同样不落列。
+      // 未渲染的列（默认看板不含 CANCELED）与未知分类不落列。
       const key = statusCategoryOf(item);
       if (!groups[key]) return;
       groups[key].push(item);
     });
     return groups;
-  }, [items]);
-
-  const visibleColumns = columnKeys
-    ? STATUS_COLUMNS.filter(col => columnKeys.includes(col.key))
-    : STATUS_COLUMNS;
+  }, [items, visibleColumns]);
 
   return (
     <Spin spinning={!!loading || transitionBusy} tip={transitionBusy ? t('kanban.updating') : undefined}>

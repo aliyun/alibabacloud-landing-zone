@@ -48,19 +48,24 @@ it('updates each cached routed long-duration consumer while retaining expanded t
   expect(requests).toBe(1);
 });
 
-it('switches a cached slow-tail table and plural total in place without rewriting data or refetching', async () => {
+it('switches a cached slow-tail table in place without rewriting data, paginating or refetching', async () => {
   let requests = 0;
-  server.use(http.get('/api/insights/human-agent-participation/slowest', () => {
+  let lastUrl = '';
+  server.use(http.get('/api/insights/human-agent-participation/slowest', ({ request }) => {
     requests++;
-    return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { tailSize: 1, total: 1, page: 1, pageSize: 10, items: [{ workitemId: 9, title: '<b>报告</b>', completedAt: finishedAt, totalDurationSeconds: 3600, humanDurationSeconds: 1800, agentDurationSeconds: 1800 }] } });
+    lastUrl = request.url;
+    return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { items: [{ workitemId: 9, title: '<b>报告</b>', completedAt: finishedAt, totalDurationSeconds: 3600, humanDurationSeconds: 1800, agentDurationSeconds: 1800 }] } });
   }));
-  routed(<SlowTailTable startDate="2026-09-01" endDate="2026-09-25" />);
+  routed(<SlowTailTable startDate="2026-09-01" endDate="2026-09-25" workType="ALL" />);
   expect(await screen.findByText('<b>报告</b>')).toBeInTheDocument();
+  expect(lastUrl).toContain('start_date=2026-09-01');
+  expect(lastUrl).not.toContain('work_type');
+  expect(lastUrl).not.toContain('page');
+  expect(document.querySelector('.ant-pagination')).toBeNull();
   const table = screen.getByRole('table');
   await act(async () => { await i18n.changeLanguage('en-US'); });
   expect(screen.getByRole('table')).toBe(table);
   expect(within(table).getByRole('columnheader', { name: 'Human responsibility' })).toBeInTheDocument();
-  expect(screen.getByText('1 work item')).toBeInTheDocument();
   expect(within(table).getByText('1h')).toBeInTheDocument();
   expect(within(table).getByText('<b>报告</b>')).toBeInTheDocument();
   expect(requests).toBe(1);

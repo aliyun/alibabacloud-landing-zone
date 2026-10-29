@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { WorkitemMeta } from './WorkitemMeta';
 
 const base = {
@@ -81,6 +82,40 @@ describe('WorkitemMeta', () => {
     expect(screen.queryByText(/SDLC/)).not.toBeInTheDocument();
     expect(screen.queryByText(/创建者/)).not.toBeInTheDocument();
     expect(screen.getByText((_, node) => node?.textContent === '当前处理人: 未指派')).toBeInTheDocument();
+  });
+
+  it('omits the tag row when there are no tags and editing is disabled', () => {
+    render(<WorkitemMeta {...base} />);
+    expect(screen.queryByText(/标签:/)).not.toBeInTheDocument();
+  });
+
+  it('shows read-only tags without an edit action', () => {
+    render(<WorkitemMeta {...base} tags={['发布', '线上']} />);
+    expect(screen.getByText('发布')).toBeInTheDocument();
+    expect(screen.getByText('线上')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑标签' })).not.toBeInTheDocument();
+  });
+
+  it('shows every tag without collapsing on the detail meta', () => {
+    const tags = Array.from({ length: 12 }, (_, index) => `标签${index}`);
+    render(<WorkitemMeta {...base} tags={tags} tagsEditable onEditTags={vi.fn()} />);
+    tags.forEach((tag) => expect(screen.getByText(tag)).toBeInTheDocument());
+    expect(screen.queryByTestId('workitem-tags-overflow')).not.toBeInTheDocument();
+  });
+
+  it('opens the tag editor from the meta edit action and shows an add entry when needed', async () => {
+    const onEditTags = vi.fn();
+    const { rerender } = render(
+      <WorkitemMeta {...base} tags={['发布']} tagsEditable onEditTags={onEditTags} />,
+    );
+    expect(screen.getByText('发布')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '编辑标签' }));
+    expect(onEditTags).toHaveBeenCalledTimes(1);
+
+    rerender(<WorkitemMeta {...base} tags={[]} tagsEditable onEditTags={onEditTags} />);
+    expect(screen.getByText('暂无标签')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '添加标签' }));
+    expect(onEditTags).toHaveBeenCalledTimes(2);
   });
 });
 

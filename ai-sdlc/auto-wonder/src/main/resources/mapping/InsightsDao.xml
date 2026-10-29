@@ -10,12 +10,22 @@
           <if test="agentId != null">AND agent_id = #{agentId}</if>
     </select>
 
+    <!-- Credits 口径：派发 + 全部对话渠道（不限渠道），两者过滤条件必须与分类构成查询保持一致。 -->
     <select id="countTotalCredits" resultType="java.math.BigDecimal">
         SELECT COALESCE(SUM(credits), 0)
-        FROM dispatch_ai_usage
-        WHERE tenant_id = #{tenantId}
-          AND usage_at >= #{since}
-          <if test="agentId != null">AND agent_id = #{agentId}</if>
+        FROM (
+            SELECT credits
+            FROM dispatch_ai_usage
+            WHERE tenant_id = #{tenantId}
+              AND usage_at >= #{since}
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+            UNION ALL
+            SELECT credits
+            FROM agent_conversation_usage
+            WHERE tenant_id = #{tenantId}
+              AND usage_at >= #{since}
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+        ) merged
     </select>
 
     <select id="countWorkitems" resultType="int">
@@ -35,6 +45,25 @@
         WHERE tenant_id = #{tenantId}
           AND usage_at >= #{since}
           <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
+    <!-- Credits 均值分母：产生了派发用量或工单绑定对话用量的工单（并集）。 -->
+    <select id="countCreditUsageWorkitems" resultType="int">
+        SELECT COUNT(DISTINCT workitem_id)
+        FROM (
+            SELECT workitem_id
+            FROM dispatch_ai_usage
+            WHERE tenant_id = #{tenantId}
+              AND usage_at >= #{since}
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+            UNION ALL
+            SELECT workitem_id
+            FROM agent_conversation_usage
+            WHERE tenant_id = #{tenantId}
+              AND usage_at >= #{since}
+              AND workitem_id IS NOT NULL
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+        ) merged
     </select>
 
     <select id="avgDispatchDurationMinutes" resultType="java.lang.Integer">
@@ -97,12 +126,70 @@
 
     <select id="dailyCreditsTrend" resultType="java.util.Map">
         SELECT DATE(usage_at) as day, COALESCE(SUM(credits), 0) as credits
-        FROM dispatch_ai_usage
-        WHERE tenant_id = #{tenantId} AND usage_at >= #{since}
-          <if test="agentId != null">AND agent_id = #{agentId}</if>
+        FROM (
+            SELECT usage_at, credits
+            FROM dispatch_ai_usage
+            WHERE tenant_id = #{tenantId} AND usage_at >= #{since}
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+            UNION ALL
+            SELECT usage_at, credits
+            FROM agent_conversation_usage
+            WHERE tenant_id = #{tenantId} AND usage_at >= #{since}
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+        ) merged
         GROUP BY DATE(usage_at)
         ORDER BY day DESC
         LIMIT 7
+    </select>
+
+    <select id="listWorkerCredits" resultType="com.aliyun.autowonder.insights.dto.InsightMetricsVO$WorkerCost">
+        SELECT merged.agent_id AS agentId,
+               a.name AS agentName,
+               COALESCE(SUM(merged.credits), 0) AS credits,
+               COALESCE(SUM(merged.conversation_credits), 0) AS conversationCredits
+        FROM (
+            SELECT agent_id, credits, 0 AS conversation_credits
+            FROM dispatch_ai_usage
+            WHERE tenant_id = #{tenantId}
+              AND usage_at >= #{since}
+              AND agent_id IS NOT NULL
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+            UNION ALL
+            SELECT agent_id, credits, credits AS conversation_credits
+            FROM agent_conversation_usage
+            WHERE tenant_id = #{tenantId}
+              AND usage_at >= #{since}
+              AND agent_id IS NOT NULL
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+        ) merged
+        LEFT JOIN agent a
+          ON a.id = merged.agent_id AND a.tenant_id = #{tenantId} AND a.is_deleted = 0
+        GROUP BY merged.agent_id, a.name
+        ORDER BY merged.agent_id
+    </select>
+
+    <select id="listCreditsBySource" resultType="com.aliyun.autowonder.insights.dto.InsightMetricsVO$CreditSource">
+        SELECT source, COALESCE(SUM(credits), 0) AS credits
+        FROM (
+            SELECT 'DISPATCH' AS source, credits
+            FROM dispatch_ai_usage
+            WHERE tenant_id = #{tenantId}
+              AND usage_at >= #{since}
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+            UNION ALL
+            SELECT CASE
+                       WHEN channel = 'WORKITEM_CLARIFICATION' THEN 'WORKITEM_CLARIFICATION'
+                       WHEN channel = 'PLATFORM_ASSISTANT' THEN 'PLATFORM_ASSISTANT'
+                       WHEN channel IN ('DINGTALK', 'FEISHU') THEN 'IM'
+                       ELSE 'OTHER_CONVERSATION'
+                   END AS source,
+                   credits
+            FROM agent_conversation_usage
+            WHERE tenant_id = #{tenantId}
+              AND usage_at >= #{since}
+              <if test="agentId != null">AND agent_id = #{agentId}</if>
+        ) merged
+        GROUP BY source
     </select>
 
     <select id="listAuditItems" resultType="com.aliyun.autowonder.insights.dto.InsightAuditItemVO">
@@ -122,11 +209,7 @@
             END as operatorType,
             al.action as eventType,
             COALESCE(JSON_UNQUOTE(JSON_EXTRACT(al.detail_json, '$.summary')), CONCAT(al.target_type, '#', al.target_id)) as detail,
-            CASE
-                WHEN al.action IN ('DELETE', 'FORCE_PUBLISH', 'ROLE_CHANGE') THEN 'high'
-                WHEN al.action IN ('UPDATE', 'REJECT', 'RETRY') THEN 'medium'
-                ELSE 'low'
-            END as riskLevel
+            <include refid="com.aliyun.autowonder.audit.AuditLogDao.riskLevelCase"/> as riskLevel
         FROM audit_log al
         LEFT JOIN agent a ON al.actor_id = a.id AND al.tenant_id = a.tenant_id
         LEFT JOIN `user` u ON al.actor_id = u.id AND u.is_deleted = 0
@@ -139,14 +222,12 @@
             </choose>
           DAY)
           <if test="riskLevel != null and riskLevel != ''">
-            AND CASE
-                WHEN al.action IN ('DELETE', 'FORCE_PUBLISH', 'ROLE_CHANGE') THEN 'high'
-                WHEN al.action IN ('UPDATE', 'REJECT', 'RETRY') THEN 'medium'
-                ELSE 'low'
-            END = #{riskLevel}
+            AND <include refid="com.aliyun.autowonder.audit.AuditLogDao.riskLevelCase"/> = #{riskLevel}
           </if>
           <if test="workerId != null">
             AND a.id = #{workerId}
+            <!-- user 与 agent 的 id 空间重叠，须同时限定 actorType=AGENT，避免同号真人记录被计入。 -->
+            AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(CASE WHEN JSON_VALID(al.detail_json) THEN al.detail_json ELSE '{}' END, '$.actorType')), 'HUMAN') = 'AGENT'
           </if>
         ORDER BY al.gmt_create DESC
         LIMIT #{limit} OFFSET #{offset}
@@ -165,28 +246,30 @@
             </choose>
           DAY)
           <if test="riskLevel != null and riskLevel != ''">
-            AND CASE
-                WHEN al.action IN ('DELETE', 'FORCE_PUBLISH', 'ROLE_CHANGE') THEN 'high'
-                WHEN al.action IN ('UPDATE', 'REJECT', 'RETRY') THEN 'medium'
-                ELSE 'low'
-            END = #{riskLevel}
+            AND <include refid="com.aliyun.autowonder.audit.AuditLogDao.riskLevelCase"/> = #{riskLevel}
           </if>
           <if test="workerId != null">
             AND a.id = #{workerId}
+            AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(CASE WHEN JSON_VALID(al.detail_json) THEN al.detail_json ELSE '{}' END, '$.actorType')), 'HUMAN') = 'AGENT'
           </if>
     </select>
 
     <select id="listActiveWorkers" resultType="com.aliyun.autowonder.insights.dto.InsightWorkerVO">
-        SELECT DISTINCT a.id, a.name
+        SELECT a.id, a.name
         FROM agent a
-        JOIN dispatch d ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
-        WHERE a.tenant_id = #{tenantId} AND a.is_deleted = 0 AND d.is_deleted = 0
+        WHERE a.tenant_id = #{tenantId} AND a.is_deleted = 0
+          AND (
+            EXISTS (SELECT 1 FROM dispatch d
+                    WHERE d.agent_id = a.id AND d.tenant_id = a.tenant_id AND d.is_deleted = 0)
+            OR EXISTS (SELECT 1 FROM agent_conversation_usage u
+                       WHERE u.agent_id = a.id AND u.tenant_id = a.tenant_id)
+          )
         ORDER BY a.name
     </select>
 
     <select id="listParticipationLifecycleEvents"
             resultType="com.aliyun.autowonder.insights.participation.HumanAgentParticipationRawEventRow">
-        SELECT w.id AS workitemId, w.title, w.gmt_create AS workitemCreatedAt,
+        SELECT w.id AS workitemId, w.title, w.work_type AS workType, w.gmt_create AS workitemCreatedAt,
                e.id AS eventId, e.event_type AS eventType, e.to_val AS toVal,
                CASE
                    WHEN e.event_type = 'ASSIGN' AND target_agent.id IS NOT NULL THEN 'AGENT'
@@ -211,6 +294,19 @@
         LIMIT #{limit} OFFSET #{offset}
     </select>
 
+    <select id="listWorkitemIdsCompletedBetween" resultType="java.lang.Long">
+        SELECT DISTINCT w.id
+        FROM workitem w
+        JOIN workitem_event e ON e.tenant_id = w.tenant_id AND e.workitem_id = w.id
+        LEFT JOIN status_node sn ON sn.template_id = w.template_id AND sn.code = e.to_val
+        WHERE w.tenant_id = #{tenantId} AND w.is_deleted = 0
+          AND e.gmt_create &gt;= #{startInclusive}
+          AND e.gmt_create &lt; #{endExclusive}
+          AND e.event_type = 'STATUS_CHANGE'
+          AND COALESCE(sn.category = 'DONE', FALSE)
+        ORDER BY w.id
+    </select>
+
     <sql id="participationDispatchFilter">
         d.tenant_id = #{tenantId} AND d.is_deleted = 0
         <if test="_databaseId == 'autowonder-source-aware'">AND d.source_type = 'WORKITEM'</if>
@@ -219,23 +315,40 @@
         <foreach collection="workitemIds" item="id" open="(" separator="," close=")">#{id}</foreach>
     </sql>
 
-    <!-- Include a marker for dispatches without boundaries so missing traces cannot look complete. -->
-    <select id="listParticipationExecutionEvents" resultType="com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO">
-        SELECT d.workitem_id AS workitemId, d.id AS dispatchId, 0 AS id, 0 AS sequenceOrder,
-               'dispatch.observed' AS eventType, d.gmt_create AS eventTime, NULL AS detailJson
-        FROM dispatch d WHERE <include refid="participationDispatchFilter"/>
-        UNION ALL
-        SELECT d.workitem_id AS workitemId, d.id AS dispatchId, e.id AS id,
-               COALESCE(e.seq, e.id) AS sequenceOrder,
-               e.event_type AS eventType, e.event_time AS eventTime,
-               JSON_OBJECT('sessionId', CASE WHEN JSON_VALID(e.detail_json)
-                   THEN JSON_UNQUOTE(JSON_EXTRACT(e.detail_json, '$.sessionId')) ELSE NULL END) AS detailJson
-        FROM dispatch d JOIN dispatch_runtime_event e ON e.dispatch_id = d.id AND e.tenant_id = d.tenant_id
+    <select id="listParticipationDispatchStarts"
+            resultType="com.aliyun.autowonder.insights.participation.HumanAgentParticipationDispatchRow">
+        SELECT d.workitem_id AS workitemId, MIN(d.gmt_create) AS firstDispatchAt
+        FROM dispatch d
         WHERE <include refid="participationDispatchFilter"/>
+        GROUP BY d.workitem_id
+    </select>
+
+    <select id="listParticipationLifecycleEventsByWorkitemIds"
+            resultType="com.aliyun.autowonder.insights.participation.HumanAgentParticipationRawEventRow">
+        SELECT w.id AS workitemId, w.title, w.work_type AS workType, w.gmt_create AS workitemCreatedAt,
+               e.id AS eventId, e.event_type AS eventType, e.to_val AS toVal,
+               CASE
+                   WHEN e.event_type = 'ASSIGN' AND target_agent.id IS NOT NULL THEN 'AGENT'
+                   WHEN e.event_type = 'ASSIGN' AND e.to_val REGEXP '^[0-9]+$' THEN 'HUMAN'
+                   ELSE NULL
+               END AS inferredToType,
+               e.detail_json AS detailJson, e.gmt_create AS eventAt,
+               COALESCE(sn.category = 'DONE', FALSE) AS terminal
+        FROM workitem w
+        JOIN workitem_event e ON e.tenant_id = w.tenant_id AND e.workitem_id = w.id
+        LEFT JOIN status_node sn ON sn.template_id = w.template_id AND sn.code = e.to_val
+        LEFT JOIN agent target_agent
+          ON e.event_type = 'ASSIGN'
+         AND e.to_val REGEXP '^[0-9]+$'
+         AND target_agent.tenant_id = w.tenant_id
+         AND target_agent.id = CAST(e.to_val AS UNSIGNED)
+         AND target_agent.is_deleted = 0
+        WHERE w.tenant_id = #{tenantId} AND w.is_deleted = 0
+          AND w.id IN
+          <foreach collection="workitemIds" item="id" open="(" separator="," close=")">#{id}</foreach>
           AND e.gmt_create &lt; #{cutoffExclusive}
-          AND e.event_type IN ('session.started', 'session.resumed', 'session.forked',
-                              'session.interrupted', 'session.completed', 'session.failed', 'session.cancelled')
-        ORDER BY workitemId, dispatchId, sequenceOrder, id
+          AND e.event_type IN ('CREATE', 'ASSIGN', 'STATUS_CHANGE')
+        ORDER BY w.id, e.gmt_create, e.id
     </select>
 
 </mapper>

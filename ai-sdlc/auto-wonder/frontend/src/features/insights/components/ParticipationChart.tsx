@@ -7,7 +7,7 @@ import { PieChart, BarChart, LineChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent, TitleComponent, DataZoomComponent, AriaComponent } from 'echarts/components';
 import { SVGRenderer } from 'echarts/renderers';
 import { participationChartOptions, humanShare, SERIES, type ChartKind, type ChartPalette } from './participationChartOptions';
-import type { DurationSummary, TrendEntry, Granularity } from '../types';
+import type { DurationSummary, TrendEntry } from '../types';
 import { formatDuration } from '@/shared/lib/duration';
 
 use([PieChart, BarChart, LineChart, GridComponent, TooltipComponent, TitleComponent, DataZoomComponent, AriaComponent, SVGRenderer]);
@@ -19,7 +19,7 @@ function palette(): ChartPalette {
     border: value('--aw-border', '#34404a'), panel: value('--aw-panel', '#1b2329') };
 }
 
-interface Props { kind: ChartKind; data: TrendEntry[]; average: DurationSummary | null; granularity?: Granularity; sampleSize?: number }
+interface Props { kind: ChartKind; data: TrendEntry[]; average: DurationSummary | null; sampleSize?: number }
 export default function ParticipationChart(props: Props) {
   const { t } = useTranslation('insights');
   const [expanded, setExpanded] = useState(false);
@@ -33,7 +33,7 @@ export default function ParticipationChart(props: Props) {
   </>;
 }
 
-function ChartPanel({ kind, data, average, granularity = 'DAY', sampleSize, onExpand, expanded = false }: Props & { onExpand?: () => void; expanded?: boolean }) {
+function ChartPanel({ kind, data, average, sampleSize, onExpand, expanded = false }: Props & { onExpand?: () => void; expanded?: boolean }) {
   const { t } = useTranslation('insights');
   const id = useId();
   const host = useRef<HTMLDivElement>(null);
@@ -44,7 +44,7 @@ function ChartPanel({ kind, data, average, granularity = 'DAY', sampleSize, onEx
   const copy = { title: t(`chart.${kind}.title`), subtitle: t(`chart.${kind}.subtitle`), note: t(`chart.${kind}.note`) };
   const share = average ? humanShare(average.humanDurationSeconds, average.agentDurationSeconds, average.humanShare) : null;
   const empty = kind === 'distribution' ? share == null : !data.some(row => row.sampleSize !== 0);
-  const getOption = useCallback(() => participationChartOptions(kind, data, average, palette(), hidden, granularity), [kind, data, average, hidden, granularity, t]);
+  const getOption = useCallback(() => participationChartOptions(kind, data, average, palette(), hidden), [kind, data, average, hidden, palette, t]);
   const latestOption = useRef(getOption);
   latestOption.current = getOption;
 
@@ -120,7 +120,7 @@ function ChartPanel({ kind, data, average, granularity = 'DAY', sampleSize, onEx
       </button>)}
     </div>
     {empty ? <div key="empty" className="participation-chart-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('chart.noSamples')} /></div> : table ? <div key="table" className="participation-chart-table" tabIndex={0}>
-      <table><caption>{t('chart.tableCaption', { title: copy.title })}</caption><thead><tr><th>{t(granularity === 'WEEK' ? 'chart.weekStart' : granularity === 'MONTH' ? 'chart.month' : 'chart.period')}</th><th>{t('chart.samples')}</th><th>{t('chart.averageTotal')}</th><th>{t('chart.humanResponsibility')}</th><th>{t('chart.agentResponsibility')}</th>{kind === 'ratio' && <><th>{t('chart.humanShare')}</th><th>{t('chart.agentShare')}</th></>}</tr></thead>
+      <table><caption>{t('chart.tableCaption', { title: copy.title })}</caption><thead><tr><th>{t('chart.date')}</th><th>{t('chart.samples')}</th><th>{t('chart.averageTotal')}</th><th>{t('chart.humanResponsibility')}</th><th>{t('chart.agentResponsibility')}</th>{kind === 'ratio' && <><th>{t('chart.humanShare')}</th><th>{t('chart.agentShare')}</th></>}</tr></thead>
         <tbody>{rows.map(row => {
           const ratio = row.sampleSize === 0 ? null : humanShare(row.averageHumanSeconds, row.averageAgentSeconds, row.humanShare);
           return <tr key={row.label}><th scope="row">{row.label}</th><td>{row.sampleSize ?? '—'}</td>
@@ -133,6 +133,6 @@ function ChartPanel({ kind, data, average, granularity = 'DAY', sampleSize, onEx
       <span><i className="is-human" />{t('series.human')}<strong>{(share! * 100).toFixed(1)}%</strong><small>{formatDuration(average!.humanDurationSeconds)}</small></span>
       <span><i className="is-agent" />{t('series.agent')}<strong>{((1 - share!) * 100).toFixed(1)}%</strong><small>{formatDuration(average!.agentDurationSeconds)}</small></span>
     </div>}
-    <p className="participation-chart-note">{copy.note}{sampleSize != null && t('chart.sampleNote', { count: sampleSize })}{kind !== 'distribution' && granularity === 'WEEK' && t('chart.weekNote')}</p>
+    <p className="participation-chart-note">{copy.note}{sampleSize != null && t('chart.sampleNote', { count: sampleSize })}</p>
   </section>;
 }

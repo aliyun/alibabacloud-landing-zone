@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CANCELED_STATUS_COLUMN,
   STATUS_COLUMNS,
+  STATUS_FILTER_COLUMNS,
   statusCategoryOf,
   getPriorityMeta,
   priorityMap,
@@ -59,5 +61,15 @@ describe('STATUS_COLUMNS', () => {
     expect(STATUS_COLUMNS.map(col => col.key)).toEqual(
       ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE'],
     );
+  });
+});
+
+describe('STATUS_FILTER_COLUMNS', () => {
+  it('appends 已取消 so cancelled workitems can be filtered without adding a board column', () => {
+    expect(STATUS_FILTER_COLUMNS.map(col => col.key)).toEqual(
+      ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE', 'CANCELED'],
+    );
+    expect(STATUS_FILTER_COLUMNS[4]).toBe(CANCELED_STATUS_COLUMN);
+    expect(CANCELED_STATUS_COLUMN.title).toBe('已取消');
   });
 });

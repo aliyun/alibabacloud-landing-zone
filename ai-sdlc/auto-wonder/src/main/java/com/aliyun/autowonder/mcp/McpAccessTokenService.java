@@ -179,6 +179,10 @@ public class McpAccessTokenService {
         return new BizException(ErrorCode.UNAUTHORIZED);
     }
 
+    /** Trusted server-issued execution binding; tokenId remains the conversation id. */
+    public record ExecutionScope(long conversationId, long turnId, int dispatchAttempt,
+                                 long executorId, long agentId, long agentVersionId) {}
+
     public enum CredentialType {
         LONG_LIVED,
         DISPATCH,
@@ -192,7 +196,11 @@ public class McpAccessTokenService {
      */
     public record Principal(Long workspaceId, long userId, long tokenId,
                             WorkspaceAccessLevel accessLevel,
-                            CredentialType credentialType) {
+                            CredentialType credentialType, ExecutionScope executionScope) {
+        public Principal(Long workspaceId, long userId, long tokenId,
+                WorkspaceAccessLevel accessLevel, CredentialType credentialType) {
+            this(workspaceId, userId, tokenId, accessLevel, credentialType, null);
+        }
 
         public Principal {
             boolean personal = credentialType == CredentialType.LONG_LIVED;

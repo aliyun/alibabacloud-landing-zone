@@ -9,6 +9,22 @@ import java.util.List;
 @Mapper
 public interface AgentConversationElicitationDao {
 
+    List<AgentConversationElicitationDO> listDueAnswers(@Param("now") Date now, @Param("limit") int limit);
+    int advanceAnswerDelivery(@Param("id") long id, @Param("answerId") String answerId, @Param("stage") String stage);
+    int claimAnswerDelivery(@Param("id") long id, @Param("now") Date now, @Param("next") Date next);
+    List<AgentConversationElicitationDO> listQuestionHistory(@Param("tenantId") long tenantId,
+            @Param("conversationId") long conversationId);
+    List<AgentConversationElicitationDO> listAnswerDeliveries(@Param("tenantId") long tenantId,
+            @Param("conversationId") long conversationId);
+    AgentConversationElicitationDO findByRequestIdForUpdate(@Param("tenantId") long tenantId,
+            @Param("conversationId") long conversationId, @Param("requestId") String requestId);
+    int closeAnswerDeliveriesForTurn(@Param("tenantId") long tenantId,
+            @Param("conversationId") long conversationId, @Param("turnId") long turnId);
+    int finishAnswerDeliveriesForTurn(@Param("tenantId") long tenantId,@Param("executorId") long executorId,
+            @Param("conversationId") long conversationId,@Param("turnId") long turnId,@Param("attempt") int attempt);
+    int finishAnswerDelivery(@Param("id") long id, @Param("answerId") String answerId);
+    int saveAnswerIfPending(AgentConversationElicitationDO row);
+
     /** 事件可能因分片重投而重复到达，用唯一键做幂等插入。 */
     int insertIfAbsent(AgentConversationElicitationDO record);
 
@@ -44,5 +60,5 @@ public interface AgentConversationElicitationDao {
             @Param("expectedStatus") String expectedStatus);
 
     List<AgentConversationElicitationDO> listPendingOlderThan(@Param("cutoff") Date cutoff,
-            @Param("limit") int limit);
+            @Param("afterId") long afterId, @Param("limit") int limit);
 }

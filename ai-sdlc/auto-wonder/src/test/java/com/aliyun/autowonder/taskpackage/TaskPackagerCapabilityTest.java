@@ -21,6 +21,28 @@ import static org.junit.jupiter.api.Assertions.*;
 class TaskPackagerCapabilityTest {
 
     @Test
+    void packagesOfficialChiefSkillsWithoutDatabaseSkillRows() throws Exception {
+        var catalog = new com.aliyun.autowonder.mcp.PlatformSkillCatalog();
+        var resolver = new com.aliyun.autowonder.agent.ChiefEffectiveConfigResolver("agent", "soul", catalog.list());
+        PackageContext ctx = baseContext();
+        ctx.setSkills(resolver.resolve(List.of(Map.of("id", 71L, "type", "MCP", "name", "space-tools",
+                "config", Map.of("transport", "http", "url", "https://space.example.test/mcp")))).capabilities());
+        InMemoryObjectStorage storage = new InMemoryObjectStorage();
+        var result = new TaskPackager(storage, "task-packages", "https://new-platform.example.test").build(ctx);
+        var entries = unzip(storage.get(result.getOssRef()));
+        var doc = JSON.parseObject(new String(entries.get("skills.json"), StandardCharsets.UTF_8));
+        assertEquals(catalog.list().size(), doc.getJSONArray("skills").size());
+        for (var skill : catalog.list()) {
+            assertTrue(entries.containsKey("capabilities/skills/" + skill.getId() + "/SKILL.md"));
+        }
+        assertEquals(2, doc.getJSONArray("mcpServers").size());
+        var builtin = doc.getJSONArray("mcpServers").stream().map(JSONObject.class::cast)
+                .filter(s -> "autowonder".equals(s.getString("name"))).findFirst().orElseThrow();
+        assertEquals("https://new-platform.example.test/api/mcp", builtin.getString("url"));
+        assertTrue(doc.getJSONArray("skills").getJSONObject(0).getString("id").startsWith("official:"));
+    }
+
+    @Test
     void packages_bound_capabilities_and_builtin_autowonder_mcp() throws Exception {
         InMemoryObjectStorage storage = new InMemoryObjectStorage();
         var skillStored = storage.put("capability", "review.zip", zip(Map.of(

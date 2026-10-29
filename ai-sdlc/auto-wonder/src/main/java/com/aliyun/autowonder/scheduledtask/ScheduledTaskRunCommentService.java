@@ -20,6 +20,8 @@ import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 import com.aliyun.autowonder.im.notification.WorkitemCommentMentionedEvent;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.json.JSON;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +41,7 @@ import java.util.Objects;
 @Service
 @RequiresScheduledTaskCapability(entry = "http")
 public class ScheduledTaskRunCommentService {
+    private static final Logger log = LoggerFactory.getLogger(ScheduledTaskRunCommentService.class);
     private final ScheduledTaskRunDao runDao;
     private final WorkitemCommentDao commentDao;
     private WorkitemCommentMentionDao mentionDao;
@@ -181,10 +184,12 @@ public class ScheduledTaskRunCommentService {
     private void createMentionsAndGuidance(long workspaceId, long runId, WorkitemCommentDO comment, long creatorId,
             Collection<Long> explicitTargetAgentIds, Collection<Long> explicitTargetHumanIds) {
         if (comment.getId() == null || comment.getContentMd() == null) return;
-        List<Long> agentTargets = explicitTargetAgentIds == null ? List.of() : explicitTargetAgentIds.stream()
-                .filter(Objects::nonNull).distinct().toList();
-        List<Long> humanTargets = explicitTargetHumanIds == null ? List.of() : explicitTargetHumanIds.stream()
-                .filter(Objects::nonNull).distinct().toList();
+        List<Long> requestedAgentTargets = explicitTargetAgentIds == null ? List.of()
+                : explicitTargetAgentIds.stream().filter(Objects::nonNull).distinct().toList();
+        List<Long> humanTargets = explicitTargetHumanIds == null ? List.of()
+                : explicitTargetHumanIds.stream().filter(Objects::nonNull).distinct().toList();
+        boolean agentAuthored = "AGENT".equals(comment.getAuthorType());
+        List<Long> agentTargets = agentAuthored ? List.of() : requestedAgentTargets;
         if (!agentTargets.isEmpty()) {
             if (mentionDao == null || agentDao == null) return;
             for (Long targetId : agentTargets) {
@@ -202,7 +207,16 @@ public class ScheduledTaskRunCommentService {
                 persistHumanMention(workspaceId, runId, comment, creatorId, requireWorkspaceHuman(workspaceId, userId));
             }
         }
-        if (!agentTargets.isEmpty() || !humanTargets.isEmpty()) return;
+        if (!requestedAgentTargets.isEmpty() || !humanTargets.isEmpty()) {
+            if (agentAuthored && !requestedAgentTargets.isEmpty()) {
+                log.info("drop agent targets on agent-authored scheduled-run comment runId={} commentId={} "
+                                + "authorAgentId={} targets={}",
+                        runId, comment.getId(), comment.getAuthorRef(), requestedAgentTargets);
+            }
+            // An explicit target suppresses text parsing; dropping agent targets must not
+            // re-enable the fallback that this request explicitly opted out of.
+            return;
+        }
         String text = comment.getContentMd().stripLeading();
         if (!text.startsWith("@")) return;
         int end = 1;
@@ -210,7 +224,17 @@ public class ScheduledTaskRunCommentService {
         String name = text.substring(1, end).trim();
         if (mentionDao == null) return;
         List<AgentDO> matches = agentDao == null ? null : agentDao.findByExactName(workspaceId, name);
-        if (matches != null && matches.size() == 1 && matches.get(0).getId() != null) {
+        if (agentAuthored) {
+            // A name owned by any tenant agent means an agent-mentioned agent: drop it and
+            // never fall back to a same-named human.
+            if (matches != null && !matches.isEmpty()) {
+                log.info("drop agent mention on agent-authored scheduled-run comment runId={} commentId={} "
+                                + "authorAgentId={} name={} matchedAgents={}",
+                        runId, comment.getId(), comment.getAuthorRef(), name,
+                        matches.stream().filter(Objects::nonNull).map(AgentDO::getId).toList());
+                return;
+            }
+        } else if (matches != null && matches.size() == 1 && matches.get(0).getId() != null) {
             AgentDO agent = matches.get(0);
             if (isFrozenParticipant(workspaceId, runId, agent.getId())) {
                 persistMentionAndGuidance(workspaceId, runId, comment, creatorId, agent);

@@ -50,6 +50,7 @@ export interface TimelineElicitation {
   requestedSchema?: unknown;
   resolved: boolean;
   action?: AcpElicitationAction;
+  status?: string;
   content?: Record<string, unknown>;
 }
 
@@ -59,6 +60,7 @@ export interface TimelineRaw {
 }
 
 export interface TimelineNode {
+  dispatchAttempt?: number;
   id: string;
   kind: TimelineNodeKind;
   turnId: number;
@@ -74,6 +76,7 @@ export interface TimelineNode {
 
 /** 结构上兼容 hooks 的 StreamedEvent，但不反向依赖 hooks，避免模块环。 */
 export interface TimelineInputEvent {
+  dispatchAttempt?: number;
   eventSeq: number;
   turnId: number;
   eventType: string;
@@ -85,6 +88,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
   const ordered = events
     .map((event, arrivalIndex) => ({ event, arrivalIndex }))
     .sort((a, b) => a.event.turnId - b.event.turnId
+      || (a.event.dispatchAttempt ?? 0) - (b.event.dispatchAttempt ?? 0)
       || a.event.eventSeq - b.event.eventSeq
       || a.arrivalIndex - b.arrivalIndex)
     .map((entry) => entry.event);
@@ -105,7 +109,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
         if (!chunk) break;
         const last = nodes[nodes.length - 1];
         // 同轮次才合并：跨轮次拼接会把两次作答揉成一段。
-        if (last && last.kind === event.eventType && last.turnId === event.turnId) {
+        if (last && last.kind === event.eventType && last.turnId === event.turnId && (last.dispatchAttempt ?? 0) === (event.dispatchAttempt ?? 0)) {
           last.text = (last.text ?? '') + chunk;
         } else {
           nodes.push({ ...base(event, event.eventType), text: chunk });
@@ -116,7 +120,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
       case 'tool_use': {
         // callId 由执行器每轮独立生成，归并键必须带 turnId 才不会跨轮撞号。
         const callId = payload?.callId ?? `seq-${event.eventSeq}`;
-        const key = `${event.turnId}:${callId}`;
+        const key = `${event.turnId}:${event.dispatchAttempt ?? 0}:${callId}`;
         const existing = nodeAt(nodes, toolIndex.get(key));
         const call: TimelineToolCall = {
           callId,
@@ -142,7 +146,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
       case 'tool_result': {
         // 重连时起始帧可能已滚出窗口，只有结果帧也要能建节点。
         const callId = payload?.callId ?? `seq-${event.eventSeq}`;
-        const key = `${event.turnId}:${callId}`;
+        const key = `${event.turnId}:${event.dispatchAttempt ?? 0}:${callId}`;
         const existing = nodeAt(nodes, toolIndex.get(key));
         const call: TimelineToolCall = {
           callId,
@@ -168,7 +172,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
 
       case 'acp_plan': {
         // 全量替换语义：原地刷新该轮唯一的快照节点，不让它随刷新跳到时间线末尾。
-        const key = `plan-${event.turnId}`;
+        const key = `plan-${event.turnId}-${event.dispatchAttempt ?? 0}`;
         const snapshot: TimelinePlan = { entries: data?.entries ?? [] };
         const existing = nodeAt(nodes, snapshotIndex.get(key));
         if (existing) {
@@ -181,7 +185,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
       }
 
       case 'acp_commands': {
-        const key = `commands-${event.turnId}`;
+        const key = `commands-${event.turnId}-${event.dispatchAttempt ?? 0}`;
         const snapshot: TimelineCommands = { availableCommands: data?.availableCommands ?? [] };
         const existing = nodeAt(nodes, snapshotIndex.get(key));
         if (existing) {
@@ -205,6 +209,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
           requestedSchema: data?.requestedSchema ?? existing?.elicitation?.requestedSchema,
           resolved: existing?.elicitation?.resolved ?? false,
           action: existing?.elicitation?.action,
+          status: existing?.elicitation?.status,
           content: existing?.elicitation?.content,
         };
         if (existing) {
@@ -228,6 +233,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
           requestedSchema: existing?.elicitation?.requestedSchema,
           resolved: true,
           action: data?.action,
+          status: data?.status,
           content: data?.content,
         };
         if (existing) {
@@ -260,8 +266,9 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
 
 function base(event: TimelineInputEvent, kind: TimelineNodeKind): TimelineNode {
   return {
-    id: `${kind}-${event.turnId}-${event.eventSeq}`,
+    id: `${kind}-${event.turnId}-${event.dispatchAttempt ?? 0}-${event.eventSeq}`,
     kind,
+    dispatchAttempt: event.dispatchAttempt ?? 0,
     turnId: event.turnId,
     eventSeq: event.eventSeq,
   };

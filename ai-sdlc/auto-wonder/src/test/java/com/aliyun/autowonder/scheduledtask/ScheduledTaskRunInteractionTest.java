@@ -56,7 +56,7 @@ class ScheduledTaskRunInteractionTest {
     }
 
     @Test
-    void agentMentionPersistsRunMentionAndQueuesRunGuidance() {
+    void agentTextAgentMentionIsDroppedForAgentAuthoredComment() {
         ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
         WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
         WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
@@ -73,10 +73,167 @@ class ScheduledTaskRunInteractionTest {
 
         service.addAgentComment(1L, 77L, 20L, "@tester 请复核");
 
+        verify(agents).findByExactName(1L, "tester");
+        verify(comments).insert(any());
+        verifyNoInteractions(mentions, guidance);
+    }
+
+    @Test
+    void agentExplicitAgentTargetIsDroppedSilently() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+
+        service.addAgentComment(1L, 77L, 20L, "请复核", List.of(21L), List.of());
+
+        verify(comments).insert(any());
+        verifyNoInteractions(mentions, guidance, agents);
+    }
+
+    @Test
+    void agentMixedTargetsPersistOnlyHumanMention() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        UserDao users = mock(UserDao.class);
+        WorkspaceMemberDao members = mock(WorkspaceMemberDao.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        UserDO user = new UserDO(); user.setId(10000L); user.setUsername("caihe"); user.setNickname("蔡何");
+        WorkspaceMemberDO member = new WorkspaceMemberDO(); member.setStatus(0);
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        when(users.findById(10000L)).thenReturn(user);
+        when(members.findByWorkspaceAndUser(1L, 10000L)).thenReturn(member);
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+        service.configureHumanMentions(users, members, null, events);
+
+        service.addAgentComment(1L, 77L, 20L, "分析完成", List.of(21L), List.of(10000L));
+
         ArgumentCaptor<WorkitemCommentMentionDO> mention = ArgumentCaptor.forClass(WorkitemCommentMentionDO.class);
         verify(mentions).insert(mention.capture());
-        assertEquals("SCHEDULED_TASK_RUN", mention.getValue().getSourceType());
-        verify(guidance).createForScheduledRunComment(1L, 77L, 9L, 21L, 20L);
+        assertEquals("HUMAN", mention.getValue().getTargetType());
+        assertEquals(10000L, mention.getValue().getTargetRef());
+        verify(events).publishEvent(any(WorkitemCommentMentionedEvent.class));
+        verifyNoInteractions(guidance);
+    }
+
+    @Test
+    void agentExplicitAgentTargetDoesNotFallBackToTextHuman() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        UserDao users = mock(UserDao.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+        service.configureHumanMentions(users, mock(WorkspaceMemberDao.class), null, mock(ApplicationEventPublisher.class));
+
+        service.addAgentComment(1L, 77L, 20L, "@蔡何 请查看", List.of(21L), List.of());
+
+        verify(comments).insert(any());
+        verifyNoInteractions(mentions, guidance, users);
+    }
+
+    @Test
+    void agentTextAgentMentionDoesNotFallBackToSameNameHuman() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        UserDao users = mock(UserDao.class);
+        WorkspaceMemberDao members = mock(WorkspaceMemberDao.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        AgentDO frozen = new AgentDO(); frozen.setId(21L); frozen.setName("tester");
+        AgentDO outsider = new AgentDO(); outsider.setId(22L); outsider.setName("tester");
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        when(agents.findByExactName(1L, "tester")).thenReturn(List.of(frozen, outsider));
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+        service.configureHumanMentions(users, members, null, events);
+
+        service.addAgentComment(1L, 77L, 20L, "@tester 请复核");
+
+        verify(comments).insert(any());
+        verifyNoInteractions(mentions, guidance, events);
+        verify(users, never()).findByUsernameOrNickname(anyString());
+    }
+
+    @Test
+    void humanTextAgentMentionStillQueuesGuidance() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        AgentDO target = new AgentDO(); target.setId(21L); target.setName("tester");
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        when(agents.findByExactName(1L, "tester")).thenReturn(List.of(target));
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+
+        service.addHumanComment(1L, 77L, 10000L, "@tester 请复核");
+
+        ArgumentCaptor<WorkitemCommentMentionDO> mention = ArgumentCaptor.forClass(WorkitemCommentMentionDO.class);
+        verify(mentions).insert(mention.capture());
+        assertEquals("AGENT", mention.getValue().getTargetType());
+        assertEquals(21L, mention.getValue().getTargetRef());
+        verify(guidance).createForScheduledRunComment(1L, 77L, 9L, 21L, 10000L);
+    }
+
+    @Test
+    void humanTextMentionFallsBackToHumanWhenNoAgentMatches() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        UserDao users = mock(UserDao.class);
+        WorkspaceMemberDao members = mock(WorkspaceMemberDao.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        UserDO user = new UserDO(); user.setId(20000L); user.setUsername("bob"); user.setNickname("Bob");
+        WorkspaceMemberDO member = new WorkspaceMemberDO(); member.setStatus(0);
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        when(agents.findByExactName(1L, "Bob")).thenReturn(List.of());
+        when(users.findByUsernameOrNickname("Bob")).thenReturn(List.of(user));
+        when(members.findByWorkspaceAndUser(1L, 20000L)).thenReturn(member);
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+        service.configureHumanMentions(users, members, null, events);
+
+        service.addHumanComment(1L, 77L, 10000L, "@Bob 请查看");
+
+        ArgumentCaptor<WorkitemCommentMentionDO> mention = ArgumentCaptor.forClass(WorkitemCommentMentionDO.class);
+        verify(mentions).insert(mention.capture());
+        assertEquals("HUMAN", mention.getValue().getTargetType());
+        assertEquals(20000L, mention.getValue().getTargetRef());
+        verify(events).publishEvent(any(WorkitemCommentMentionedEvent.class));
+        verifyNoInteractions(guidance);
     }
 
     @Test

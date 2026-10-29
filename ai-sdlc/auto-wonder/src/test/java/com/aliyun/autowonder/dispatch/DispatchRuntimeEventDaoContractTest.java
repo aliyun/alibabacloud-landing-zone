@@ -61,22 +61,24 @@ class DispatchRuntimeEventDaoContractTest {
     }
 
     @Test
-    void dispatchAfterSeqCursorRequiresTenantIsolationAndStrictlyGreaterSeq() throws Exception {
+    void dispatchAfterIdCursorRequiresTenantIsolationAndStrictlyGreaterId() throws Exception {
         String xml = new String(getClass().getResourceAsStream(
                 "/mapping/DispatchRuntimeEventDao.xml").readAllBytes(), StandardCharsets.UTF_8);
-        int start = xml.indexOf("id=\"listByDispatchAfterSeq\"");
-        assertTrue(start >= 0, "listByDispatchAfterSeq select must exist");
+        int start = xml.indexOf("id=\"listByDispatchAfterId\"");
+        assertTrue(start >= 0, "listByDispatchAfterId select must exist");
         int end = xml.indexOf("</select>", start);
-        assertTrue(end > start, "listByDispatchAfterSeq select must be closed");
+        assertTrue(end > start, "listByDispatchAfterId select must be closed");
         String sql = xml.substring(start, end);
         String normalized = sql.replace("&gt;", ">").replace("&lt;", "<");
 
         assertTrue(normalized.contains("tenant_id = #{tenantId}"));
         assertTrue(normalized.contains("dispatch_id = #{dispatchId}"));
-        assertTrue(normalized.contains("seq IS NULL OR seq > #{afterSeq}"));
-        assertFalse(normalized.contains("seq >= #{afterSeq}"),
-                "afterSeq cursor must be strictly greater, otherwise reconnect re-delivers the cursor row");
-        assertTrue(normalized.contains("ORDER BY COALESCE(seq, id) ASC, id ASC"));
+        assertTrue(normalized.contains("id > #{afterId}"));
+        assertFalse(normalized.contains("id >= #{afterId}"),
+                "afterId cursor must be strictly greater, otherwise reconnect re-delivers the cursor row");
+        assertTrue(normalized.contains("ORDER BY id ASC"));
+        assertFalse(normalized.contains("COALESCE(seq, id)"),
+                "failover re-runs restart the runtime-numbered seq, so the cursor must follow arrival id");
         assertFalse(sql.contains("${"));
     }
 }

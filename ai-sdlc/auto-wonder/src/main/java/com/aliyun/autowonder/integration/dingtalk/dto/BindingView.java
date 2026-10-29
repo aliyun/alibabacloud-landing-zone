@@ -6,6 +6,11 @@ import java.util.Date;
 @Data
 public class BindingView {
     private Long id;
+    private String bindingMode;
+    private Long platformConfigId;
+    private String groupId;
+    private Long routeVersion;
+    private Integer version;
     private String appKey;
     private String appSecretMasked; // 脱敏,不回传明文
     private String robotCode;

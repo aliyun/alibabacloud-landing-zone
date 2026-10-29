@@ -4,7 +4,7 @@ import { i18n } from '@/shared/i18n';
 import { keepPreviousData, useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
 import type { WorkitemQuery, WorkitemStatusCategory, RecycledWorkitemQuery } from './api';
-import type { Workitem } from '@/shared/types/workitem';
+import type { DeliveryProgress, Workitem } from '@/shared/types/workitem';
 
 export function useWorkitemList(query: WorkitemQuery, options?: { enabled?: boolean }) {
   return useQuery({
@@ -70,6 +70,8 @@ export function useWorkitem(id: number | string) {
     queryKey: ['workitem', id],
     queryFn: () => api.getWorkitem(id),
     enabled: !!id,
+    // 后台交付会推进业务状态和负责人，详情自己必须收敛：30s 慢轮询对齐进度周期，查询出错时退避到 60s
+    refetchInterval: (query) => (query.state.status === 'error' ? 60_000 : 30_000),
   });
 }
 
@@ -153,6 +155,14 @@ export function useUpdateScheduledStart(workitemId: number | string) {
   });
 }
 
+export function useWorkitemTagOptions() {
+  return useQuery({
+    queryKey: ['workitem-tag-options'],
+    queryFn: api.listWorkitemTagOptions,
+    staleTime: 60_000,
+  });
+}
+
 export function useUpdateWorkitemTags(workitemId: number | string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -161,6 +171,7 @@ export function useUpdateWorkitemTags(workitemId: number | string) {
       message.success(i18n.t('workitem:messages.tagsUpdated'));
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId] });
       queryClient.invalidateQueries({ queryKey: ['workitems'] });
+      queryClient.invalidateQueries({ queryKey: ['workitem-tag-options'] });
     },
   });
 }
@@ -309,6 +320,16 @@ export function useToggleWatch() {
   });
 }
 
+/** 仍在推进交付的执行/坐席状态；其余值视为本轮交付已结束。 */
+const ACTIVE_EXECUTION_STATUSES = ['PENDING', 'PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'PAUSING', 'PAUSE_FAILED', 'WAITING_FOR_PAUSE'];
+
+function hasActiveDelivery(progress: DeliveryProgress | undefined): boolean {
+  return Boolean(
+    progress?.agents?.some((agent) => agent.status === 'active')
+    || progress?.executions?.some((execution) => ACTIVE_EXECUTION_STATUSES.includes(execution.status ?? '')),
+  );
+}
+
 export function useDeliveryProgress(workitemId: number | string, statusCategory?: string | null) {
   return useQuery({
     queryKey: ['workitem', workitemId, 'delivery-progress'],
@@ -317,10 +338,7 @@ export function useDeliveryProgress(workitemId: number | string, statusCategory?
     enabled: !!workitemId,
     refetchInterval: (query) => {
       if (query.state.status === 'error') return 30000;
-      const data = query.state.data;
-      const hasActive = data?.agents?.some((a) => a.status === 'active')
-        || data?.executions?.some((execution) => ['PENDING', 'PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'PAUSING', 'PAUSE_FAILED', 'WAITING_FOR_PAUSE'].includes(execution.status ?? ''));
-      return hasActive || statusCategory === 'IN_PROGRESS' ? 5000 : 30000;
+      return hasActiveDelivery(query.state.data) || statusCategory === 'IN_PROGRESS' ? 5000 : 30000;
     },
   });
 }
@@ -345,6 +363,30 @@ export function usePauseDispatch(workitemId: number | string) {
       message.success(i18n.t('workitem:messages.pauseRequested'));
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'delivery-progress'] });
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'unified-timeline'] });
+    },
+  });
+}
+
+export type ExecutionActionKind = 'pause' | 'end' | 'forceEnd' | 'resume';
+
+export function useExecutionControl(workitemId: number | string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ dispatchId, action }: { dispatchId: number; action: ExecutionActionKind }) => {
+      if (action === 'pause') return api.pauseDispatch(workitemId, dispatchId);
+      if (action === 'resume') return api.continueDispatch(workitemId, dispatchId);
+      return api.cancelDispatch(workitemId, dispatchId, action === 'forceEnd');
+    },
+    onSuccess: (_data, variables) => {
+      message.success(i18n.t(`workitem:messages.execution${variables.action === 'end' ? 'EndRequested' : variables.action === 'forceEnd' ? 'ForceEndRequested' : variables.action === 'pause' ? 'PauseRequested' : 'ResumeRequested'}`));
+      queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'delivery-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'unified-timeline'] });
+      queryClient.invalidateQueries({ queryKey: ['workitem-recovery', workitemId] });
+    },
+    onError: (error: Error) => {
+      message.error(error.message || i18n.t('workitem:messages.executionFailed'));
+      queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'delivery-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['workitem-recovery', workitemId] });
     },
   });
 }

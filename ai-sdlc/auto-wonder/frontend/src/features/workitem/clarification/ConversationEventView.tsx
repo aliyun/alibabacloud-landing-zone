@@ -4,15 +4,18 @@ import { Typography, Spin } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
 import type { TimelineNode } from './timeline';
 import { renderTimelineNode } from './eventRegistry';
+import type { Artifact } from '@/shared/types/workitem';
 
 interface ConversationEventViewProps {
   /** 时间线由 useClarificationEvents 产出，这里只负责渲染，不重复归并一遍。 */
   nodes: TimelineNode[];
   isProcessing: boolean;
+  artifacts?: Artifact[];
+  onArtifactClick?: (artifact: Artifact) => void;
 }
 
 export function ConversationEventView({
-  nodes, isProcessing,
+  nodes, isProcessing, artifacts, onArtifactClick,
 }: ConversationEventViewProps) {
   const { t } = useTranslation('workitem');
   const hasReplyText = nodes.some((node) => node.kind === 'text' && !!node.text);
@@ -35,7 +38,9 @@ export function ConversationEventView({
   return (
     <div style={{ padding: '8px 0' }}>
       {nodes.map((node) => (
-        <Fragment key={node.id}>{renderTimelineNode(node)}</Fragment>
+        <Fragment key={node.id}>
+          {renderTimelineNode(node, artifacts && onArtifactClick ? { artifacts, onArtifactClick } : undefined)}
+        </Fragment>
       ))}
       {isProcessing && !hasReplyText && (
         <Spin indicator={<LoadingOutlined />} style={{ marginTop: 8 }} />

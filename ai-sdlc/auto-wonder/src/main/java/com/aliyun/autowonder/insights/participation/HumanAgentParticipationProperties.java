@@ -18,6 +18,7 @@ public class HumanAgentParticipationProperties {
     private int refreshPageSize = 5000;
     private long inflightTtlSeconds = 600;
     private long waitPollIntervalMs = 2000;
+    private long tailCacheTtlSeconds = 60;
 
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
@@ -41,4 +42,6 @@ public class HumanAgentParticipationProperties {
     public void setInflightTtlSeconds(long inflightTtlSeconds) { this.inflightTtlSeconds = inflightTtlSeconds; }
     public long getWaitPollIntervalMs() { return waitPollIntervalMs; }
     public void setWaitPollIntervalMs(long waitPollIntervalMs) { this.waitPollIntervalMs = waitPollIntervalMs; }
+    public long getTailCacheTtlSeconds() { return tailCacheTtlSeconds; }
+    public void setTailCacheTtlSeconds(long tailCacheTtlSeconds) { this.tailCacheTtlSeconds = tailCacheTtlSeconds; }
 }

@@ -81,6 +81,8 @@ import zhChiefOfStaff from './locales/zh-CN/chiefOfStaff.json';
 import enChiefOfStaff from './locales/en-US/chiefOfStaff.json';
 import zhUserManagement from './locales/zh-CN/userManagement.json';
 import enUserManagement from './locales/en-US/userManagement.json';
+import zhSpaceDashboard from './locales/zh-CN/spaceDashboard.json';
+import enSpaceDashboard from './locales/en-US/spaceDashboard.json';
 
 export type Locale = 'zh-CN' | 'en-US';
 export function normalizeLocale(value: unknown): Locale {
@@ -91,8 +93,8 @@ export function browserLocale(): Locale {
   return normalizeLocale(languages.find(value => /^(en|zh)(?:[-_]|$)/i.test(value)));
 }
 export const resources = {
-  'zh-CN': { chiefOfStaff: zhChiefOfStaff, common: zhCommon, shell: zhShell, auth: zhAuth, shared: zhShared, workitem: zhWorkitem, agent: zhAgent, squad: zhSquad, executor: zhExecutor, insights: zhInsights, execution: zhExecution, evolution: zhEvolution, scheduledTask: zhScheduledTask, sdlc: zhSdlc, statemachine: zhStatemachine, repo: zhRepo, skill: zhSkill, memory: zhMemory, integration: zhIntegration, settings: zhSettings, environmentVariables: zhEnvironmentVariables, audit: zhAudit, profile: zhProfile, mcp: zhMcp, platform: zhPlatform, notification: zhNotification, about: zhAbout, help: zhHelp, overview: zhOverview, userManagement: zhUserManagement },
-  'en-US': { chiefOfStaff: enChiefOfStaff, common: enCommon, shell: enShell, auth: enAuth, shared: enShared, workitem: enWorkitem, agent: enAgent, squad: enSquad, executor: enExecutor, insights: enInsights, execution: enExecution, evolution: enEvolution, scheduledTask: enScheduledTask, sdlc: enSdlc, statemachine: enStatemachine, repo: enRepo, skill: enSkill, memory: enMemory, integration: enIntegration, settings: enSettings, environmentVariables: enEnvironmentVariables, audit: enAudit, profile: enProfile, mcp: enMcp, platform: enPlatform, notification: enNotification, about: enAbout, help: enHelp, overview: enOverview, userManagement: enUserManagement },
+  'zh-CN': { chiefOfStaff: zhChiefOfStaff, common: zhCommon, shell: zhShell, auth: zhAuth, shared: zhShared, workitem: zhWorkitem, agent: zhAgent, squad: zhSquad, executor: zhExecutor, insights: zhInsights, execution: zhExecution, evolution: zhEvolution, scheduledTask: zhScheduledTask, sdlc: zhSdlc, statemachine: zhStatemachine, repo: zhRepo, skill: zhSkill, memory: zhMemory, integration: zhIntegration, settings: zhSettings, environmentVariables: zhEnvironmentVariables, audit: zhAudit, profile: zhProfile, mcp: zhMcp, platform: zhPlatform, notification: zhNotification, about: zhAbout, help: zhHelp, overview: zhOverview, userManagement: zhUserManagement, spaceDashboard: zhSpaceDashboard },
+  'en-US': { chiefOfStaff: enChiefOfStaff, common: enCommon, shell: enShell, auth: enAuth, shared: enShared, workitem: enWorkitem, agent: enAgent, squad: enSquad, executor: enExecutor, insights: enInsights, execution: enExecution, evolution: enEvolution, scheduledTask: enScheduledTask, sdlc: enSdlc, statemachine: enStatemachine, repo: enRepo, skill: enSkill, memory: enMemory, integration: enIntegration, settings: enSettings, environmentVariables: enEnvironmentVariables, audit: enAudit, profile: enProfile, mcp: enMcp, platform: enPlatform, notification: enNotification, about: enAbout, help: enHelp, overview: enOverview, userManagement: enUserManagement, spaceDashboard: enSpaceDashboard },
 };
 export const i18n = i18next.createInstance();
 void i18n.use(initReactI18next).init({

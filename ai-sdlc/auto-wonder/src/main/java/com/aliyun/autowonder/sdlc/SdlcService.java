@@ -145,7 +145,7 @@ public class SdlcService {
 
     @Transactional
     public void delete(long id, long tenantId, long userId) {
-        SdlcDO s = sdlcDao.findById(id);
+        SdlcDO s = sdlcDao.findByIdForUpdate(id, tenantId);
         if (s == null) {
             throw new BizException(ErrorCode.SDLC_NOT_FOUND);
         }
@@ -160,7 +160,7 @@ public class SdlcService {
         if (rows == 0) {
             throw new BizException(ErrorCode.SDLC_VERSION_CONFLICT);
         }
-        stepDao.deleteAllBySdlc(id, tenantId);
+        stepDao.deleteAllForDeletedParent(id, tenantId);
     }
 
     private BizException buildInUseException(long workitemCount, List<Long> workitemIds, List<Long> agentIds) {
@@ -212,7 +212,7 @@ public class SdlcService {
 
     @Transactional
     public StepVO addStep(long sdlcId, CreateStepRequest req, long tenantId, long userId) {
-        SdlcDO s = sdlcDao.findById(sdlcId);
+        SdlcDO s = sdlcDao.findByIdForUpdate(sdlcId, tenantId);
         if (s == null) {
             throw new BizException(ErrorCode.SDLC_NOT_FOUND);
         }
@@ -227,7 +227,7 @@ public class SdlcService {
         step.setSdlcId(sdlcId);
         Integer requestedOrder = req.getStepOrder();
         step.setStepOrder(requestedOrder != null && requestedOrder > 0
-                ? requestedOrder : nextStepOrder(sdlcId));
+                ? requestedOrder : nextStepOrder(sdlcId, tenantId));
         step.setName(req.getName());
         step.setKind(req.getKind());
         step.setInstructionMd(req.getInstructionMd());
@@ -243,14 +243,14 @@ public class SdlcService {
         step.setOnSuccess(req.getOnSuccess());
         step.setOnFail(req.getOnFail());
         step.setCreatorId(userId);
-        insertStepWithOrderRetry(step, sdlcId);
+        insertStepWithOrderRetry(step, sdlcId, tenantId);
         return toStepVO(step);
     }
 
     /**
      * 唯一键冲突（并发新增或历史软删除占位）时重新计算序号重试，避免直接暴露系统内部错误。
      */
-    private void insertStepWithOrderRetry(SdlcStepDO step, long sdlcId) {
+    private void insertStepWithOrderRetry(SdlcStepDO step, long sdlcId, long tenantId) {
         int maxAttempts = 3;
         for (int attempt = 1; ; attempt++) {
             try {
@@ -260,7 +260,7 @@ public class SdlcService {
                 if (attempt >= maxAttempts) {
                     throw new BizException(ErrorCode.SDLC_STEP_ORDER_DUPLICATE);
                 }
-                step.setStepOrder(nextStepOrder(sdlcId));
+                step.setStepOrder(nextStepOrder(sdlcId, tenantId));
             }
         }
     }
@@ -320,22 +320,23 @@ public class SdlcService {
 
     @Transactional
     public void deleteStep(long sdlcId, long stepId, long tenantId, long userId) {
-        SdlcDO s = sdlcDao.findById(sdlcId);
+        SdlcDO s = sdlcDao.findByIdForUpdate(sdlcId, tenantId);
         if (s == null) {
             throw new BizException(ErrorCode.SDLC_NOT_FOUND);
         }
         requireEditable(s);
-        SdlcStepDO step = stepDao.findById(stepId);
-        if (step == null || step.getSdlcId() != sdlcId) {
+        List<SdlcStepDO> live = stepDao.listBySdlcForUpdate(sdlcId, tenantId);
+        if (live.stream().noneMatch(step -> step.getId() == stepId)) {
             throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
         }
-        stepDao.softDelete(stepId, tenantId, userId);
-        renumberSteps(sdlcId, tenantId, userId);
+        int order = new SdlcStepOrderAllocator(stepDao).allocate(sdlcId, tenantId, 1).get(0);
+        requireStepWrite(stepDao.softDelete(stepId, tenantId, sdlcId, order, userId));
+        renumberSteps(live.stream().filter(step -> step.getId() != stepId).toList(), sdlcId, tenantId, userId);
     }
 
     @Transactional
     public void reorderSteps(long sdlcId, ReorderRequest req, long tenantId, long userId) {
-        SdlcDO s = sdlcDao.findById(sdlcId);
+        SdlcDO s = sdlcDao.findByIdForUpdate(sdlcId, tenantId);
         if (s == null) {
             throw new BizException(ErrorCode.SDLC_NOT_FOUND);
         }
@@ -344,19 +345,18 @@ public class SdlcService {
         if (ids == null || ids.isEmpty()) {
             return;
         }
+        List<SdlcStepDO> live = stepDao.listBySdlcForUpdate(sdlcId, tenantId);
         Set<Long> validIds = new HashSet<>();
-        for (SdlcStepDO st : stepDao.listBySdlc(sdlcId)) {
-            validIds.add(st.getId());
-        }
-        if (!validIds.equals(new HashSet<>(ids))) {
+        for (SdlcStepDO step : live) validIds.add(step.getId());
+        if (ids.size() != live.size() || !validIds.equals(new HashSet<>(ids))) {
             throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
         }
-        // 两段式更新：先移到互不冲突的负数临时区，再赋目标序号，避免中间态唯一键冲突
+        List<Integer> temporaryOrders = new SdlcStepOrderAllocator(stepDao).allocate(sdlcId, tenantId, ids.size());
         for (int i = 0; i < ids.size(); i++) {
-            stepDao.updateOrder(ids.get(i), tenantId, Integer.MIN_VALUE + i, userId);
+            requireStepWrite(stepDao.updateOrder(ids.get(i), tenantId, sdlcId, temporaryOrders.get(i), userId));
         }
         for (int i = 0; i < ids.size(); i++) {
-            stepDao.updateOrder(ids.get(i), tenantId, i + 1, userId);
+            requireStepWrite(stepDao.updateOrder(ids.get(i), tenantId, sdlcId, i + 1, userId));
         }
     }
 
@@ -468,24 +468,28 @@ public class SdlcService {
         }
     }
 
-    private void renumberSteps(long sdlcId, long tenantId, long userId) {
-        List<SdlcStepDO> remaining = stepDao.listBySdlc(sdlcId);
+    private void renumberSteps(List<SdlcStepDO> remaining, long sdlcId, long tenantId, long userId) {
         for (int i = 0; i < remaining.size(); i++) {
             if (remaining.get(i).getStepOrder() != i + 1) {
-                stepDao.updateOrder(remaining.get(i).getId(), tenantId, i + 1, userId);
+                requireStepWrite(stepDao.updateOrder(remaining.get(i).getId(), tenantId, sdlcId, i + 1, userId));
             }
         }
     }
 
-    private int nextStepOrder(long sdlcId) {
-        List<SdlcStepDO> steps = stepDao.listBySdlc(sdlcId);
-        int max = 0;
+    private int nextStepOrder(long sdlcId, long tenantId) {
+        List<SdlcStepDO> steps = stepDao.listBySdlcForUpdate(sdlcId, tenantId);
+        long max = 0;
         for (SdlcStepDO st : steps) {
             if (st.getStepOrder() != null && st.getStepOrder() > max) {
                 max = st.getStepOrder();
             }
         }
-        return max + 1;
+        if (max >= Integer.MAX_VALUE) throw new BizException(ErrorCode.SDLC_STEP_ORDER_EXHAUSTED);
+        return (int) (max + 1L);
+    }
+
+    private void requireStepWrite(int rows) {
+        if (rows != 1) throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
     }
 
     SdlcVO toVO(SdlcDO s, List<SdlcStepDO> steps) {

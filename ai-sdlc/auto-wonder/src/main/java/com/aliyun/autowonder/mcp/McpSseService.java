@@ -19,6 +19,7 @@ import java.util.concurrent.ScheduledFuture;
 /** Standalone Streamable HTTP stream; requests and responses continue over POST. */
 @Service
 public class McpSseService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(McpSseService.class);
     private static final Duration HEARTBEAT = Duration.ofSeconds(15);
     private static final Duration LIFETIME = Duration.ofMinutes(5);
     private final TaskScheduler scheduler;
@@ -88,7 +89,13 @@ public class McpSseService {
                 expiry.cancel(false);
             }
             streams.remove(this);
-            emitter.complete();
+            try {
+                emitter.complete();
+            } catch (RuntimeException disconnected) {
+                // The servlet container may already have released the socket during shutdown.
+                // Tasks and registration are gone; another stream must still be cleaned up.
+                log.debug("MCP SSE completion after transport disposal", disconnected);
+            }
         }
     }
 

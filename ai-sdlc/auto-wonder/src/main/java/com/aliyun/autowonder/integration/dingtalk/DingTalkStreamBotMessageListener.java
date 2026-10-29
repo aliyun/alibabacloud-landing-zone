@@ -26,6 +26,11 @@ public class DingTalkStreamBotMessageListener
 
     @Override
     public Map<String, Object> execute(Map<String, Object> body) {
+        return execute(body, null);
+    }
+
+    /** Shared platform connections carry their config scope so legacy routing is never used. */
+    public Map<String, Object> execute(Map<String, Object> body, DingTalkStreamScope scope) {
         InboundBotMessage message = parse(body);
         String previousRequestId = MDC.get("requestId");
         boolean generatedRequestId = previousRequestId == null || previousRequestId.isBlank();
@@ -34,10 +39,20 @@ public class DingTalkStreamBotMessageListener
         }
         try {
             log.info("received DingTalk Stream bot message msgId={} robotCode={} conversationId={} "
-                            + "conversationType={} senderStaffId={} msgType={}",
+                            + "conversationType={} senderStaffId={} msgType={} scope={}",
                     message.msgId(), message.robotCode(), message.conversationId(),
-                    message.conversationType(), message.senderStaffId(), message.msgType());
-            inbound.handle(message);
+                    message.conversationType(), message.senderStaffId(), message.msgType(),
+                    scope == null ? "LEGACY" : scope.bindingMode());
+            if (scope != null && scope.shared() && !scope.sameRobot(message.robotCode())) {
+                log.warn("dingtalk shared stream robotCode mismatch platformConfigId={} expected={} actual={}",
+                        scope.platformConfigId(), scope.robotCode(), message.robotCode());
+                return Collections.singletonMap("response", null);
+            }
+            if (scope != null && scope.shared()) {
+                inbound.handle(message, scope);
+            } else {
+                inbound.handle(message);
+            }
             return Collections.singletonMap("response", null);
         } finally {
             if (generatedRequestId) {
@@ -46,6 +61,11 @@ public class DingTalkStreamBotMessageListener
                 MDC.put("requestId", previousRequestId);
             }
         }
+    }
+
+    public OpenDingTalkCallbackListener<Map<String, Object>, Map<String, Object>> scoped(
+            DingTalkStreamScope scope) {
+        return body -> execute(body, scope);
     }
 
     InboundBotMessage parse(Map<String, Object> body) {

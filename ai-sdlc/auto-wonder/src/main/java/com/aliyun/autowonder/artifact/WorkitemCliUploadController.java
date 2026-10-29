@@ -49,32 +49,39 @@ public class WorkitemCliUploadController {
             @PathVariable("workitemId") long workitemId,
             @RequestParam("files") MultipartFile[] files,
             @RequestHeader(value = "Authorization", required = false) String authorization) {
+        com.aliyun.autowonder.mcp.McpAccessTokenService.Principal principal = null;
         try {
-            long userId = authenticate(authorization);
+            principal = authenticate(authorization, workitemId);
+            long userId = principal.userId();
             WorkitemDO workitem = workitemDao.findById(workitemId);
             if (workitem == null || workitem.getTenantId() == null) {
                 throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
             }
             tokenService.requireWriteMembership(workitem.getTenantId(), userId, WorkspaceDomain.ARTIFACT);
-            return ResponseEntity.ok(Result.ok(
-                    requirementDocumentService.uploadCli(workitemId, files,
-                            workitem.getTenantId(), userId)));
+            var result = requirementDocumentService.uploadCli(workitemId, files, workitem.getTenantId(), userId);
+            tokenService.auditUse(principal, workitemId, "CLI_UPLOAD", null);
+            return ResponseEntity.ok(Result.ok(result));
         } catch (BizException ex) {
+            tokenService.auditUse(principal, workitemId, "CLI_UPLOAD", ex);
             return ResponseEntity.status(statusFor(ex.getCode()))
                     .body(Result.fail(ex));
         } catch (IOException ex) {
+            tokenService.auditUse(principal, workitemId, "CLI_UPLOAD", ex);
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Result.fail(ErrorCode.PARAM_INVALID));
+        } catch (RuntimeException ex) {
+            tokenService.auditUse(principal, workitemId, "CLI_UPLOAD", ex);
+            throw ex;
         }
     }
 
-    private long authenticate(String authorization) {
+    private com.aliyun.autowonder.mcp.McpAccessTokenService.Principal authenticate(String authorization, long workitemId) {
         String scheme = "Bearer ";
         if (authorization == null || authorization.length() < scheme.length()
                 || !authorization.regionMatches(true, 0, scheme, 0, scheme.length())) {
             throw new BizException(ErrorCode.UNAUTHORIZED);
         }
-        return tokenService.authenticate(authorization.substring(scheme.length()).trim());
+        return tokenService.authenticateForWorkitem(authorization.substring(scheme.length()).trim(), workitemId);
     }
 
     private HttpStatus statusFor(String code) {

@@ -375,6 +375,7 @@ class WorkspaceServiceLifecycleTest {
         when(workspaceDao.findByIdForUpdate(WORKSPACE_ID)).thenReturn(activeWorkspace());
         when(workspaceDao.softDelete(WORKSPACE_ID, OWNER_ID)).thenReturn(1);
         when(deletionLinkage.pauseScheduledTasks(WORKSPACE_ID, OWNER_ID)).thenReturn(3);
+        when(deletionLinkage.disableSharedBindings(WORKSPACE_ID, OWNER_ID)).thenReturn(1);
 
         service.deleteWorkspace(WORKSPACE_ID, OWNER_ID);
 
@@ -383,6 +384,7 @@ class WorkspaceServiceLifecycleTest {
         InOrder order = inOrder(workspaceDao, deletionLinkage, auditLogService, eventPublisher);
         order.verify(workspaceDao).softDelete(WORKSPACE_ID, OWNER_ID);
         order.verify(deletionLinkage).pauseScheduledTasks(WORKSPACE_ID, OWNER_ID);
+        order.verify(deletionLinkage).disableSharedBindings(WORKSPACE_ID, OWNER_ID);
         order.verify(auditLogService).recordRequired(any(AuditLogRecord.class));
         order.verify(eventPublisher)
                 .publishEvent(new WorkspaceDeletedEvent(WORKSPACE_ID, NAME, OWNER_ID));
@@ -444,6 +446,7 @@ class WorkspaceServiceLifecycleTest {
         when(workspaceDao.findByIdForUpdate(WORKSPACE_ID)).thenReturn(activeWorkspace());
         when(workspaceDao.softDelete(WORKSPACE_ID, OWNER_ID)).thenReturn(1);
         when(deletionLinkage.pauseScheduledTasks(WORKSPACE_ID, OWNER_ID)).thenReturn(2);
+        when(deletionLinkage.disableSharedBindings(WORKSPACE_ID, OWNER_ID)).thenReturn(1);
 
         service.deleteWorkspace(WORKSPACE_ID, OWNER_ID);
 
@@ -459,6 +462,8 @@ class WorkspaceServiceLifecycleTest {
         assertEquals(Long.valueOf(OWNER_ID), audit.getDetail().get("operatorId"));
         assertEquals(WorkspaceDeletionLinkage.DELETION_REASON, audit.getDetail().get("reason"));
         assertEquals(2, audit.getDetail().get("pausedScheduledTasks"));
+        // P3: the audit trail also records how many shared group bots the delete had to switch off.
+        assertEquals(1, audit.getDetail().get("disabledSharedBindings"));
     }
 
     @Test
@@ -471,6 +476,7 @@ class WorkspaceServiceLifecycleTest {
 
         // detail() drops nulls, so a zero count has to be written explicitly rather than left out.
         assertEquals(0, capturedAudit().getDetail().get("pausedScheduledTasks"));
+        assertEquals(0, capturedAudit().getDetail().get("disabledSharedBindings"));
         verify(eventPublisher).publishEvent(new WorkspaceDeletedEvent(WORKSPACE_ID, NAME, OWNER_ID));
     }
 

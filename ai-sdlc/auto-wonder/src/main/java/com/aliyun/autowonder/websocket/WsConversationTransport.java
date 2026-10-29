@@ -65,6 +65,14 @@ public class WsConversationTransport implements ConversationTransport {
         if (dispatchAttempt != null) {
             frame.put("dispatchAttempt", dispatchAttempt);
         }
+        if (presenceManager != null && presenceManager.supportsProtocolFeature(
+                conv.getExecutorId(), "CONVERSATION_DELIVERY_ACK_V1")) {
+            frame.put("conversationDeliveryProtocolVersion", 1);
+        }
+        if (presenceManager != null && presenceManager.supportsProtocolFeature(
+                conv.getExecutorId(), "CONVERSATION_ANSWER_DELIVERY_V1")) {
+            frame.put("conversationAnswerProtocolVersion", 1);
+        }
         frame.put("content", content);
         String requestId = AutoWonderContext.get().getRequestId();
         if (requestId == null || requestId.isEmpty()) {
@@ -77,11 +85,20 @@ public class WsConversationTransport implements ConversationTransport {
             throw new IllegalStateException("conversation capability service is unavailable");
         }
         ConversationCapabilitySnapshot capability = capabilityService.prepare(conv, turnId);
+        if (capability.officialSystemPrompt() != null) {
+            boolean supportsAcp = presenceManager != null && presenceManager.supportsProtocolFeature(
+                    conv.getExecutorId(), "CONVERSATION_ACP_INTERACTION_V1");
+            frame.put("systemPrompt", com.aliyun.autowonder.conversation.ConversationMode.of(conv.getChannel())
+                    .applyToIdentity(capability.officialSystemPrompt(), supportsAcp));
+        }
         frame.put("agentVersionId", capability.agentVersionId());
         frame.put("capabilityDownloadUrl", capability.downloadUrl());
         frame.put("capabilitySha256", capability.sha256());
         frame.put("capabilityHash", capability.capabilityHash());
         frame.put("mcpToken", capability.mcpToken());
+        if (capability.conversationActorProtocolVersion() != null) {
+            frame.put("conversationActorProtocolVersion", capability.conversationActorProtocolVersion());
+        }
         frame.put("mcpSecrets", capability.mcpSecrets());
         Map<String, String> environmentVariables = environmentVariableResolver == null
                 ? Map.of()
@@ -132,6 +149,30 @@ public class WsConversationTransport implements ConversationTransport {
         JSONObject frame = buildElicitationReplyFrame(conv.getExecutorId(), conv.getId(), turnId,
                 requestId, action, answerJson);
         deliverToExecutor(conv.getExecutorId(), frame.toJSONString());
+    }
+
+    @Override
+    public void sendCancelWithAttempt(AgentConversationDO conv, long turnId, int dispatchAttempt) {
+        JSONObject frame = new JSONObject(true);
+        frame.put("type", "CONVERSATION_TURN_CANCEL");
+        frame.put("executorId", conv.getExecutorId());
+        frame.put("conversationId", conv.getId());
+        frame.put("turnId", turnId);
+        frame.put("dispatchAttempt", dispatchAttempt);
+        deliverToExecutor(conv.getExecutorId(), frame.toJSONString());
+    }
+
+    @Override
+    public void sendReliableElicitationReply(AgentConversationDO conv,
+            com.aliyun.autowonder.conversation.AgentConversationElicitationDO row, long remainingTtlMs) {
+        JSONObject frame=buildElicitationReplyFrame(row.getExecutorId(),row.getConversationId(),row.getTurnId(),
+                row.getRequestId(),"ANSWERED".equals(row.getStatus())?"accept":"decline",row.getAnswerJson());
+        frame.put("answerProtocolVersion",1);
+        frame.put("answerId",row.getAnswerId());
+        frame.put("dispatchAttempt",row.getDispatchAttempt());
+        frame.put("remainingTtlMs",remainingTtlMs);
+        frame.put("receiptOnly",row.isReceiptOnly());
+        deliverToExecutor(row.getExecutorId(),frame.toJSONString());
     }
 
     @Override

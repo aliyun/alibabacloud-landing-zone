@@ -15,4 +15,5 @@ public class KpiVO {
     private int activeSquads;
     private int onlineAgents;
     private double avgLoad;
+    private CostKpiVO cost;
 }

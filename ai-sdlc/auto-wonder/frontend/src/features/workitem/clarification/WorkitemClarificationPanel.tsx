@@ -1,10 +1,14 @@
+import { AnswerDeliveryStatus } from "./cards/AnswerDeliveryStatus";
 import { i18n } from '@/shared/i18n';
 import { formatDateTime } from '@/shared/i18n/format';
 import { useTranslation } from 'react-i18next';
-import type { TFunction } from 'i18next';
+import { conversationNotice } from './conversationNotice';
+import { AnswerHistory } from './cards/AnswerHistory';
+import { projectQuestionHistory, questionIdentity, withoutCoveredQuestions } from './answerHistory';
+import { appendQuestionContext } from './continueQuestion';
 import { RobotHeadIcon } from '@/shared/ui/RobotHeadIcon';
 import {
-  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
 import type { CSSProperties, DragEvent, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -16,6 +20,7 @@ import {
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { ApiError, ErrorCodes } from '@/shared/types/common';
+import { useAuthStore } from '@/shared/auth/store';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import {
   DOCUMENT_UPLOAD_MESSAGES,
@@ -41,6 +46,8 @@ import type { PendingClarificationAttachment } from './attachmentUpload';
 import { ElicitationWizard } from './cards/ElicitationWizard';
 import type { ElicitationReply } from './cards/ElicitationCard';
 import { CopyMessageButton } from './CopyMessageButton';
+import { ArtifactPreviewDrawer } from './ArtifactPreviewDrawer';
+import type { Artifact } from '@/shared/types/workitem';
 import { CLARIFICATION_THEME, agentBlockStyle, userBubbleStyle } from './theme';
 import {
   useClarificationConversations,
@@ -142,6 +149,7 @@ function ClarificationLoadError({ testId, description, tone = 'danger', onRetry 
 
 interface WorkitemClarificationPanelProps {
   workitemId: string;
+  artifacts?: Artifact[];
   /** 每次数字人从“未确定”变为“已确定”时触发，供外层自动进入全屏。
    *  同一次挂载内可能触发多次：URL 恢复落定、用户重新选择都会让派生值经过一次
    *  null 后重新确定，每次都是一次真实的“选定”。 */
@@ -166,6 +174,7 @@ interface WorkitemClarificationPanelProps {
 
 export function WorkitemClarificationPanel({
   workitemId,
+  artifacts = [],
   onAgentConfirmed,
   fullscreen,
   initialAgentId,
@@ -175,6 +184,7 @@ export function WorkitemClarificationPanel({
   headerSuffix,
 }: WorkitemClarificationPanelProps) {
   const { t } = useTranslation('workitem');
+  const [previewArtifact, setPreviewArtifact] = useState<Artifact | null>(null);
 
   // 澄清数字人候选始终来自「小队 → 成员」选择器：交付进度只是执行历史，
   // 把它当候选来源会让未绑定 SDLC 的需求澄清数字人消失（工单 56281）。
@@ -206,6 +216,7 @@ export function WorkitemClarificationPanel({
   // 同一次草稿的失败重试复用 clientMessageId：服务端据此去重，超时重发不会产生两条消息。
   const sendAttemptRef = useRef<{ signature: string; clientMessageId: string } | null>(null);
   const accessCommand = useAccessCommand();
+  const canWrite = useAuthStore(state => state.hasAccess('READ_WRITE'));
 
   /** 清空待发送附件：中止在飞上传并释放本地预览 URL。 */
   const clearPendingAttachments = useCallback(() => {
@@ -601,6 +612,17 @@ export function WorkitemClarificationPanel({
   const streamTerminalAwaitingDetail = !!conversationId && streamedTurnTerminated && isReplying;
 
   const queryClient = useQueryClient();
+  const previousProcessingStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = previousProcessingStatusRef.current;
+    const current = convData?.processingStatus ?? null;
+    if (previous && isClarificationReplyingStatus(previous) && !isClarificationReplyingStatus(current)) {
+      queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'artifacts'] });
+      queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'requirement-documents'] });
+    }
+    previousProcessingStatusRef.current = current;
+  }, [convData?.processingStatus, queryClient, workitemId]);
+
   const replyMutation = useReplyElicitation(workitemId, conversationId);
   const [replyingRequestId, setReplyingRequestId] = useState<string | null>(null);
   // 后端已结算（取消/过期/并发）但 resolved 事件不落库时，前端时间线仍把卡片当 pending。
@@ -652,12 +674,20 @@ export function WorkitemClarificationPanel({
   /** 进行中的问题停靠在输入框位置分步作答：优先用流里的 pending 节点，否则用刷新恢复的。
    *  同一时刻只显示一个；并发多个时取最早的一个，其余等当前这条 resolved 后再显示。
    *  已被后端结算（409）的 requestId 一律排除——其 resolved 事件可能没落库，时间线会一直当它 pending。 */
+  const deliveredRequestIds = useMemo(() => new Set([...(convData?.answerDeliveries ?? []), ...(convData?.questionHistory ?? [])].map(card => card.requestId)), [convData?.answerDeliveries, convData?.questionHistory]);
+  const questionHistories = useMemo(() => new Map(turns.filter(turn => turn.direction === 'IN' || turn.direction === 'INBOUND')
+    .map(turn => [turn.id, projectQuestionHistory(turn.id, convData?.questionHistory ?? convData?.answerDeliveries, timeline)])),
+  [turns, convData?.questionHistory, convData?.answerDeliveries, timeline]);
+  const allQuestionHistory = useMemo(() => [...questionHistories.values()].flat(), [questionHistories]);
+  const coveredQuestionIds = useMemo(() => new Set(allQuestionHistory.map(entry => questionIdentity(entry.turnId, entry.requestId))), [allQuestionHistory]);
+  const currentQuestionTurnId = convData?.processingTurnId ?? [...turns].reverse().find(turn => turn.direction === 'IN' || turn.direction === 'INBOUND')?.id;
   const activeElicitation = useMemo(() => {
     if (!acpInteractionSupported) return null;
     const streamed = timeline.find(
       (node) => node.kind === 'elicitation' && node.elicitation
         && !node.elicitation.resolved
-        && !settledElicitationIds.has(node.elicitation.requestId),
+        && !settledElicitationIds.has(node.elicitation.requestId)
+        && !deliveredRequestIds.has(node.elicitation.requestId),
     )?.elicitation;
     if (streamed) {
       return {
@@ -666,7 +696,7 @@ export function WorkitemClarificationPanel({
         schema: streamed.requestedSchema,
       };
     }
-    const restored = restoredElicitations.find((card) => !settledElicitationIds.has(card.requestId));
+    const restored = restoredElicitations.find((card) => !settledElicitationIds.has(card.requestId) && !deliveredRequestIds.has(card.requestId));
     if (restored) {
       return {
         requestId: restored.requestId,
@@ -675,7 +705,7 @@ export function WorkitemClarificationPanel({
       };
     }
     return null;
-  }, [acpInteractionSupported, timeline, restoredElicitations, settledElicitationIds]);
+  }, [acpInteractionSupported, timeline, restoredElicitations, settledElicitationIds, deliveredRequestIds]);
 
   /** 卡片结算后先淡出再卸载（工单 56330）：结算瞬间保留上一张卡片 CLARIFICATION_CARD_DISMISS_MS，
    *  期间输入行不提前出现，避免「卡片与输入框双 present」；新一组卡片到来时立即换新。
@@ -1255,21 +1285,32 @@ export function WorkitemClarificationPanel({
                   <Empty description={t('clarification.noHistory')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
                 )}
                 {turns.map((turn, index) => (
+                  <Fragment key={turn.id}>
                   <TurnBubble
-                    key={turn.id}
                     turn={turn}
                     agentName={displayName}
                     workitemId={workitemId}
                     conversationId={conversationId}
+                    artifacts={artifacts}
+                    onArtifactClick={setPreviewArtifact}
                     detailToggle={
                       <OutboundTurnDetailToggle
                         workitemId={workitemId}
                         conversationId={conversationId}
                         turns={turns}
                         index={index}
+                        coveredQuestionIds={coveredQuestionIds}
                       />
                     }
                   />
+                  <AnswerHistory entries={questionHistories.get(turn.id) ?? []}
+                    canContinue={canWrite && !composerDisabled && !displayedElicitation}
+                    onContinue={entry => {
+                      if (!canWrite || composerDisabled || displayedElicitation) return;
+                      setInputValue(draft => appendQuestionContext(draft, turn.content, entry));
+                      composerRef.current?.focus();
+                    }} />
+                  </Fragment>
                 ))}
                 {showProcessingEvents && (
                   // 「等待回复」提示由底部的 ReplyingIndicator 统一承担，避免双份动效。
@@ -1284,8 +1325,10 @@ export function WorkitemClarificationPanel({
                         style={agentBlockStyle()}
                       >
                         <ConversationEventView
-                          nodes={timeline}
+                          nodes={withoutCoveredQuestions(timeline, allQuestionHistory)}
                           isProcessing={false}
+                          artifacts={artifacts}
+                          onArtifactClick={setPreviewArtifact}
                         />
                       </div>
                     </div>
@@ -1297,6 +1340,8 @@ export function WorkitemClarificationPanel({
                     agentName={displayName}
                     workitemId={workitemId}
                     conversationId={conversationId}
+                    artifacts={artifacts}
+                    onArtifactClick={setPreviewArtifact}
                   />
                 )}
                 {showReplyingIndicator && <ReplyingIndicator agentName={displayName} />}
@@ -1322,6 +1367,7 @@ export function WorkitemClarificationPanel({
         ) : null}
       </div>
 
+      <AnswerDeliveryStatus cards={convData?.answerDeliveries} currentTurnId={currentQuestionTurnId} />
       {conversationId ? (
         displayedElicitation ? (
           <ElicitationWizard
@@ -1509,16 +1555,24 @@ export function WorkitemClarificationPanel({
         </div>
         )
       ) : null}
+      {previewArtifact && (
+        <ArtifactPreviewDrawer
+          key={previewArtifact.id}
+          artifact={previewArtifact}
+          onClose={() => setPreviewArtifact(null)}
+        />
+      )}
     </div>
   );
 }
 
 /** 执行详情语义上属于 Agent 的这次作答（OUT 气泡），但事件按配对的 IN 轮次落库。 */
-function OutboundTurnDetailToggle({ workitemId, conversationId, turns, index }: {
+function OutboundTurnDetailToggle({ workitemId, conversationId, turns, index, coveredQuestionIds }: {
   workitemId: string;
   conversationId: number;
   turns: ClarificationTurn[];
   index: number;
+  coveredQuestionIds?: ReadonlySet<string>;
 }) {
   const turn = turns[index];
   if (!isOutboundTurnDirection(turn.direction)) return null;
@@ -1533,16 +1587,21 @@ function OutboundTurnDetailToggle({ workitemId, conversationId, turns, index }: 
       conversationId={conversationId}
       turnId={turn.id}
       eventTurnId={eventTurnId}
+      coveredQuestionIds={coveredQuestionIds}
     />
   );
 }
 
-function TurnBubble({ turn, agentName, detailToggle, workitemId, conversationId }: {
+function TurnBubble({
+  turn, agentName, detailToggle, workitemId, conversationId, artifacts, onArtifactClick,
+}: {
   turn: ClarificationTurn;
   agentName?: string;
   detailToggle?: ReactNode;
   workitemId: string;
   conversationId: number | null;
+  artifacts: Artifact[];
+  onArtifactClick: (artifact: Artifact) => void;
 }) {
   const { t } = useTranslation('workitem');
   const isUser = turn.direction === 'IN' || turn.direction === 'INBOUND';
@@ -1631,7 +1690,14 @@ function TurnBubble({ turn, agentName, detailToggle, workitemId, conversationId 
         {ownedContent != null
           ? <div style={{ whiteSpace: 'pre-wrap' }}>{ownedContent}</div>
           : hasContent
-            ? <MarkdownView className="aw-clarify-md" content={turn.content} />
+            ? (
+              <MarkdownView
+                className="aw-clarify-md"
+                content={turn.content}
+                artifacts={artifacts}
+                onArtifactClick={onArtifactClick}
+              />
+            )
             : <Typography.Text type="secondary">{t('clarification.noResponse')}</Typography.Text>}
         {statusTag}
         {errorText}
@@ -1650,33 +1716,4 @@ function parseSchemaJson(schema: string | null): unknown {
   } catch {
     return schema;
   }
-}
-
-/** Only the seven server-owned browser turn sources use text notices; AI and replay stay raw. */
-function conversationNotice(entry: unknown, field: 'content' | 'error', t: TFunction<'workitem'>): string | null {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
-  const { code, args } = entry as { code?: unknown; args?: unknown };
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
-  const values = args as Record<string, unknown>;
-  if (field === 'content' && Object.keys(values).length === 0) {
-    if (code === 'CANCELED') return t('clarification.ownedNotice.canceled');
-    if (code === 'EMPTY_OUTPUT') return t('clarification.ownedNotice.emptyOutput');
-  }
-  if (Object.keys(values).length !== 1) return null;
-  if (typeof values.detail === 'string') {
-    const detail = values.detail;
-    if (field === 'content') {
-      if (code === 'REPLY_FAILED') return t('clarification.ownedNotice.replyFailed', { detail });
-      if (code === 'DISPATCH_REPLY_FAILED') return t('clarification.ownedNotice.dispatchReplyFailed', { detail });
-    } else {
-      if (code === 'DISPATCH_FAILED') return t('clarification.ownedNotice.dispatchFailed', { detail });
-      if (code === 'EXECUTOR_COMPATIBILITY_FAILED') return t('clarification.ownedNotice.executorCompatibilityFailed', { detail });
-    }
-  }
-  if (field === 'error' && code === 'DELIVERY_ATTEMPTS_EXHAUSTED'
-      && typeof values.attempts === 'number' && Number.isInteger(values.attempts)
-      && values.attempts >= 0 && values.attempts <= 2147483647) {
-    return t('clarification.ownedNotice.deliveryAttemptsExhausted', { attempts: values.attempts });
-  }
-  return null;
 }

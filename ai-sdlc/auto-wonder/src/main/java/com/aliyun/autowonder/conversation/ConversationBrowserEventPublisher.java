@@ -44,6 +44,26 @@ public class ConversationBrowserEventPublisher {
     /** 推送一条已落库事件（沿用 Runtime 上报的 eventSeq）。 */
     public void publish(long tenantId, long conversationId, long turnId, long eventSeq,
             String eventType, String payloadJson) {
+        publish(tenantId, conversationId, turnId, 0, eventSeq, eventType, payloadJson);
+    }
+
+    public void publish(long tenantId, long conversationId, long turnId, int dispatchAttempt,
+            long eventSeq, String eventType, String payloadJson) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
+                && org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() {
+                            publishCommitted(conversationId, turnId, dispatchAttempt, eventSeq, eventType, payloadJson);
+                        }
+                    });
+            return;
+        }
+        publishCommitted(conversationId, turnId, dispatchAttempt, eventSeq, eventType, payloadJson);
+    }
+
+    private void publishCommitted(long conversationId, long turnId, int dispatchAttempt,
+            long eventSeq, String eventType, String payloadJson) {
         if (conversationRealtimePublisher == null) {
             return;
         }
@@ -51,6 +71,7 @@ public class ConversationBrowserEventPublisher {
             Map<String, Object> event = new LinkedHashMap<>();
             event.put("conversationId", conversationId);
             event.put("turnId", turnId);
+            event.put("dispatchAttempt", dispatchAttempt);
             event.put("eventSeq", eventSeq);
             event.put("eventType", eventType);
             if (payloadJson != null) {
@@ -66,6 +87,12 @@ public class ConversationBrowserEventPublisher {
             log.warn("conversation event browser publish failed conversationId={} turnId={} eventSeq={}: {}",
                     conversationId, turnId, eventSeq, e.getMessage());
         }
+    }
+
+    /** Already-committed system effects must not register a second afterCommit callback. */
+    void publishCommittedServerEvent(long tenantId, long conversationId, long turnId,
+            String eventType, String payloadJson) {
+        publishCommitted(conversationId, turnId, 0, SERVER_PUSHED_EVENT_SEQ.incrementAndGet(), eventType, payloadJson);
     }
 
     /**

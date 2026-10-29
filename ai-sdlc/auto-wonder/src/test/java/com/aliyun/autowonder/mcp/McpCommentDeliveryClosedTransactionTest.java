@@ -88,18 +88,18 @@ class McpCommentDeliveryClosedTransactionTest {
     }
 
     @Test
-    void closedDeliveryRollsBackTheCommentOfTheDispatchCredential() {
+    void closedDeliveryKeepsTheCommentOfTheAgentDispatchCredential() {
         Fixture fixture = fixture();
         closeDelivery(fixture);
 
-        BizException failure = assertThrows(BizException.class, () -> fixture.service.call(dispatchPrincipal(),
+        Object result = fixture.service.call(dispatchPrincipal(),
                 "autowonder.add_workitem_comment", Map.of("workspaceId", WORKSPACE_ID, "id", WORKITEM_ID,
                         "contentMd", "@tester 看下", "targetAgentIds", List.of(40015L),
-                        "targetHumanIds", List.of(77L))));
+                        "targetHumanIds", List.of(77L)));
 
-        assertEquals(ErrorCode.WORKITEM_DELIVERY_CLOSED.getCode(), failure.getCode());
-        assertEquals("workitem.comment.delivery_closed", failure.getMessageKey());
-        assertEquals(0, fixture.comments(), "整笔回滚后不得残留已保存的评论");
+        CommentVO comment = assertInstanceOf(CommentVO.class, result);
+        assertNotNull(comment.getId());
+        assertEquals(1, fixture.comments(), "数字人评论 @数字人 不触发交互，也不因交付关闭回滚");
     }
 
     @Test
@@ -146,10 +146,11 @@ class McpCommentDeliveryClosedTransactionTest {
                 WORKSPACE_ID, WORKITEM_ID);
     }
 
-    private static CommentVO insertComment(JdbcTemplate jdbc, String contentMd) {
+    private static CommentVO insertComment(JdbcTemplate jdbc, String contentMd, String authorType) {
         Long id = jdbc.queryForObject("SELECT COALESCE(MAX(id),0)+1 FROM workitem_comment", Long.class);
-        jdbc.update("INSERT INTO workitem_comment(id,tenant_id,workitem_id,content_md) VALUES(?,?,?,?)",
-                id, WORKSPACE_ID, WORKITEM_ID, contentMd);
+        jdbc.update("INSERT INTO workitem_comment(id,tenant_id,workitem_id,author_type,content_md) "
+                        + "VALUES(?,?,?,?,?)",
+                id, WORKSPACE_ID, WORKITEM_ID, authorType, contentMd);
         CommentVO comment = new CommentVO();
         comment.setId(id);
         return comment;
@@ -160,7 +161,7 @@ class McpCommentDeliveryClosedTransactionTest {
                 + ";MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", "");
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         jdbc.execute("CREATE TABLE workitem_comment(id BIGINT PRIMARY KEY, tenant_id BIGINT, "
-                + "workitem_id BIGINT, content_md VARCHAR(4000))");
+                + "workitem_id BIGINT, author_type VARCHAR(32), content_md VARCHAR(4000))");
         jdbc.execute("CREATE TABLE workitem_execution_control(tenant_id BIGINT, workitem_id BIGINT, "
                 + "closed INT DEFAULT 0, PRIMARY KEY(tenant_id, workitem_id))");
         var txManager = new DataSourceTransactionManager(dataSource);
@@ -171,23 +172,24 @@ class McpCommentDeliveryClosedTransactionTest {
 
         WorkitemService workitemService = mock(WorkitemService.class);
         when(workitemService.addComment(eq(WORKITEM_ID), anyString(), any(), eq(WORKSPACE_ID), eq(USER_ID)))
-                .thenAnswer(call -> insertComment(jdbc, call.getArgument(1)));
+                .thenAnswer(call -> insertComment(jdbc, call.getArgument(1), "HUMAN"));
         when(workitemService.addAgentComment(eq(WORKITEM_ID), anyString(), any(), eq(WORKSPACE_ID),
-                anyLong(), eq(USER_ID))).thenAnswer(call -> insertComment(jdbc, call.getArgument(1)));
+                anyLong(), eq(USER_ID))).thenAnswer(call -> insertComment(jdbc, call.getArgument(1), "AGENT"));
         when(workitemService.getParticipants(WORKITEM_ID, WORKSPACE_ID)).thenReturn(List.of());
 
         WorkitemCommentDao commentDao = mock(WorkitemCommentDao.class);
         when(commentDao.findById(eq(WORKSPACE_ID), anyLong())).thenAnswer(call -> {
             Long id = call.getArgument(1);
-            List<Long> owners = jdbc.queryForList("SELECT workitem_id FROM workitem_comment "
-                    + "WHERE tenant_id=? AND id=?", Long.class, WORKSPACE_ID, id);
-            if (owners.isEmpty()) {
+            List<Map<String, Object>> rows = jdbc.queryForList("SELECT workitem_id, author_type "
+                    + "FROM workitem_comment WHERE tenant_id=? AND id=?", WORKSPACE_ID, id);
+            if (rows.isEmpty()) {
                 return null;
             }
             WorkitemCommentDO row = new WorkitemCommentDO();
             row.setId(id);
             row.setTenantId(WORKSPACE_ID);
-            row.setWorkitemId(owners.get(0));
+            row.setWorkitemId(((Number) rows.get(0).get("WORKITEM_ID")).longValue());
+            row.setAuthorType((String) rows.get(0).get("AUTHOR_TYPE"));
             return row;
         });
 

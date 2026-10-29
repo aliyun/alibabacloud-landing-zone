@@ -23,6 +23,10 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
+import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -1390,6 +1394,59 @@ class DispatchServiceRunPendingTest {
         verify(dispatchDao, never()).returnPackagingToPending(anyLong(), anyLong(), anyInt(), anyLong());
         verify(transport, never()).dispatch(any(), any());
         verify(sdlcDriver).onFail(TENANT, 200L, 300L);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void committedResultDoesNotWaitForPendingPackaging(boolean drain) throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch finished = new CountDownLatch(1);
+        AtomicLong packagingThread = new AtomicLong();
+        org.mockito.stubbing.Answer<Object> slowPackaging = invocation -> {
+            packagingThread.set(Thread.currentThread().threadId());
+            started.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+                return null;
+            } finally {
+                finished.countDown();
+            }
+        };
+        if (drain) {
+            doAnswer(slowPackaging).when(dispatchDao).listOldestPendingByAgent(400L, 20);
+        } else {
+            doAnswer(slowPackaging).when(dispatchDao).findById(500L);
+        }
+        try (var scope = ResultCommitActions.open()) {
+            if (drain) service.drainPending(400L); else service.runPending(500L);
+            if (drain) service.drainPending(400L); else service.runPending(500L);
+            assertEquals(1, started.getCount(), "packaging must wait for the result commit");
+
+            assertTimeout(Duration.ofSeconds(1), scope::committed);
+
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            assertNotEquals(Thread.currentThread().threadId(), packagingThread.get(),
+                    "packaging must not occupy the WebSocket reader");
+        } finally {
+            release.countDown();
+            assertTrue(finished.await(5, TimeUnit.SECONDS));
+        }
+        if (drain) {
+            verify(dispatchDao).listOldestPendingByAgent(400L, 20);
+        } else {
+            verify(dispatchDao).findById(500L);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void rolledBackResultNeverStartsPendingPackaging(boolean drain) {
+        try (var scope = ResultCommitActions.open()) {
+            if (drain) service.drainPending(400L); else service.runPending(500L);
+        }
+        verify(dispatchDao, never()).listOldestPendingByAgent(400L, 20);
+        verify(dispatchDao, never()).findById(500L);
     }
 
     @Test

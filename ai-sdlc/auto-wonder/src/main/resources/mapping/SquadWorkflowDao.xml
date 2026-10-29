@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.squad.workflow.SquadWorkflowDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO squad_workflow_snapshot
+        (workspace_id, squad_id, input_hash, analysis_version, status, attempt_id, conversation_id, turn_id,
+         requested_by, chief_version_id, input_json, graph_json, submission_receipts_json,
+         submission_count, repair_count, deadline_at, error_code, error_detail, completed_at, row_version,
+         gmt_create, gmt_modified)
+        VALUES
+        (#{workspaceId}, #{squadId}, #{inputHash}, #{analysisVersion}, #{status}, #{attemptId}, #{conversationId},
+         #{turnId}, #{requestedBy}, #{chiefVersionId}, #{inputJson}, #{graphJson}, #{submissionReceiptsJson},
+         #{submissionCount}, #{repairCount}, #{deadlineAt}, #{errorCode}, #{errorDetail}, #{completedAt},
+         #{rowVersion}, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
+    </insert>
+
+    <select id="findByKey" resultType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        SELECT * FROM squad_workflow_snapshot
+        WHERE workspace_id = #{workspaceId} AND squad_id = #{squadId}
+          AND input_hash = #{inputHash} AND analysis_version = #{analysisVersion}
+        LIMIT 1
+    </select>
+
+    <select id="findById" resultType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        SELECT * FROM squad_workflow_snapshot
+        WHERE workspace_id = #{workspaceId} AND id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="lockById" resultType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        SELECT * FROM squad_workflow_snapshot
+        WHERE workspace_id = #{workspaceId} AND id = #{id}
+        FOR UPDATE
+    </select>
+
+    <select id="findLatest" resultType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        SELECT * FROM squad_workflow_snapshot
+        WHERE workspace_id = #{workspaceId} AND squad_id = #{squadId}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findByConversation" resultType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        SELECT * FROM squad_workflow_snapshot
+        WHERE workspace_id = #{workspaceId} AND conversation_id = #{conversationId}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <update id="update" parameterType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        UPDATE squad_workflow_snapshot SET
+            status = #{status},
+            attempt_id = #{attemptId},
+            conversation_id = #{conversationId},
+            turn_id = #{turnId},
+            chief_version_id = #{chiefVersionId},
+            graph_json = #{graphJson},
+            submission_receipts_json = #{submissionReceiptsJson},
+            submission_count = #{submissionCount},
+            repair_count = #{repairCount},
+            deadline_at = #{deadlineAt},
+            error_code = #{errorCode},
+            error_detail = #{errorDetail},
+            completed_at = #{completedAt},
+            row_version = row_version + 1,
+            gmt_modified = CURRENT_TIMESTAMP(3)
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND row_version = #{rowVersion}
+    </update>
+
+    <!-- Locks the workspace's active rows so the quota count and the following insert serialize
+         across instances. MySQL gap locks also cover the empty case through the unique key. -->
+    <!-- Recovery claim: the sentinel conversation id fences multiple instances, so only one of
+         them dispatches. A crashed claim is converged by the deadline instead of double-starting. -->
+    <update id="claimDispatch">
+        UPDATE squad_workflow_snapshot SET
+            conversation_id = 0,
+            row_version = row_version + 1,
+            gmt_modified = CURRENT_TIMESTAMP(3)
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND attempt_id = #{attemptId}
+          AND status IN ('GENERATING', 'REPAIRING') AND conversation_id IS NULL
+    </update>
+
+    <select id="lockActiveIds" resultType="long">
+        SELECT id FROM squad_workflow_snapshot
+        WHERE workspace_id = #{workspaceId}
+          AND status IN
+        <choose>
+            <when test="statuses != null and statuses.size() > 0">
+                <foreach collection="statuses" item="status" open="(" separator="," close=")">#{status}</foreach>
+            </when>
+            <otherwise>(NULL)</otherwise>
+        </choose>
+          AND (deadline_at IS NULL OR deadline_at > #{now})
+        ORDER BY id
+        FOR UPDATE
+    </select>
+
+    <select id="countActive" resultType="int">
+        SELECT COUNT(*) FROM squad_workflow_snapshot
+        WHERE workspace_id = #{workspaceId}
+          AND status IN
+        <choose>
+            <when test="statuses != null and statuses.size() > 0">
+                <foreach collection="statuses" item="status" open="(" separator="," close=")">#{status}</foreach>
+            </when>
+            <otherwise>(NULL)</otherwise>
+        </choose>
+          AND (deadline_at IS NULL OR deadline_at > #{now})
+    </select>
+
+    <select id="listExpired" resultType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        SELECT * FROM squad_workflow_snapshot
+        WHERE status IN ('GENERATING', 'REPAIRING')
+          AND deadline_at IS NOT NULL AND deadline_at &lt;= #{now}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listUndispatched" resultType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        SELECT * FROM squad_workflow_snapshot
+        WHERE status IN ('GENERATING', 'REPAIRING')
+          AND conversation_id IS NULL
+          AND gmt_modified &lt; #{cutoff}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- Retention candidates only. Which READY row is still current is decided in the service by
+         recomputing the assembly hash, because a configuration rollback (A→B→A) makes the newest
+         row stale and an older row current again. -->
+    <select id="listCleanup" resultType="com.aliyun.autowonder.squad.workflow.SquadWorkflowDO">
+        SELECT s.* FROM squad_workflow_snapshot s
+        WHERE (s.status = 'FAILED' AND s.gmt_modified &lt; #{failedCutoff})
+           OR (s.status = 'READY' AND s.gmt_modified &lt; #{successCutoff})
+        ORDER BY s.id ASC
+        LIMIT #{limit}
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM squad_workflow_snapshot WHERE id = #{id}
+    </delete>
+</mapper>

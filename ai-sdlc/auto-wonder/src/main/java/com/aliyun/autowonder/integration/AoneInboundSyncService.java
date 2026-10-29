@@ -423,6 +423,11 @@ public class AoneInboundSyncService {
         ExternalWorkitemLinkDO link = linkDao.findByExternalScope(
                 binding.getTenantId(), binding.getId(), detail.getExternalId());
         if (link == null) {
+            ExternalWorkitemLinkDO existingInTenant = linkDao.findFirstByExternal(
+                    binding.getTenantId(), AoneIntegrationService.PROVIDER, detail.getExternalId());
+            if (existingInTenant != null) {
+                return reuseExistingLink(binding, detail, existingInTenant, hash, userId);
+            }
             ExternalPrincipalService.IdentitySnapshot identity = resolveIdentity(binding, detail, null);
             StatusNodeDO node = defaultInitNode(binding.getTenantId(), detail.getWorkType());
             WorkitemDO workitem = new WorkitemDO();
@@ -460,25 +465,59 @@ public class AoneInboundSyncService {
             try {
                 linkDao.insert(newLink);
             } catch (DuplicateKeyException duplicate) {
-                // A concurrent executor (parallel poll on another instance, or a manual
-                // import/refresh) created the link between our findByExternalScope and insert.
-                // The unique key guarantees exactly one winner; discard the local workitem we
-                // just created and converge onto the winner's link instead of aborting the
-                // whole poll transaction.
-                ExternalWorkitemLinkDO concurrentLink = linkDao.findByExternalScope(
-                        binding.getTenantId(), binding.getId(), detail.getExternalId());
-                if (concurrentLink == null) {
+                // 租户级唯一键保证并发导入只有一个赢家；普通 SELECT 在 RR 隔离级别下可能仍看不到
+                // 对方刚提交的行，必须用当前读（FOR UPDATE）回读赢家后再收敛。
+                ExternalWorkitemLinkDO winner = linkDao.findFirstByExternalForUpdate(
+                        binding.getTenantId(), AoneIntegrationService.PROVIDER, detail.getExternalId());
+                if (winner == null) {
                     throw duplicate;
                 }
-                log.info("Aone inbound link insert raced with concurrent sync, reuse existing link"
-                                + " bindingId={} externalWorkitemId={} workitemId={}",
-                        binding.getId(), detail.getExternalId(), concurrentLink.getWorkitemId());
+                log.info("Aone inbound link insert raced with concurrent import"
+                                + " bindingId={} externalWorkitemId={} existingBindingId={} workitemId={}",
+                        binding.getId(), detail.getExternalId(), winner.getBindingId(), winner.getWorkitemId());
                 workitemDao.softDelete(workitem.getId(), binding.getTenantId(), workitem.getVersion(), userId);
-                return updateExistingLink(binding, detail, concurrentLink, hash, userId);
+                return reuseExistingLink(binding, detail, winner, hash, userId);
             }
             return new UpsertResult(workitem.getId(), true, false);
         }
         return updateExistingLink(binding, detail, link, hash, userId);
+    }
+
+    /**
+     * 收敛到本空间已有的外部工单映射：正式绑定之间的重复导入直接跳过；通用导入（binding 0）
+     * 的映射由正式绑定接管，否则评论轮询、手动刷新和回写都找不到可用绑定。
+     */
+    private UpsertResult reuseExistingLink(ExternalProjectBindingDO binding, ExternalWorkitemDetail detail,
+                                           ExternalWorkitemLinkDO existing, String hash, long userId) {
+        Long existingBindingId = existing.getBindingId();
+        if (existingBindingId == null || existingBindingId == 0L) {
+            int takenOver = linkDao.takeoverBinding(existing.getId(), binding.getTenantId(), binding.getId(),
+                    binding.getExternalProjectId());
+            if (takenOver == 1) {
+                existing.setBindingId(binding.getId());
+                existing.setExternalProjectId(binding.getExternalProjectId());
+                log.info("Aone import took over generic link tenantId={} externalWorkitemId={}"
+                                + " bindingId={} workitemId={}",
+                        binding.getTenantId(), detail.getExternalId(), binding.getId(), existing.getWorkitemId());
+                return updateExistingLink(binding, detail, existing, hash, userId);
+            }
+            ExternalWorkitemLinkDO latest = linkDao.findFirstByExternalForUpdate(
+                    binding.getTenantId(), AoneIntegrationService.PROVIDER, detail.getExternalId());
+            if (latest == null) {
+                throw new IllegalStateException("external workitem link disappeared during binding takeover");
+            }
+            existing = latest;
+        }
+        if (Objects.equals(existing.getBindingId(), binding.getId())) {
+            return updateExistingLink(binding, detail, existing, hash, userId);
+        }
+        // 同一外部工单已被本空间其他正式绑定导入。再建第二个本地工单会让同一条评论/@
+        // 在两个工单上各触发一次交付，并让回写评论互相当成外部新评论。
+        log.info("Aone import skipped cross-binding duplicate tenantId={} externalWorkitemId={}"
+                        + " bindingId={} existingBindingId={} existingWorkitemId={}",
+                binding.getTenantId(), detail.getExternalId(), binding.getId(),
+                existing.getBindingId(), existing.getWorkitemId());
+        return new UpsertResult(existing.getWorkitemId(), false, false);
     }
 
     private UpsertResult updateExistingLink(ExternalProjectBindingDO binding,

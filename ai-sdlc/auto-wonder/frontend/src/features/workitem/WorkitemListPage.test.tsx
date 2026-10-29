@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act, render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import { i18n } from '@/shared/i18n';
 import userEvent from '@testing-library/user-event';
@@ -669,6 +669,39 @@ describe('WorkitemListPage', () => {
     });
   });
 
+  it('offers 已取消 in the status filter and shows cancelled workitems', async () => {
+    const requests: URLSearchParams[] = [];
+    server.use(
+      http.get('/api/workitems', ({ request }) => {
+        const query = new URL(request.url).searchParams;
+        requests.push(query);
+        const canceled = query.get('statusCategory') === 'CANCELED';
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData(canceled ? [
+            { id: 88, title: '已取消工单', workType: 'REQ', statusName: '已取消', statusCategory: 'CANCELED', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
+          ] : []),
+        });
+      }),
+    );
+
+    renderPage();
+    await screen.findByText('工单');
+
+    const statusSelect = document.querySelectorAll('.ant-select-selector')[1]!;
+    await userEvent.click(statusSelect);
+    await userEvent.click(await screen.findByTitle('已取消'));
+
+    await waitFor(() => {
+      expect(requests.some(q => q.get('statusCategory') === 'CANCELED')).toBe(true);
+    });
+    expect(await screen.findByTestId('kanban-column-CANCELED')).toBeInTheDocument();
+    expect(await screen.findByText('已取消工单')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText('表格视图'));
+    expect(await screen.findByText('已取消工单')).toBeInTheDocument();
+  });
+
   it('sends keyword param and resets page on search', async () => {
     const requests: string[] = [];
     server.use(
@@ -1063,12 +1096,12 @@ describe('WorkitemListPage 表格列与字段展示', () => {
     await screen.findByText(expectedTitle);
   }
 
-  it('shows exactly the nine required columns in order', async () => {
+  it('shows exactly the ten required columns in order', async () => {
     await renderTableView();
     const headers = (await screen.findAllByRole('columnheader'))
       .map(header => header.textContent?.trim());
     expect(headers).toEqual([
-      'ID', '标题', '类型', '状态', '优先级', '当前处理人', '创建者', '创建时间', '操作',
+      'ID', '标题', '类型', '状态', '优先级', '标签', '当前处理人', '创建者', '创建时间', '操作',
     ]);
   });
 
@@ -1146,8 +1179,8 @@ describe('WorkitemListPage 表格列与字段展示', () => {
     await renderTableView('外部创建工单');
     expect(screen.getByText('煊童')).toBeInTheDocument();
     expect(screen.queryByText(/440501/)).not.toBeInTheDocument();
-    expect(screen.getByText('后备')).toBeInTheDocument();
-    expect(screen.getByText('-')).toBeInTheDocument();
+    const fallbackRow = screen.getByText('后备').closest('tr')!;
+    expect(within(fallbackRow).getByText('-', { selector: 'td.aw-column-numeric' })).toBeInTheDocument();
   });
 
   it('renders the create time as a two-line date and time', async () => {
@@ -1384,5 +1417,505 @@ describe('WorkitemListPage 创建时间高级筛选', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(requests.length).toBeGreaterThan(0);
     expect(requests.every(q => !q.has('createdFrom') && !q.has('createdTo'))).toBe(true);
+  });
+});
+
+// 创建者高级筛选（工单 #56513）：候选来自工作空间成员，多选按 OR 生效，
+// 与创建时间等条件按 AND 叠加；表格、看板各列与「待我决策」汇总列共用同一份 creatorIds。
+describe('WorkitemListPage 创建者高级筛选', () => {
+  const FROM = dayjs('2026-10-01').startOf('day').toDate().toISOString();
+  const TO = dayjs('2026-10-10').startOf('day').add(1, 'day').toDate().toISOString();
+
+  const ROWS = [
+    { id: 61, title: '范围工单一', workType: 'REQ', statusName: '待处理', statusCategory: 'NEW', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-10-03T02:00:00Z', gmtModified: '2026-10-03T02:00:00Z' },
+    { id: 62, title: '范围工单二', workType: 'REQ', statusName: '开发中', statusCategory: 'IN_PROGRESS', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', version: 1, gmtCreate: '2026-10-05T02:00:00Z', gmtModified: '2026-10-05T02:00:00Z' },
+  ];
+
+  const MEMBERS = [
+    { userId: 12, username: 'zhangsan', email: 'zhangsan@example.com', nickname: '张三', joinedAt: '2026-01-01', owner: false, accessLevel: 'READ_WRITE', identityTags: [], roleId: 12, roleCode: 'READ_WRITE', roleName: null, readOnlyDomains: [] },
+    { userId: 34, username: 'lisi', email: 'lisi@example.com', nickname: '李四', joinedAt: '2026-01-02', owner: false, accessLevel: 'READ_WRITE', identityTags: [], roleId: 12, roleCode: 'READ_WRITE', roleName: null, readOnlyDomains: [] },
+  ];
+
+  function useRecordingServer(requests: URLSearchParams[]) {
+    server.use(http.get('/api/workitems', ({ request }) => {
+      requests.push(new URL(request.url).searchParams);
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: pageData(ROWS, 25) });
+    }));
+  }
+
+  function useMembersServer() {
+    server.use(http.get('/api/workspaces/current/members', () => HttpResponse.json({
+      success: true, code: '0', message: '', data: MEMBERS, traceId: null,
+    })));
+  }
+
+  async function openAdvancedFilter() {
+    await userEvent.click(screen.getByRole('button', { name: /高级筛选/ }));
+    return screen.findByRole('dialog');
+  }
+
+  /** 日期录入按 antd 自身的用例写法：先打开面板，改输入值后回车提交，避免依赖日历单元格。 */
+  function typeDate(dialog: HTMLElement, placeholder: string, value: string) {
+    const input = within(dialog).getByPlaceholderText(placeholder);
+    fireEvent.mouseDown(input);
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 13 });
+  }
+
+  /** 下拉选项在隐藏无障碍列表里以 value 作为文本，这里点可见的选项内容节点。 */
+  async function selectCreators(dialog: HTMLElement, labels: string[]) {
+    await userEvent.click(within(dialog).getByRole('combobox', { name: '创建者' }));
+    for (const label of labels) {
+      const option = (await screen.findAllByText(label))
+        .find((element) => element.classList.contains('ant-select-item-option-content'));
+      expect(option).toBeTruthy();
+      await userEvent.click(option!);
+    }
+  }
+
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('sends creatorIds to the table and to every kanban status column', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useMembersServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await selectCreators(dialog, ['张三', '李四']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      expect(requests.some(q => q.get('size') === '10' && q.get('creatorIds') === '12,34')).toBe(true);
+      expect(requests.at(-1)?.get('page')).toBe('1');
+    });
+
+    await userEvent.click(screen.getByLabelText('看板视图'));
+    await waitFor(() => {
+      for (const category of ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE']) {
+        expect(requests.some(q => q.get('statusCategory') === category
+          && q.get('creatorIds') === '12,34')).toBe(true);
+      }
+    });
+  });
+
+  it('sends creatorIds to the pending-decision summary column', async () => {
+    useAuthStore.getState().setUser({ id: 42, username: 'zhangsan', nickname: '张三', email: '' });
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useMembersServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await selectCreators(dialog, ['张三']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      expect(requests.some(q => q.get('pendingDecisionOnly') === 'true'
+        && q.get('creatorIds') === '12')).toBe(true);
+    });
+  });
+
+  it('switches the scope back to all when creators are applied under a personal scope', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useMembersServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    await userEvent.click(screen.getByText('我创建的'));
+    await waitFor(() => expect(requests.at(-1)?.get('mineScope')).toBe('CREATED'));
+
+    const dialog = await openAdvancedFilter();
+    await selectCreators(dialog, ['张三']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      const last = requests.at(-1)!;
+      expect(last.get('creatorIds')).toBe('12');
+      expect(last.has('mineScope')).toBe(false);
+    });
+    expect(window.localStorage.getItem('autowonder.workitems.scope')).toBe('ALL');
+  });
+
+  it('combines creator and created-time conditions in one query', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useMembersServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    typeDate(dialog, '起始日期', '2026-10-01');
+    typeDate(dialog, '结束日期', '2026-10-10');
+    await selectCreators(dialog, ['张三']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      const last = requests.at(-1)!;
+      expect(last.get('creatorIds')).toBe('12');
+      expect(last.get('createdFrom')).toBe(FROM);
+      expect(last.get('createdTo')).toBe(TO);
+    });
+  });
+
+  it('drops creatorIds from subsequent queries when the creator tag is cleared', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useMembersServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await selectCreators(dialog, ['张三']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+    await waitFor(() => expect(requests.at(-1)?.get('creatorIds')).toBe('12'));
+
+    await userEvent.click(screen.getByTestId('workitem-creator-filter-clear'));
+
+    await waitFor(() => expect(requests.at(-1)?.has('creatorIds')).toBe(false));
+    expect(screen.queryByTestId('workitem-creator-filter-tag')).not.toBeInTheDocument();
+  });
+});
+
+// 标签逻辑条件（工单 #56796）：条件序列化为 tagConditions 参数，与顶部单值 tag 及其他筛选整体 AND；
+// 表格、看板各列与「待我决策」列共用同一份条件，关闭单条摘要后请求同步收窄。
+describe('WorkitemListPage 标签逻辑条件高级筛选', () => {
+  const FROM = dayjs('2026-10-01').startOf('day').toDate().toISOString();
+  const TO = dayjs('2026-10-10').startOf('day').add(1, 'day').toDate().toISOString();
+
+  const ROWS = [
+    { id: 61, title: '范围工单一', workType: 'REQ', statusName: '待处理', statusCategory: 'NEW', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-10-03T02:00:00Z', gmtModified: '2026-10-03T02:00:00Z' },
+    { id: 62, title: '范围工单二', workType: 'REQ', statusName: '开发中', statusCategory: 'IN_PROGRESS', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', version: 1, gmtCreate: '2026-10-05T02:00:00Z', gmtModified: '2026-10-05T02:00:00Z' },
+  ];
+
+  const TAG_OPTIONS = ['前端', '后端', 'P1'];
+
+  const MEMBERS = [
+    { userId: 12, username: 'zhangsan', email: 'zhangsan@example.com', nickname: '张三', joinedAt: '2026-01-01', owner: false, accessLevel: 'READ_WRITE', identityTags: [], roleId: 12, roleCode: 'READ_WRITE', roleName: null, readOnlyDomains: [] },
+  ];
+
+  function useRecordingServer(requests: URLSearchParams[]) {
+    server.use(http.get('/api/workitems', ({ request }) => {
+      requests.push(new URL(request.url).searchParams);
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: pageData(ROWS, 25) });
+    }));
+  }
+
+  function useTagOptionsServer() {
+    server.use(http.get('/api/workitems/tag-options', () => HttpResponse.json({
+      success: true, code: '0', message: '', data: TAG_OPTIONS, traceId: null,
+    })));
+  }
+
+  function useMembersServer() {
+    server.use(http.get('/api/workspaces/current/members', () => HttpResponse.json({
+      success: true, code: '0', message: '', data: MEMBERS, traceId: null,
+    })));
+  }
+
+  async function openAdvancedFilter() {
+    await userEvent.click(screen.getByRole('button', { name: /高级筛选/ }));
+    return screen.findByRole('dialog');
+  }
+
+  /** 日期录入按 antd 自身的用例写法：先打开面板，改输入值后回车提交，避免依赖日历单元格。 */
+  function typeDate(dialog: HTMLElement, placeholder: string, value: string) {
+    const input = within(dialog).getByPlaceholderText(placeholder);
+    fireEvent.mouseDown(input);
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 13 });
+  }
+
+  /** 只点当前可见下拉里的选项，避免多个条件的选择器残留隐藏选项互相干扰。 */
+  async function pickOption(label: string) {
+    const dropdown = document.querySelector<HTMLElement>('.ant-select-dropdown:not(.ant-select-dropdown-hidden)');
+    expect(dropdown).toBeTruthy();
+    const option = (await within(dropdown!).findAllByText(label))
+      .find((element) => element.classList.contains('ant-select-item-option-content'));
+    expect(option).toBeTruthy();
+    await userEvent.click(option!);
+  }
+
+  async function addTagCondition(dialog: HTMLElement, rowId: number, tags: string[]) {
+    await userEvent.click(within(dialog).getByRole('button', { name: /添加条件/ }));
+    const row = await within(dialog).findByTestId(`workitem-tag-condition-row-${rowId}`);
+    await userEvent.click(within(row).getAllByRole('combobox')[1]);
+    for (const tag of tags) await pickOption(tag);
+  }
+
+  async function selectCreators(dialog: HTMLElement, labels: string[]) {
+    await userEvent.click(within(dialog).getByRole('combobox', { name: '创建者' }));
+    for (const label of labels) await pickOption(label);
+  }
+
+  function tagConditionsOf(query: URLSearchParams) {
+    const raw = query.get('tagConditions');
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('sends the serialized tag conditions to the table and every kanban status column', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useTagOptionsServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await addTagCondition(dialog, 1, ['前端', 'P1']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      const last = requests.at(-1)!;
+      expect(last.get('page')).toBe('1');
+      expect(tagConditionsOf(last)).toEqual([{ op: 'AND', tags: ['前端', 'P1'] }]);
+    });
+
+    await userEvent.click(screen.getByLabelText('看板视图'));
+    await waitFor(() => {
+      for (const category of ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE']) {
+        expect(requests.some(q => q.get('statusCategory') === category
+          && JSON.stringify(tagConditionsOf(q)) === JSON.stringify([{ op: 'AND', tags: ['前端', 'P1'] }]))).toBe(true);
+      }
+    });
+  });
+
+  it('sends the same tag conditions to the pending-decision summary column', async () => {
+    useAuthStore.getState().setUser({ id: 42, username: 'zhangsan', nickname: '张三', email: '' });
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useTagOptionsServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await addTagCondition(dialog, 1, ['前端']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      expect(requests.some(q => q.get('pendingDecisionOnly') === 'true'
+        && JSON.stringify(tagConditionsOf(q)) === JSON.stringify([{ op: 'AND', tags: ['前端'] }]))).toBe(true);
+    });
+  });
+
+  it('combines tag conditions with the top-level tag, created time and creators', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useTagOptionsServer();
+    useMembersServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const tagInput = screen.getByPlaceholderText('按标签筛选');
+    await userEvent.type(tagInput, '自由标签');
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(requests.some(q => q.get('tag') === '自由标签')).toBe(true));
+
+    const dialog = await openAdvancedFilter();
+    typeDate(dialog, '起始日期', '2026-10-01');
+    typeDate(dialog, '结束日期', '2026-10-10');
+    await selectCreators(dialog, ['张三']);
+    await addTagCondition(dialog, 1, ['前端']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      const last = requests.at(-1)!;
+      expect(last.get('tag')).toBe('自由标签');
+      expect(last.get('createdFrom')).toBe(FROM);
+      expect(last.get('createdTo')).toBe(TO);
+      expect(last.get('creatorIds')).toBe('12');
+      expect(tagConditionsOf(last)).toEqual([{ op: 'AND', tags: ['前端'] }]);
+    });
+  });
+
+  it('drops only the cleared tag condition from subsequent queries', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    useTagOptionsServer();
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await addTagCondition(dialog, 1, ['前端']);
+    await addTagCondition(dialog, 2, ['后端']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => expect(tagConditionsOf(requests.at(-1)!)).toEqual([
+      { op: 'AND', tags: ['前端'] },
+      { op: 'AND', tags: ['后端'] },
+    ]));
+
+    await userEvent.click(screen.getByTestId('workitem-tag-condition-clear-1'));
+
+    await waitFor(() => expect(tagConditionsOf(requests.at(-1)!)).toEqual([{ op: 'AND', tags: ['后端'] }]));
+    expect(screen.getAllByTestId('workitem-tag-condition-tag')).toHaveLength(1);
+  });
+});
+
+
+describe('WorkitemListPage 工单标签', () => {
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    message.destroy();
+    useAuthStore.getState().clear();
+  });
+
+  it('shows tags in the table and filters by a suggested tag', async () => {
+    const requests: URLSearchParams[] = [];
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    server.use(
+      http.get('/api/workitems/tag-options', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: ['发布', '线上'],
+      })),
+      http.get('/api/workitems', ({ request }) => {
+        requests.push(new URL(request.url).searchParams);
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([{
+            id: 900, title: '带标签工单', workType: 'REQ', statusCategory: 'IN_PROGRESS', statusName: '开发中',
+            priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, tags: ['发布', '后端'],
+            version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01',
+          }]),
+        });
+      }),
+    );
+
+    renderPage();
+    await screen.findByText('带标签工单');
+    const cell = screen.getByTestId('workitem-tags-cell-900');
+    expect(within(cell).getByText('发布')).toBeInTheDocument();
+    expect(within(cell).getByText('后端')).toBeInTheDocument();
+
+    const tagInput = screen.getByPlaceholderText('按标签筛选');
+    await userEvent.click(tagInput);
+    await userEvent.type(tagInput, '线');
+    await userEvent.click(await screen.findByText('线上', { selector: '.ant-select-item-option-content' }));
+
+    await waitFor(() => expect(requests.some((query) => query.get('tag') === '线上')).toBe(true));
+    expect(tagInput).toHaveValue('线上');
+  });
+
+  it('shows tags on kanban cards', async () => {
+    server.use(http.get('/api/workitems', ({ request }) => {
+      const category = new URL(request.url).searchParams.get('statusCategory');
+      const list = category === 'IN_PROGRESS' ? [{
+        id: 901, title: '看板标签工单', workType: 'REQ', statusCategory: 'IN_PROGRESS', statusName: '开发中',
+        priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, tags: ['发布', '线上', '后端'],
+        version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01',
+      }] : [];
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: pageData(list) });
+    }));
+
+    renderPage();
+    const card = await screen.findByTestId('workitem-card-901');
+    expect(within(card).getByText('发布')).toBeInTheDocument();
+    expect(within(card).getByText('线上')).toBeInTheDocument();
+    expect(within(card).getByTestId('workitem-tags-overflow')).toHaveTextContent('+1');
+  });
+
+  it('shows three tags plus an overflow counter in the table column', async () => {
+    useAuthStore.setState({ accessLevel: 'READ_WRITE', readOnlyDomains: [] });
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    server.use(
+      http.get('/api/workitems/tag-options', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: ['标签一'],
+      })),
+      http.get('/api/workitems', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: pageData([{
+          id: 910, title: '多标签工单', workType: 'REQ', statusCategory: 'IN_PROGRESS', statusName: '开发中',
+          priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null,
+          tags: ['标签一', '标签二', '标签三', '标签四'],
+          version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01',
+        }]),
+      })),
+    );
+
+    renderPage();
+    await screen.findByText('多标签工单');
+    const cell = screen.getByTestId('workitem-tags-cell-910');
+    expect(within(cell).getByText('标签一')).toBeInTheDocument();
+    expect(within(cell).getByText('标签二')).toBeInTheDocument();
+    expect(within(cell).getByText('标签三')).toBeInTheDocument();
+    expect(within(cell).queryByText('标签四')).not.toBeInTheDocument();
+    expect(within(cell).getByTestId('workitem-tags-overflow')).toHaveTextContent('+1');
+  });
+
+  it('prompts read-only members instead of opening the writable tag editor', async () => {
+    useAuthStore.setState({ accessLevel: 'READ_ONLY', readOnlyDomains: [] });
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    server.use(
+      http.get('/api/workitems/tag-options', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: ['发布'],
+      })),
+      http.get('/api/workitems', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: pageData([{
+          id: 911, title: '只读标签工单', workType: 'REQ', statusCategory: 'IN_PROGRESS', statusName: '开发中',
+          priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, tags: ['发布'],
+          version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01',
+        }]),
+      })),
+    );
+
+    renderPage();
+    await screen.findByText('只读标签工单');
+    const cell = screen.getByTestId('workitem-tags-cell-911');
+    expect(within(cell).queryByRole('button', { name: '编辑标签' })).not.toBeInTheDocument();
+
+    await userEvent.click(within(cell).getByText('发布'));
+
+    expect(await screen.findByText(/编辑标签需要读写权限/)).toBeInTheDocument();
+    expect(screen.queryByTestId('workitem-tags-editor')).not.toBeInTheDocument();
+  });
+
+  it('keeps free-text tag filtering usable when suggestions fail to load', async () => {
+    const requests: URLSearchParams[] = [];
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    server.use(
+      http.get('/api/workitems/tag-options', () => HttpResponse.json(
+        { success: false, code: '50000', message: 'boom', traceId: null, data: null },
+        { status: 500 },
+      )),
+      http.get('/api/workitems', ({ request }) => {
+        requests.push(new URL(request.url).searchParams);
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: pageData([]) });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByTestId('workitem-tag-options-error')).toHaveTextContent('标签联想加载失败');
+
+    const tagInput = screen.getByPlaceholderText('按标签筛选');
+    await userEvent.type(tagInput, '自由标签');
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => expect(requests.some((query) => query.get('tag') === '自由标签')).toBe(true));
   });
 });

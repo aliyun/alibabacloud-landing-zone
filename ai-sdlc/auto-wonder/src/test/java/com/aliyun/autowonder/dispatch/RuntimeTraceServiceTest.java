@@ -32,7 +32,7 @@ class RuntimeTraceServiceTest {
         source.setSeq(7L);
         source.setEventType("bash.call");
         source.setDetailJson("{\"runtimeId\":\"rt1\",\"provider\":\"codex\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"spanId\":\"span1\"}");
-        when(eventDao.listByDispatch(1L, 44L)).thenReturn(List.of(source));
+        when(eventDao.listByDispatchInArrivalOrder(1L, 44L)).thenReturn(List.of(source));
 
         RuntimeTraceVO trace = new RuntimeTraceService(dispatchDao, eventDao).get(1L, 44L);
 
@@ -51,7 +51,7 @@ class RuntimeTraceServiceTest {
         DispatchRuntimeEventDao eventDao = mock(DispatchRuntimeEventDao.class);
         DispatchDO dispatch = dispatch(45L, 1L);
         when(dispatchDao.findById(45L)).thenReturn(dispatch);
-        when(eventDao.listByDispatch(1L, 45L)).thenReturn(List.of(
+        when(eventDao.listByDispatchInArrivalOrder(1L, 45L)).thenReturn(List.of(
                 event(1, "step.started", "2026-07-30T10:00:00Z", "{\"stepId\":\"implementation\",\"stepName\":\"Implementation\"}"),
                 event(2, "session.started", "2026-07-30T10:00:01Z", "{\"runtimeId\":\"rt1\",\"provider\":\"codex\",\"sessionId\":\"s1\"}"),
                 event(3, "turn.started", "2026-07-30T10:00:02Z", "{\"sessionId\":\"s1\",\"turnId\":\"t1\",\"spanId\":\"t1:llm\"}"),
@@ -105,7 +105,7 @@ class RuntimeTraceServiceTest {
         DispatchDao dispatchDao = mock(DispatchDao.class);
         DispatchRuntimeEventDao eventDao = mock(DispatchRuntimeEventDao.class);
         when(dispatchDao.findById(48L)).thenReturn(dispatch(48L, 1L));
-        when(eventDao.listByDispatch(1L, 48L)).thenReturn(List.of(
+        when(eventDao.listByDispatchInArrivalOrder(1L, 48L)).thenReturn(List.of(
                 event(1, "session.started", "2026-07-30T10:00:00Z", "{\"sessionId\":\"qoder-session\",\"provider\":\"qoder\"}"),
                 event(2, "turn.started", "2026-07-30T10:00:01Z", "{\"sessionId\":\"qoder-session\",\"turnId\":\"turn-1\",\"prompt\":\"full user prompt\",\"systemPrompt\":\"full system prompt\"}"),
                 event(3, "bash.call", "2026-07-30T10:00:02Z", "{\"sessionId\":\"qoder-session\",\"turnId\":\"turn-1\",\"spanId\":\"call-1\",\"tool\":\"Bash\",\"input\":{\"command\":\"pwd\",\"Authorization\":\"Bearer raw\"}}"),
@@ -144,7 +144,7 @@ class RuntimeTraceServiceTest {
         DispatchDao dispatchDao = mock(DispatchDao.class);
         DispatchRuntimeEventDao eventDao = mock(DispatchRuntimeEventDao.class);
         when(dispatchDao.findById(46L)).thenReturn(dispatch(46L, 1L));
-        when(eventDao.listByDispatch(1L, 46L)).thenReturn(List.of(
+        when(eventDao.listByDispatchInArrivalOrder(1L, 46L)).thenReturn(List.of(
                 event(4, "session.started", "2026-07-30T10:00:00Z", "{\"sessionId\":\"s1\"}")));
 
         RuntimeTraceVO trace = new RuntimeTraceService(dispatchDao, eventDao).get(1L, 46L, 4L);
@@ -160,7 +160,7 @@ class RuntimeTraceServiceTest {
         DispatchDao dispatchDao = mock(DispatchDao.class);
         DispatchRuntimeEventDao eventDao = mock(DispatchRuntimeEventDao.class);
         when(dispatchDao.findById(47L)).thenReturn(dispatch(47L, 1L));
-        when(eventDao.listByDispatch(1L, 47L)).thenReturn(List.of(
+        when(eventDao.listByDispatchInArrivalOrder(1L, 47L)).thenReturn(List.of(
                 event(1, "session.resumed", "2026-07-30T10:00:00Z",
                         "{\"sessionId\":\"s1\",\"parentSessionId\":\"s1\"}")));
 
@@ -404,7 +404,7 @@ class RuntimeTraceServiceTest {
         DispatchRuntimeEventDO source = event(1, "session.started", "2026-07-30T10:00:00Z", "{\"sessionId\":\"s1\"}");
         source.setEventTime(null);
         source.setGmtCreate(Date.from(Instant.parse("2026-07-30T10:00:00Z")));
-        when(eventDao.listByDispatch(1L, 56L)).thenReturn(List.of(source));
+        when(eventDao.listByDispatchInArrivalOrder(1L, 56L)).thenReturn(List.of(source));
 
         RuntimeTraceVO trace = new RuntimeTraceService(dispatchDao, eventDao).get(1L, 56L);
 
@@ -551,11 +551,45 @@ class RuntimeTraceServiceTest {
 
     private static DispatchRuntimeEventDO event(long seq, String type, String time, String detailJson) {
         DispatchRuntimeEventDO event = new DispatchRuntimeEventDO();
+        event.setId(seq);
         event.setEventId("45:" + seq);
         event.setSeq(seq);
         event.setEventType(type);
         event.setEventTime(Date.from(Instant.parse(time)));
         event.setDetailJson(detailJson);
+        return event;
+    }
+
+    @Test
+    void failoverRerunAdvancesChangedCursorAndKeepsArrivalOrder() {
+        // Two executor runs share one dispatch: run 1 numbers seq 500, the failover re-run
+        // restarts seq at 1. The changed cursor and event order must follow the arrival id.
+        DispatchDao dispatchDao = mock(DispatchDao.class);
+        DispatchRuntimeEventDao eventDao = mock(DispatchRuntimeEventDao.class);
+        when(dispatchDao.findById(65L)).thenReturn(dispatch(65L, 1L));
+        DispatchRuntimeEventDO run1 = eventWithId(11L, 500L, "session.started", "2026-07-30T10:00:00Z",
+                "{\"sessionId\":\"s1\"}");
+        DispatchRuntimeEventDO run2First = eventWithId(12L, 1L, "session.resumed", "2026-07-30T10:20:00Z",
+                "{\"sessionId\":\"s2\"}");
+        DispatchRuntimeEventDO run2Second = eventWithId(13L, 2L, "turn.started", "2026-07-30T10:20:01Z",
+                "{\"sessionId\":\"s2\",\"turnId\":\"t1\"}");
+        when(eventDao.listByDispatchInArrivalOrder(1L, 65L))
+                .thenReturn(List.of(run1), List.of(run1, run2First, run2Second));
+
+        RuntimeTraceService service = new RuntimeTraceService(dispatchDao, eventDao);
+        RuntimeTraceVO first = service.get(1L, 65L);
+        assertEquals(11L, first.getLastSeq());
+
+        RuntimeTraceVO rerun = service.get(1L, 65L, first.getLastSeq());
+        assertTrue(rerun.isChanged());
+        assertEquals(13L, rerun.getLastSeq());
+        assertEquals(List.of(11L, 12L, 13L),
+                rerun.getEvents().stream().map(RuntimeTraceVO.Event::getSeq).toList());
+    }
+
+    private static DispatchRuntimeEventDO eventWithId(long id, long seq, String type, String time, String detailJson) {
+        DispatchRuntimeEventDO event = event(seq, type, time, detailJson);
+        event.setId(id);
         return event;
     }
 }

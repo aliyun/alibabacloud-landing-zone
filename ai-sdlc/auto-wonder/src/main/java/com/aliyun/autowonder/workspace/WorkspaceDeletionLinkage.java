@@ -8,6 +8,7 @@ import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -53,13 +54,16 @@ public class WorkspaceDeletionLinkage {
     private final ScheduledTaskDao scheduledTaskDao;
     private final DispatchDao dispatchDao;
     private final DispatchPauseService dispatchPauseService;
+    private final JdbcTemplate jdbc;
 
     public WorkspaceDeletionLinkage(ScheduledTaskDao scheduledTaskDao,
                                     DispatchDao dispatchDao,
-                                    DispatchPauseService dispatchPauseService) {
+                                    DispatchPauseService dispatchPauseService,
+                                    JdbcTemplate jdbc) {
         this.scheduledTaskDao = scheduledTaskDao;
         this.dispatchDao = dispatchDao;
         this.dispatchPauseService = dispatchPauseService;
+        this.jdbc = jdbc;
     }
 
     /** In-transaction half: bulk-pauses every ACTIVE scheduled task of the workspace. */
@@ -69,6 +73,30 @@ public class WorkspaceDeletionLinkage {
             log.info("Paused {} scheduled task(s) of workspace {}: {}", paused, workspaceId, DELETION_REASON);
         }
         return paused;
+    }
+
+    /**
+     * In-transaction half: stops the platform shared bots of the deleted workspace from routing
+     * messages into it. Only SHARED bindings are touched — a LEGACY binding owns its own
+     * credentials and is deliberately left for an explicit operator decision.
+     */
+    public int disableSharedBindings(long workspaceId, long operatorId) {
+        int disabled = jdbc.update(
+                "UPDATE feishu_robot_binding SET status='DISABLED',route_version=route_version+1,"
+                        + "modifier_id=?,version=version+1 "
+                        + "WHERE tenant_id=? AND binding_mode='SHARED' AND status<>'DISABLED'",
+                operatorId, workspaceId);
+        disabled += jdbc.update(
+                "UPDATE dingtalk_robot_binding SET status='DISABLED',route_version=route_version+1,"
+                        + "modifier_id=?,version=version+1 "
+                        + "WHERE tenant_id=? AND binding_mode='SHARED' AND status<>'DISABLED' "
+                        + "AND is_deleted=0",
+                operatorId, workspaceId);
+        if (disabled > 0) {
+            log.info("Disabled {} shared binding(s) of workspace {}: {}",
+                    disabled, workspaceId, DELETION_REASON);
+        }
+        return disabled;
     }
 
     /**

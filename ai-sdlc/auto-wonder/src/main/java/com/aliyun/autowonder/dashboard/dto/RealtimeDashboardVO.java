@@ -9,6 +9,7 @@ import java.util.List;
 @Setter
 public class RealtimeDashboardVO {
     private KpiVO kpi;
+    private CostCompositionVO costComposition;
     private InventoryVO inventory;
     private List<SquadLineVO> squads;
     private List<WorkstationVO> workstations;

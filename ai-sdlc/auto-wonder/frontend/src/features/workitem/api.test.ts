@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/shared/api/client';
-import { getArtifactDownloadUrl, getRuntimeActivities } from './api';
+import { getArtifactDownloadUrl, getRuntimeActivities, listWorkitemTagOptions } from './api';
 
 vi.mock('@/shared/api/client', () => ({
   apiClient: {
@@ -43,6 +43,14 @@ describe('workitem API', () => {
       '/api/dispatches/302/runtime-trace/activities',
       { signal: controller.signal },
     );
+  });
+
+  it('loads the workspace tag options as a plain string array', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: ['发布', '线上', '后端'] } as never);
+
+    await expect(listWorkitemTagOptions()).resolves.toEqual(['发布', '线上', '后端']);
+
+    expect(apiClient.get).toHaveBeenCalledWith('/api/workitems/tag-options');
   });
 
   it('returns an http presigned download URL unchanged', async () => {

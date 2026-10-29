@@ -33,6 +33,29 @@ candidate was proved, not assumed: `25371cb1` is an ancestor of the community ti
 
 ## History
 
+### 2026-10-28: candidate sync to `663ae6262` — v1.1.0
+
+- Status: CANDIDATE; acceptance/reviews PENDING.
+- previousVerifiedMasterSha: `2b97e41ffda2cfbb64f1fa74963867ebed7fe3ef`.
+- candidateMasterSha: `663ae626269d0ca95b0ff7d1123339422983fc5e`.
+- communityBeforeSha: `d81418a4526cbdc104236979ecc3eb51f89fa89e`.
+- Source frozen at 2026-10-28T09:58:55Z; later master commits belong to another run.
+- Previous accepted commit `b8aeee2d462a0200d846c74496e68a0692baaeef`, tree
+  `1d521e447f59395dd7eaf9ef0d972c9cbe4978ec`, matches merged Community
+  `c1a945d34ff02192e6d5a29ea07cbfeaf13fbf6f` and is reachable from current Community.
+  Original cycle-7 quality/reviews and supplemental real-Qoder evidence recovered;
+  earlier PENDING/Current Baseline summaries above are historical, not fresh evidence.
+- New public capabilities and data impact: see release_v1.1.0_20261028.md.
+- The upstream merge preserves the Community E2E tree. The release owner explicitly
+  authorized a separate Community JSON regression repair for the removed plaintext
+  environment API: verify create/list masks while retaining executor original-value
+  and resumed-session checks. No master E2E files are imported.
+- Preserve published migrations and public deployment boundaries; new SQL mapped
+  V089–V100, optional config keys inventoried in YAML/operator guide.
+- Internal MR / external compare: NOT_CREATED. Final candidate and evidence bindings
+  recorded outside source; no accepted-tree rewrite to insert test results or links.
+
+
 ### 2026-10-20: candidate sync to `2b97e41ff` — v1.0.0
 
 - Status: CANDIDATE; product verification and independent reviews PENDING.

@@ -1,12 +1,15 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
 import com.aliyun.autowonder.branding.PlatformBrandingService;
+import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.im.PlatformImChannelConfigService;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingUpsertRequest;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingView;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -16,8 +19,8 @@ class DingTalkBindingControllerTest {
     private final DingTalkStreamClientManager streamClientManager =
             mock(DingTalkStreamClientManager.class);
     private final PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
-    private final com.aliyun.autowonder.im.PlatformImChannelConfigService imConfigs =
-            mock(com.aliyun.autowonder.im.PlatformImChannelConfigService.class);
+    private final PlatformImChannelConfigService imConfigs =
+            mock(PlatformImChannelConfigService.class);
     private final DingTalkBindingController ctrl =
             new DingTalkBindingController(svc, streamClientManager, brandingService, imConfigs);
 
@@ -27,29 +30,165 @@ class DingTalkBindingControllerTest {
     }
 
     @Test
-    void rejectsDingTalkWritesWhenPlatformSelectsFeishu() {
-        doThrow(new com.aliyun.autowonder.common.error.BizException(
-                com.aliyun.autowonder.common.error.ErrorCode.PARAM_INVALID)).when(imConfigs).requireSelected("DINGTALK");
-        assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> ctrl.create(new BindingUpsertRequest()));
-        assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> ctrl.update(1L, new BindingUpsertRequest()));
+    void createRequiresPlatformSelectedChannel() {
+        doThrow(new BizException(com.aliyun.autowonder.common.error.ErrorCode.PARAM_INVALID))
+                .when(imConfigs).requireSelected("DINGTALK");
+
+        assertThrows(BizException.class, () -> ctrl.create(new BindingUpsertRequest()));
         verifyNoInteractions(svc, streamClientManager);
     }
 
     @Test
-    void viewMasksSecretAndBuildsCallbackUrl() {
-        DingtalkRobotBindingDO row = new DingtalkRobotBindingDO();
-        row.setId(7L);
-        row.setAppKey("ak");
-        row.setRobotCode("rc");
-        row.setAgentId(3L);
-        row.setTransportMode("HTTP_CALLBACK");
-        row.setCallbackToken("tok123");
-        row.setStreamEnv("ONLINE");
-        row.setStatus("ENABLED");
+    void createRejectsLegacyCredentialsAndMode() {
+        BindingUpsertRequest withCredentials = sharedRequest("cid_group");
+        withCredentials.setAppKey("legacy-app-key");
+        assertForbidden(() -> ctrl.create(withCredentials));
+
+        BindingUpsertRequest legacyMode = sharedRequest("cid_group");
+        legacyMode.setBindingMode("LEGACY");
+        assertForbidden(() -> ctrl.create(legacyMode));
+
+        assertForbidden(() -> ctrl.create(null));
+        verify(svc, never()).createShared(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void createSharedBindingNeverStartsWithLegacyStream() {
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        AutoWonderContext.get().setUserId(9L);
+        DingtalkRobotBindingDO row = sharedBinding();
+        when(svc.isShared(row)).thenReturn(true);
+        when(svc.createShared(1L, 9L, "cid_group", 3L, "ENABLED")).thenReturn(row);
+
+        BindingView view = ctrl.create(sharedRequest("cid_group")).getData();
+
+        assertEquals("SHARED", view.getBindingMode());
+        assertEquals(8L, view.getPlatformConfigId());
+        assertEquals("cid_group", view.getGroupId());
+        assertNull(view.getAppSecretMasked());
+        verify(svc).createShared(1L, 9L, "cid_group", 3L, "ENABLED");
+        verifyNoInteractions(streamClientManager);
+    }
+
+    @Test
+    void legacyUpdateRejectsBindingModeConversion() {
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        AutoWonderContext.get().setUserId(9L);
+        DingtalkRobotBindingDO oldRow = legacyBinding();
+        when(svc.get(1L, 7L)).thenReturn(oldRow);
+        when(svc.isShared(oldRow)).thenReturn(false);
+        BindingUpsertRequest request = legacyRequest("STREAM", "ENABLED");
+        request.setBindingMode("SHARED");
+
+        BizException error = assertThrows(BizException.class, () -> ctrl.update(7L, request));
+
+        assertEquals("integration.binding_mode_immutable", error.getMessageKey());
+        verify(svc, never()).update(any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void legacyUpdateRestartsStreamAfterSuccessfulSave() {
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        AutoWonderContext.get().setUserId(9L);
+        DingtalkRobotBindingDO oldRow = legacyBinding();
+        DingtalkRobotBindingDO updatedRow = legacyBinding();
+        when(svc.get(1L, 7L)).thenReturn(oldRow);
+        when(svc.isShared(oldRow)).thenReturn(false);
+        when(svc.isShared(updatedRow)).thenReturn(false);
+        when(svc.update(1L, 9L, 7L, "ak", "sk", "rc", 3L, "STREAM", "ONLINE",
+                "tok", "https://gw", "cn-hangzhou", "ENABLED")).thenReturn(updatedRow);
+
+        BindingView view = ctrl.update(7L, legacyRequest("STREAM", "ENABLED")).getData();
+
+        assertEquals("LEGACY", view.getBindingMode());
+        assertEquals("****", view.getAppSecretMasked());
+        InOrder order = inOrder(svc, streamClientManager);
+        order.verify(svc).get(1L, 7L);
+        order.verify(svc).update(1L, 9L, 7L, "ak", "sk", "rc", 3L, "STREAM", "ONLINE",
+                "tok", "https://gw", "cn-hangzhou", "ENABLED");
+        order.verify(streamClientManager).stop(oldRow);
+        order.verify(streamClientManager).start(updatedRow);
+    }
+
+    @Test
+    void sharedUpdateOnlyChangesGroupAgentAndStatus() {
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        AutoWonderContext.get().setUserId(9L);
+        DingtalkRobotBindingDO oldRow = sharedBinding();
+        DingtalkRobotBindingDO updatedRow = sharedBinding();
+        updatedRow.setGroupId("cid_new");
+        updatedRow.setVersion(2);
+        when(svc.get(1L, 7L)).thenReturn(oldRow);
+        when(svc.isShared(oldRow)).thenReturn(true);
+        when(svc.isShared(updatedRow)).thenReturn(true);
+        when(svc.updateShared(1L, 9L, 7L, "cid_new", 4L, "DISABLED", 1)).thenReturn(updatedRow);
+        BindingUpsertRequest request = sharedRequest("cid_new");
+        request.setAgentId(4L);
+        request.setStatus("DISABLED");
+        request.setVersion(1);
+
+        BindingView view = ctrl.update(7L, request).getData();
+
+        assertEquals("cid_new", view.getGroupId());
+        assertEquals(2, view.getVersion());
+        verify(svc).updateShared(1L, 9L, 7L, "cid_new", 4L, "DISABLED", 1);
+        verifyNoInteractions(streamClientManager);
+    }
+
+    @Test
+    void sharedUpdateRejectsLegacyPayload() {
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        DingtalkRobotBindingDO oldRow = sharedBinding();
+        when(svc.get(1L, 7L)).thenReturn(oldRow);
+        when(svc.isShared(oldRow)).thenReturn(true);
+        BindingUpsertRequest request = sharedRequest("cid_group");
+        request.setAppSecret("legacy-secret");
+
+        assertForbidden(() -> ctrl.update(7L, request));
+        verify(svc, never()).updateShared(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void deleteSharedBindingDoesNotStopLegacyStream() {
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        DingtalkRobotBindingDO oldRow = sharedBinding();
+        when(svc.get(1L, 7L)).thenReturn(oldRow);
+        when(svc.isShared(oldRow)).thenReturn(true);
+
+        ctrl.delete(7L);
+
+        verify(svc).delete(1L, 7L);
+        verifyNoInteractions(streamClientManager);
+    }
+
+    @Test
+    void deleteLegacyBindingStopsStream() {
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        DingtalkRobotBindingDO oldRow = legacyBinding();
+        when(svc.get(1L, 7L)).thenReturn(oldRow);
+        when(svc.isShared(oldRow)).thenReturn(false);
+
+        ctrl.delete(7L);
+
+        verify(streamClientManager).stop(oldRow);
+    }
+
+    @Test
+    void getMissingBindingIsReported() {
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        when(svc.get(1L, 7L)).thenReturn(null);
+
+        assertThrows(com.aliyun.autowonder.common.error.KeyedIllegalArgumentException.class,
+                () -> ctrl.get(7L));
+    }
+
+    @Test
+    void viewMasksSecretAndBuildsLegacyCallbackUrl() {
+        DingtalkRobotBindingDO row = legacyBinding();
         doAnswer(inv -> {
             BindingView view = inv.getArgument(1);
             view.setStreamStatus("CONNECTED");
-            view.setStreamError(null);
             view.setStreamStatusUpdatedAt(1784810000000L);
             return null;
         }).when(svc).applyStreamStatus(eq(row), any(BindingView.class));
@@ -58,120 +197,41 @@ class DingTalkBindingControllerTest {
         BindingView v = ctrl.toView(row);
 
         assertEquals("****", v.getAppSecretMasked());
-        assertEquals("https://wonder.example.com/api/integrations/dingtalk/callback?token=tok123",
+        assertEquals("https://wonder.example.com/api/integrations/dingtalk/callback?token=tok",
                 v.getCallbackUrl());
-        assertEquals("ONLINE", v.getStreamEnv());
         assertEquals("CONNECTED", v.getStreamStatus());
         assertEquals(1784810000000L, v.getStreamStatusUpdatedAt());
     }
 
     @Test
-    void callbackUrlFollowsTheBrandingDomainWithoutRestart() {
-        DingtalkRobotBindingDO row = binding(7L, "HTTP_CALLBACK", "ENABLED");
-        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://wonder.example.com");
+    void sharedViewOmitsLegacySecretAndCallback() {
+        DingtalkRobotBindingDO row = sharedBinding();
+        when(svc.isShared(row)).thenReturn(true);
 
-        assertEquals("https://wonder.example.com/api/integrations/dingtalk/callback?token=tok",
-                ctrl.toView(row).getCallbackUrl());
+        BindingView v = ctrl.toView(row);
 
-        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://daily.auto-wonder.example.com");
-
-        assertEquals("https://daily.auto-wonder.example.com/api/integrations/dingtalk/callback?token=tok",
-                ctrl.toView(row).getCallbackUrl());
+        assertEquals("SHARED", v.getBindingMode());
+        assertNull(v.getAppSecretMasked());
+        assertNull(v.getCallbackUrl());
+        assertEquals(5L, v.getRouteVersion());
+        verify(svc, never()).applyStreamStatus(any(), any());
     }
 
-    @Test
-    void createEnabledStreamBindingStartsClientAfterCreate() {
-        AutoWonderContext.get().setCurrentWorkspaceId(1L);
-        AutoWonderContext.get().setUserId(9L);
-        BindingUpsertRequest req = request("STREAM", "ENABLED");
-        DingtalkRobotBindingDO row = binding(7L, "STREAM", "ENABLED");
-        when(svc.create(1L, 9L, "ak", "sk", "rc", 3L, "STREAM", "ONLINE",
-                "tok", "https://gw", "cn-hangzhou", "ENABLED")).thenReturn(row);
-
-        BindingView view = ctrl.create(req).getData();
-
-        assertEquals(7L, view.getId());
-        InOrder inOrder = inOrder(svc, streamClientManager);
-        inOrder.verify(svc).create(1L, 9L, "ak", "sk", "rc", 3L, "STREAM", "ONLINE",
-                "tok", "https://gw", "cn-hangzhou", "ENABLED");
-        inOrder.verify(streamClientManager).start(row);
+    private static void assertForbidden(org.junit.jupiter.api.function.Executable action) {
+        BizException error = assertThrows(BizException.class, action);
+        assertEquals("10001", error.getCode());
+        assertEquals("integration.shared_fields_forbidden", error.getMessageKey());
     }
 
-    @Test
-    void createDoesNotStartDisabledOrHttpCallbackBinding() {
-        AutoWonderContext.get().setCurrentWorkspaceId(1L);
-        AutoWonderContext.get().setUserId(9L);
-        BindingUpsertRequest httpReq = request("HTTP_CALLBACK", "ENABLED");
-        DingtalkRobotBindingDO httpRow = binding(7L, "HTTP_CALLBACK", "ENABLED");
-        when(svc.create(1L, 9L, "ak", "sk", "rc", 3L, "HTTP_CALLBACK", "ONLINE",
-                "tok", "https://gw", "cn-hangzhou", "ENABLED")).thenReturn(httpRow);
-        BindingUpsertRequest disabledReq = request("STREAM", "DISABLED");
-        disabledReq.setRobotCode("rc-disabled");
-        DingtalkRobotBindingDO disabledRow = binding(8L, "STREAM", "DISABLED");
-        disabledRow.setRobotCode("rc-disabled");
-        when(svc.create(1L, 9L, "ak", "sk", "rc-disabled", 3L, "STREAM", "ONLINE",
-                "tok", "https://gw", "cn-hangzhou", "DISABLED")).thenReturn(disabledRow);
-
-        ctrl.create(httpReq);
-        ctrl.create(disabledReq);
-
-        verify(streamClientManager, never()).start(any());
+    private static BindingUpsertRequest sharedRequest(String groupId) {
+        BindingUpsertRequest req = new BindingUpsertRequest();
+        req.setGroupId(groupId);
+        req.setAgentId(3L);
+        req.setStatus("ENABLED");
+        return req;
     }
 
-    @Test
-    void updateStopsOldClientThenStartsUpdatedStreamBinding() {
-        AutoWonderContext.get().setCurrentWorkspaceId(1L);
-        AutoWonderContext.get().setUserId(9L);
-        BindingUpsertRequest req = request("STREAM", "ENABLED");
-        DingtalkRobotBindingDO oldRow = binding(7L, "STREAM", "ENABLED");
-        oldRow.setAppKey("old-ak");
-        DingtalkRobotBindingDO updatedRow = binding(7L, "STREAM", "ENABLED");
-        when(svc.get(1L, 7L)).thenReturn(oldRow);
-        when(svc.update(1L, 9L, 7L, "ak", "sk", "rc", 3L, "STREAM", "ONLINE",
-                "tok", "https://gw", "cn-hangzhou", "ENABLED")).thenReturn(updatedRow);
-
-        ctrl.update(7L, req);
-
-        InOrder inOrder = inOrder(svc, streamClientManager);
-        inOrder.verify(svc).get(1L, 7L);
-        inOrder.verify(svc).update(1L, 9L, 7L, "ak", "sk", "rc", 3L, "STREAM", "ONLINE",
-                "tok", "https://gw", "cn-hangzhou", "ENABLED");
-        inOrder.verify(streamClientManager).stop(oldRow);
-        inOrder.verify(streamClientManager).start(updatedRow);
-    }
-
-    @Test
-    void updateToDisabledStopsOldClientAndDoesNotStartUpdatedBinding() {
-        AutoWonderContext.get().setCurrentWorkspaceId(1L);
-        AutoWonderContext.get().setUserId(9L);
-        BindingUpsertRequest req = request("STREAM", "DISABLED");
-        DingtalkRobotBindingDO oldRow = binding(7L, "STREAM", "ENABLED");
-        DingtalkRobotBindingDO updatedRow = binding(7L, "STREAM", "DISABLED");
-        when(svc.get(1L, 7L)).thenReturn(oldRow);
-        when(svc.update(1L, 9L, 7L, "ak", "sk", "rc", 3L, "STREAM", "ONLINE",
-                "tok", "https://gw", "cn-hangzhou", "DISABLED")).thenReturn(updatedRow);
-
-        ctrl.update(7L, req);
-
-        verify(streamClientManager).stop(oldRow);
-        verify(streamClientManager, never()).start(any());
-    }
-
-    @Test
-    void deleteStopsExistingClientAfterDelete() {
-        AutoWonderContext.get().setCurrentWorkspaceId(1L);
-        DingtalkRobotBindingDO oldRow = binding(7L, "STREAM", "ENABLED");
-        when(svc.get(1L, 7L)).thenReturn(oldRow);
-
-        ctrl.delete(7L);
-
-        InOrder inOrder = inOrder(svc, streamClientManager);
-        inOrder.verify(svc).get(1L, 7L);
-        inOrder.verify(svc).delete(1L, 7L);
-        inOrder.verify(streamClientManager).stop(oldRow);
-    }
-
-    private BindingUpsertRequest request(String transportMode, String status) {
+    private static BindingUpsertRequest legacyRequest(String transportMode, String status) {
         BindingUpsertRequest req = new BindingUpsertRequest();
         req.setAppKey("ak");
         req.setAppSecret("sk");
@@ -186,18 +246,39 @@ class DingTalkBindingControllerTest {
         return req;
     }
 
-    private DingtalkRobotBindingDO binding(Long id, String transportMode, String status) {
+    private static DingtalkRobotBindingDO legacyBinding() {
         DingtalkRobotBindingDO row = new DingtalkRobotBindingDO();
-        row.setId(id);
+        row.setId(7L);
+        row.setTenantId(1L);
+        row.setBindingMode("LEGACY");
         row.setAppKey("ak");
         row.setRobotCode("rc");
         row.setAgentId(3L);
-        row.setTransportMode(transportMode);
+        row.setTransportMode("STREAM");
         row.setCallbackToken("tok");
         row.setStreamEnv("ONLINE");
-        row.setStatus(status);
+        row.setStatus("ENABLED");
         row.setBaseUrl("https://gw");
         row.setRegionId("cn-hangzhou");
+        row.setRouteVersion(0L);
+        return row;
+    }
+
+    private static DingtalkRobotBindingDO sharedBinding() {
+        DingtalkRobotBindingDO row = new DingtalkRobotBindingDO();
+        row.setId(7L);
+        row.setTenantId(1L);
+        row.setBindingMode("SHARED");
+        row.setPlatformConfigId(8L);
+        row.setGroupId("cid_group");
+        row.setAppKey("shared-ak");
+        row.setRobotCode("shared-rc");
+        row.setAgentId(3L);
+        row.setTransportMode("STREAM");
+        row.setStreamEnv("ONLINE");
+        row.setStatus("ENABLED");
+        row.setRouteVersion(5L);
+        row.setVersion(1);
         return row;
     }
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRealtime } from '@/shared/realtime/useRealtime';
 import { ApiError, ErrorCodes } from '@/shared/types/common';
 import * as api from './api';
@@ -69,9 +69,10 @@ export function isClarificationReplyingStatus(status: string | null | undefined)
 
 /** 回复中返回轮询间隔，否则关闭轮询。 */
 export function clarificationConversationRefetchInterval(
-  data: { processingStatus?: string | null } | null | undefined,
+  data: { processingStatus?: string | null; answerDeliveries?: { deliveryStatus?: string | null }[] | null } | null | undefined,
 ): number | false {
-  return isClarificationReplyingStatus(data?.processingStatus)
+  return (isClarificationReplyingStatus(data?.processingStatus)
+    || data?.answerDeliveries?.some(card => card.deliveryStatus === 'SAVED' || card.deliveryStatus === 'RECEIVED'))
     ? CLARIFICATION_PROCESSING_POLL_MS
     : false;
 }
@@ -152,6 +153,7 @@ export function useCancelClarificationTurn(workitemId: number | string, conversa
 }
 
 export interface StreamedEvent {
+  dispatchAttempt?: number;
   eventSeq: number;
   turnId: number;
   eventType: string;
@@ -187,7 +189,7 @@ export function useClarificationEvents(
       const payload = event.payload as ConversationRealtimeEvent | null;
       if (!payload || payload.conversationId !== conversationId) return;
 
-      const dedupKey = `${payload.turnId}:${payload.eventSeq}`;
+      const dedupKey = `${payload.turnId}:${payload.dispatchAttempt ?? 0}:${payload.eventSeq}`;
       if (seenEventsRef.current.has(dedupKey)) return;
       seenEventsRef.current.add(dedupKey);
 
@@ -203,6 +205,7 @@ export function useClarificationEvents(
       setStreamedEvents((prev) => [
         ...prev,
         {
+          dispatchAttempt: payload.dispatchAttempt ?? 0,
           eventSeq: payload.eventSeq,
           turnId: payload.turnId,
           eventType: payload.eventType,
@@ -250,36 +253,42 @@ export function useClarificationEvents(
     return streamedEvents.filter((e) => e.turnId === targetTurnId);
   }, [streamedEvents, processingTurnId]);
 
+  const currentAttemptEvents = useMemo(() => {
+    const attempt = visibleEvents.reduce((highest, event) => Math.max(highest, event.dispatchAttempt ?? 0), 0);
+    return visibleEvents.filter(event => (event.dispatchAttempt ?? 0) === attempt
+      || ((event.dispatchAttempt ?? 0) === 0 && event.eventType === 'status'));
+  }, [visibleEvents]);
+
   const streamedText = useMemo(() => {
     let text = '';
-    for (const ev of visibleEvents) {
+    for (const ev of currentAttemptEvents) {
       if (ev.eventType === 'text' && ev.payload?.content) {
         text += ev.payload.content;
       }
     }
     return text;
-  }, [visibleEvents]);
+  }, [currentAttemptEvents]);
 
   const terminalStatusOf = (ev: StreamedEvent): string | null =>
     ev.eventType === 'status' ? (ev.payload?.status?.toLowerCase() ?? null) : null;
 
   const streamedTurnCompleted = useMemo(
-    () => visibleEvents.some((ev) => terminalStatusOf(ev) === 'completed'),
-    [visibleEvents],
+    () => currentAttemptEvents.some((ev) => terminalStatusOf(ev) === 'completed'),
+    [currentAttemptEvents],
   );
 
   const streamedTurnCanceled = useMemo(
-    () => visibleEvents.some((ev) => terminalStatusOf(ev) === 'canceled'),
-    [visibleEvents],
+    () => currentAttemptEvents.some((ev) => terminalStatusOf(ev) === 'canceled'),
+    [currentAttemptEvents],
   );
 
   /** 任意终态（完成/失败/已终止）都结束回复中状态：恢复输入、隐藏动态指示。 */
   const streamedTurnTerminated = useMemo(
-    () => visibleEvents.some((ev) => {
+    () => currentAttemptEvents.some((ev) => {
       const status = terminalStatusOf(ev);
       return status === 'completed' || status === 'failed' || status === 'canceled';
     }),
-    [visibleEvents],
+    [currentAttemptEvents],
   );
 
   const timeline = useMemo(() => buildTimeline(visibleEvents), [visibleEvents]);
@@ -373,25 +382,14 @@ export function hasPersistedReplyForTurn(
  * 把按轮次端点返回的原始事件行重组成逻辑事件：服务端只保存分片，浏览器拿到的
  * 是 (turnId, dispatchAttempt, eventSeq) 三元组下的若干 payloadFragment。
  *
- * stale 重投会把整套逻辑事件按新的 dispatchAttempt 再落一遍，所以同一
- * (turnId, eventSeq) 只保留 dispatchAttempt 最大的那一组，否则历史详情内容翻倍。
+ * 重派会重新执行模型，序号从头开始；各批次是不同历史，不能相互覆盖。
  */
 export function assembleTurnEvents(
   rows: readonly ClarificationTurnEvent[],
 ): StreamedEvent[] {
-  const latestAttempt = new Map<string, number>();
-  for (const row of rows) {
-    const logicalKey = `${row.turnId}:${row.eventSeq}`;
-    const known = latestAttempt.get(logicalKey);
-    if (known === undefined || row.dispatchAttempt > known) {
-      latestAttempt.set(logicalKey, row.dispatchAttempt);
-    }
-  }
-
   const groups = new Map<string, ClarificationTurnEvent[]>();
   for (const row of rows) {
-    const logicalKey = `${row.turnId}:${row.eventSeq}`;
-    if (row.dispatchAttempt !== latestAttempt.get(logicalKey)) continue;
+    const logicalKey = `${row.turnId}:${row.dispatchAttempt ?? 0}:${row.eventSeq}`;
     const bucket = groups.get(logicalKey);
     if (bucket) bucket.push(row);
     else groups.set(logicalKey, [row]);
@@ -408,6 +406,7 @@ export function assembleTurnEvents(
       .map((chunk) => chunk.payloadFragment)
       .join('');
     events.push({
+      dispatchAttempt: head.dispatchAttempt ?? 0,
       eventSeq: head.eventSeq,
       turnId: head.turnId,
       eventType: head.eventType,
@@ -416,7 +415,7 @@ export function assembleTurnEvents(
     });
   }
   // eventSeq 每轮从 1 重新递增，排序键必须带 turnId。
-  return events.sort((a, b) => a.turnId - b.turnId || a.eventSeq - b.eventSeq);
+  return events.sort((a, b) => a.turnId - b.turnId || (a.dispatchAttempt ?? 0) - (b.dispatchAttempt ?? 0) || a.eventSeq - b.eventSeq);
 }
 
 function parsePayload(text: string): ProviderEventPayload | null {
@@ -437,18 +436,21 @@ export function useTurnEvents(
   turnId: number | null,
   enabled: boolean,
 ) {
-  const query = useQuery({
+  const query = useInfiniteQuery({
     queryKey: ['workitem', workitemId, 'clarification-turn-events', conversationId, turnId],
-    queryFn: () => api.getClarificationTurnEvents(workitemId, conversationId!, turnId!),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => api.getClarificationTurnEvents(workitemId, conversationId!, turnId!, pageParam),
+    getNextPageParam: (lastPage, _pages, lastCursor) => {
+      const next = Math.max(lastCursor, ...lastPage.map(row => row.id));
+      return lastPage.length >= 500 && next > lastCursor ? next : undefined;
+    },
     enabled: enabled && !!workitemId && !!conversationId && !!turnId,
     staleTime: 60_000,
   });
-
   const timeline = useMemo<TimelineNode[]>(
-    () => buildTimeline(assembleTurnEvents(query.data ?? [])),
+    () => buildTimeline(assembleTurnEvents(query.data?.pages.flat() ?? [])),
     [query.data],
   );
-
   return { ...query, timeline };
 }
 

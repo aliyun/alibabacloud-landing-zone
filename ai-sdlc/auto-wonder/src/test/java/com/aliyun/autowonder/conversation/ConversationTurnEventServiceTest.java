@@ -28,6 +28,87 @@ class ConversationTurnEventServiceTest {
         service.setConversationElicitationService(elicitationService);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={true,false})
+    void stoppedLateQuestionIsNotRepublishedAsOpen(boolean reliable) {
+        var conv=new AgentConversationDO();conv.setExecutorId(50L);
+        var turn=new AgentConversationTurnDO();turn.setId(20L);turn.setStatus("PROCESSING");turn.setDispatchAttempt(2);
+        when(convDao.findById(1L,10L)).thenReturn(conv);
+        when(turnDao.findProcessingInbound(1L,10L)).thenReturn(turn);
+        when(turnDao.findByConversationTurnForUpdate(1L,10L,20L)).thenReturn(turn);
+        when(elicitationService.onEvent(1L,10L,20L,"acp_elicitation","{}")).thenReturn("CANCELED");
+        if(reliable) service.persistReliableEvent(1,50,10,20,2,1,0,1,"acp_elicitation","{}");
+        else service.persistEvent(1,50,10,20,2,1,0,1,"acp_elicitation","{}");
+        verify(eventDao).insertChunkIfAbsent(any());verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void platformProjectionCompletesCrossPageChunksWithoutMovingPastRawCursor() {
+        var first = new AgentConversationTurnEventDO();
+        first.setId(1L); first.setTurnId(20L); first.setConversationId(10L); first.setDispatchAttempt(1);
+        first.setEventSeq(1L); first.setChunkIndex(0); first.setChunkCount(2); first.setEventType("tool_result");
+        first.setPayloadFragment("{\"password\":\"private-");
+        var second = new AgentConversationTurnEventDO();
+        second.setId(2L); second.setTurnId(20L); second.setConversationId(10L); second.setDispatchAttempt(1);
+        second.setEventSeq(1L); second.setChunkIndex(1); second.setChunkCount(2); second.setEventType("tool_result");
+        second.setPayloadFragment("value\"}");
+        when(eventDao.listByTurnAfter(1L, 10L, 20L, 0L, 2)).thenReturn(List.of(first, second));
+        when(eventDao.listLogicalEventChunks(1L, 20L, 1, 1L)).thenReturn(List.of(first, second));
+        var page = service.listPlatformEventsByTurnPage(1L, 10L, 20L, 0L, 1);
+        assertEquals(1L, page.nextAfterId()); assertTrue(page.hasMore());
+        assertEquals(1, page.rows().size());
+        assertFalse(page.rows().get(0).getPayloadFragment().contains("private-value"));
+        assertTrue(page.rows().get(0).getPayloadFragment().contains("[REDACTED]"));
+    }
+
+    @Test
+    void reliableCardFailurePropagatesSoSenderKeepsItsOutbox() {
+        AgentConversationDO conv = new AgentConversationDO(); conv.setExecutorId(50L);
+        when(convDao.findById(1L, 10L)).thenReturn(conv);
+        AgentConversationTurnDO turn = new AgentConversationTurnDO();
+        turn.setId(20L); turn.setStatus("PROCESSING"); turn.setDispatchAttempt(2);
+        when(turnDao.findByConversationTurnForUpdate(1L, 10L, 20L)).thenReturn(turn);
+        when(turnDao.findProcessingInbound(1L, 10L)).thenReturn(turn);
+        doThrow(new IllegalStateException("database unavailable")).when(elicitationService)
+                .onEvent(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+        assertThrows(IllegalStateException.class, () -> service.persistReliableEvent(
+                1L, 50L, 10L, 20L, 2, 1L, 0, 1, "acp_elicitation", "{}"));
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void reliableOldAttemptIsDiscardedWithoutCardEffects() {
+        AgentConversationTurnDO turn = new AgentConversationTurnDO();
+        turn.setStatus("PROCESSING"); turn.setDispatchAttempt(3);
+        when(turnDao.findByConversationTurnForUpdate(1L, 10L, 20L)).thenReturn(turn);
+        service.persistReliableEvent(1L, 50L, 10L, 20L, 2, 1L, 0, 1, "acp_elicitation", "{}");
+        verifyNoInteractions(eventDao, elicitationService, publisher);
+    }
+
+    @Test
+    void pagesBeyondLegacyLimitWithBoundedKeyset() {
+        AgentConversationTurnEventDO first = new AgentConversationTurnEventDO(); first.setId(5001L);
+        AgentConversationTurnEventDO second = new AgentConversationTurnEventDO(); second.setId(5002L);
+        when(eventDao.listByTurnAfter(1L, 10L, 20L, 5000L, 2)).thenReturn(List.of(first, second));
+        var page = service.listEventsByTurnPage(1L, 10L, 20L, 5000L, 1);
+        assertEquals(List.of(first), page.rows());
+        assertEquals(5001L, page.nextAfterId());
+        assertTrue(page.hasMore());
+    }
+
+    @Test
+    void staleAttemptCannotUpdateSessionOrCreateCards() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setExecutorId(50L);
+        when(convDao.findById(1L, 10L)).thenReturn(conv);
+        AgentConversationTurnDO turn = new AgentConversationTurnDO();
+        turn.setId(20L);
+        turn.setDispatchAttempt(2);
+        when(turnDao.findProcessingInbound(1L, 10L)).thenReturn(turn);
+        service.persistEvent(1L, 50L, 10L, 20L, 1, 1L, 0, 1, "status", "{\"sessionId\":\"old\"}");
+        verify(convDao, never()).updateCliSessionRef(anyLong(), anyLong(), anyString());
+        verifyNoInteractions(elicitationService, publisher);
+    }
+
     @Test
     void rejectsEventWhenExecutorMismatch() {
         AgentConversationDO conv = new AgentConversationDO();
@@ -87,7 +168,7 @@ class ConversationTurnEventServiceTest {
         service.persistEvent(1L, 50L, 10L, 20L, 1, 1L, 0, 1, "text", payload);
 
         verify(eventDao).insertChunkIfAbsent(any());
-        verify(publisher).publish(anyLong(), eq(10L), anyLong(), anyLong(), anyString(), anyString());
+        verify(publisher).publish(anyLong(), eq(10L), anyLong(), anyInt(), anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -109,10 +190,10 @@ class ConversationTurnEventServiceTest {
                 .thenReturn(List.of(chunk0, chunk1));
 
         service.persistEvent(1L, 50L, 10L, 20L, 1, 1L, 0, 2, "text", "{\"con");
-        verify(publisher, never()).publish(anyLong(), anyLong(), anyLong(), anyLong(), anyString(), anyString());
+        verify(publisher, never()).publish(anyLong(), anyLong(), anyLong(), anyInt(), anyLong(), anyString(), anyString());
 
         service.persistEvent(1L, 50L, 10L, 20L, 1, 1L, 1, 2, "text", "tent\":\"hi\"}");
-        verify(publisher).publish(anyLong(), eq(10L), anyLong(), anyLong(), anyString(), anyString());
+        verify(publisher).publish(anyLong(), eq(10L), anyLong(), anyInt(), anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -180,7 +261,7 @@ class ConversationTurnEventServiceTest {
         }
 
         verify(eventDao, times(4)).insertChunkIfAbsent(any());
-        verify(publisher, times(4)).publish(anyLong(), eq(10L), anyLong(), anyLong(), anyString(), anyString());
+        verify(publisher, times(4)).publish(anyLong(), eq(10L), anyLong(), anyInt(), anyLong(), anyString(), anyString());
     }
 
     /** event_type 是 VARCHAR(32)，超长会在插入时被静默截断或直接报错。 */
@@ -272,7 +353,7 @@ class ConversationTurnEventServiceTest {
         service.persistEvent(1L, 50L, 10L, 20L, 1, 1L, 0, 1, "acp_elicitation",
                 "{\"data\":{\"requestId\":\"req-1\"}}");
 
-        verify(publisher).publish(anyLong(), eq(10L), anyLong(), anyLong(), anyString(), anyString());
+        verify(publisher).publish(anyLong(), eq(10L), anyLong(), anyInt(), anyLong(), anyString(), anyString());
     }
 
     /** 卡片 service 缺失（老部署 / 精简上下文）时事件流照常，沿用既有的空值容忍。 */
@@ -285,7 +366,7 @@ class ConversationTurnEventServiceTest {
         bare.persistEvent(1L, 50L, 10L, 20L, 1, 1L, 0, 1, "acp_elicitation",
                 "{\"data\":{\"requestId\":\"req-1\"}}");
 
-        verify(publisher).publish(anyLong(), eq(10L), anyLong(), anyLong(), anyString(), anyString());
+        verify(publisher).publish(anyLong(), eq(10L), anyLong(), anyInt(), anyLong(), anyString(), anyString());
     }
 
     private void activeTurn() {

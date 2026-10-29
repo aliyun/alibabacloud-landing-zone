@@ -6,11 +6,18 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
+import com.aliyun.autowonder.redis.AbstractRedisManager;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.websocket.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -24,6 +31,7 @@ public class ExecutorRestartService {
     private final SessionRegistry sessions;
     private final ExecutorLaunchConfigService launchConfigs;
     private final PlatformBrandingService branding;
+    private static final Logger log = LoggerFactory.getLogger(ExecutorRestartService.class);
     private static final Set<String> ACTIVE = Set.of("REQUESTED", "WAITING_IDLE", "UPDATING", "RESTARTING");
 
     public ExecutorRestartService(ExecutorDao dao, ExecutorRegistry registry, PresenceManager presence,
@@ -115,11 +123,45 @@ public class ExecutorRestartService {
         return response(readState(id));
     }
 
+    /**
+     * Restart states for a list page in one Redis round trip. Entries without a stored state are
+     * absent from the result, mirroring {@link #status} returning null.
+     */
+    public Map<Long, JSONObject> statuses(Collection<Long> ids) {
+        Map<Long, JSONObject> result = new HashMap<>();
+        if (ids == null || ids.isEmpty()) return result;
+        List<Long> distinct = ids.stream().filter(Objects::nonNull).distinct().toList();
+        if (distinct.isEmpty()) return result;
+        List<byte[]> raws = redis.mget(distinct.stream().map(ExecutorRestartService::key).toList());
+        Instant now = Instant.now();
+        for (int index = 0; index < distinct.size(); index++) {
+            byte[] raw = index < raws.size() ? raws.get(index) : null;
+            JSONObject state = parseStateSafely(distinct.get(index), raw, now);
+            if (state != null) result.put(distinct.get(index), response(state));
+        }
+        return result;
+    }
+
+    private JSONObject parseStateSafely(long id, byte[] raw, Instant now) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return parseState(AbstractRedisManager.decodeString(raw), now);
+        } catch (RuntimeException e) {
+            log.warn("executor restart state is not decodable, skipping it. executorId={}", id, e);
+            return null;
+        }
+    }
+
     private JSONObject readState(long id) {
-        String raw = redis.getString(key(id));
+        return parseState(redis.getString(key(id)), Instant.now());
+    }
+
+    private static JSONObject parseState(String raw, Instant now) {
         if (raw == null || raw.isBlank()) return null;
         JSONObject result = JSON.parseObject(raw);
-        if (ACTIVE.contains(result.getString("status")) && Instant.parse(result.getString("progressAt") == null ? result.getString("issuedAt") : result.getString("progressAt")).isBefore(Instant.now().minusSeconds(600))) {
+        if (ACTIVE.contains(result.getString("status")) && Instant.parse(result.getString("progressAt") == null ? result.getString("issuedAt") : result.getString("progressAt")).isBefore(now.minusSeconds(600))) {
             result.put("status", "TIMED_OUT"); result.put("message", result.containsKey("restartMode")
                     ? "在线应用长时间未收到客户端进度或重启心跳，请检查客户端" : "未收到重启后的心跳，请检查客户端");
             result.put("messageOrigin", "SYSTEM");

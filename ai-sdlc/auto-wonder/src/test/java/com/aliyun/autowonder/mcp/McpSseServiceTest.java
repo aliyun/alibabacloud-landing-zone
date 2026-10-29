@@ -83,6 +83,28 @@ class McpSseServiceTest {
     }
 
     @Test
+    void disconnectedEmitterCannotAbortShutdownOfOtherStreams() throws Exception {
+        doReturn(heartbeat).when(scheduler).scheduleWithFixedDelay(any(Runnable.class), any(Instant.class), any(Duration.class));
+        doReturn(expiry).when(scheduler).schedule(any(Runnable.class), any(Instant.class));
+        var disconnected = service.open();
+        service.open();
+        Class<?> handlerType = Class.forName(
+                "org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter$Handler");
+        Object handler = java.lang.reflect.Proxy.newProxyInstance(handlerType.getClassLoader(),
+                new Class<?>[]{handlerType}, (proxy, method, args) -> {
+                    if (method.getName().equals("complete")) {
+                        throw new NullPointerException("socket wrapper already released");
+                    }
+                    return null;
+                });
+        org.springframework.test.util.ReflectionTestUtils.setField(disconnected, "handler", handler);
+        assertDoesNotThrow(service::shutdown);
+        verify(heartbeat, times(2)).cancel(false);
+        verify(expiry, times(2)).cancel(false);
+        assertDoesNotThrow(service::shutdown);
+    }
+
+    @Test
     void partialSchedulingFailureCancelsAlreadyScheduledHeartbeat() throws Exception {
         doReturn(heartbeat).when(scheduler).scheduleWithFixedDelay(any(Runnable.class), any(Instant.class), any(Duration.class));
         doThrow(new IllegalStateException("scheduler stopped")).when(scheduler).schedule(any(Runnable.class), any(Instant.class));

@@ -6,10 +6,11 @@ import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.aiusage.dto.DispatchAiUsageBackfillResult;
 import com.aliyun.autowonder.insights.dto.HumanAgentParticipationVO;
-import com.aliyun.autowonder.insights.dto.HumanAgentSlowTailPageVO;
+import com.aliyun.autowonder.insights.dto.HumanAgentSlowTailVO;
 import com.aliyun.autowonder.insights.dto.InsightAuditPageVO;
 import com.aliyun.autowonder.insights.dto.InsightMetricsVO;
 import com.aliyun.autowonder.insights.dto.InsightWorkerVO;
+import com.aliyun.autowonder.insights.participation.ParticipationRefreshResult;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
@@ -60,36 +61,35 @@ public class InsightsController {
     public Result<HumanAgentParticipationVO> getParticipation(
             @RequestParam("start_date") String startDate,
             @RequestParam("end_date") String endDate,
-            @RequestParam(value = "granularity", defaultValue = "DAY") String granularity) {
+            @RequestParam(value = "work_type", required = false) String workType) {
         return Result.ok(insightsService.getParticipation(
                 currentWorkspaceId(),
                 LocalDate.parse(startDate),
                 LocalDate.parse(endDate),
-                granularity));
+                workType));
     }
 
     @GetMapping("/human-agent-participation/slowest")
-    public Result<HumanAgentSlowTailPageVO> getSlowTail(
+    public Result<HumanAgentSlowTailVO> getSlowTail(
             @RequestParam("start_date") String startDate,
             @RequestParam("end_date") String endDate,
-            @RequestParam(value = "page", defaultValue = "1") int page,
-            @RequestParam(value = "page_size", defaultValue = "20") int pageSize) {
-        int cappedPageSize = Math.min(pageSize, 100);
+            @RequestParam(value = "work_type", required = false) String workType) {
         return Result.ok(insightsService.getSlowTail(
                 currentWorkspaceId(),
                 LocalDate.parse(startDate),
                 LocalDate.parse(endDate),
-                page, cappedPageSize));
+                workType));
     }
 
     @PostMapping("/human-agent-participation/refresh")
     @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "强制刷新人机协作数据", actionKey = "access.action.force_a_refresh_of_human_and_agent_collaboration_data")
     public Result<Void> forceRefreshParticipation() {
-        boolean accepted = insightsService.forceParticipationRefresh(currentWorkspaceId());
-        if (!accepted) {
-            return Result.fail(ErrorCode.SYSTEM_ERROR);
-        }
-        return Result.ok(null);
+        ParticipationRefreshResult result = insightsService.forceParticipationRefresh(currentWorkspaceId());
+        return switch (result) {
+            case ACCEPTED -> Result.ok(null);
+            case LOCK_CONTENTION -> Result.fail(ErrorCode.RETRY_LATER);
+            case QUEUE_FULL -> Result.fail(ErrorCode.SYSTEM_BUSY);
+        };
     }
 
     private long currentWorkspaceId() {

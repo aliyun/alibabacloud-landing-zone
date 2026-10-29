@@ -50,8 +50,9 @@ class ArtifactCliI18nTest {
         int uploadStatus=switch(intent) {case "default","raw" -> 401;case "keyed" -> 400;case "forbidden" -> 403;case "conflict" -> 409;default -> 500;};
         var upload=mock(WorkitemCliUploadTokenService.class);
         var download=mock(WorkitemCliDownloadTokenService.class);
+        when(upload.authenticateForWorkitem("raw-token",7L)).thenThrow(error);
         when(upload.authenticate("raw-token")).thenThrow(error);
-        when(download.authenticate("raw-token")).thenThrow(error);
+        when(download.authenticateForWorkitem("raw-token",7L)).thenThrow(error);
         var workitems=mock(WorkitemDao.class);
         var tasks=mock(ScheduledTaskDao.class);
         var documents=mock(RequirementDocumentService.class);
@@ -80,6 +81,10 @@ class ArtifactCliI18nTest {
         assertEquals("nosniff",bytes.getHeaders().getFirst("X-Content-Type-Options"));
         assertEquals(intent.equals("keyed") ? "raw diagnostic" : intent.equals("unknown") ? "<raw>未登录或登录已失效" : error.getMessage(),error.getLocalizedMessage());
         if(!intent.equals("raw")) assertSame(cause,error.getCause());
+        verify(upload).authenticateForWorkitem("raw-token",7L);
+        verify(upload).authenticate("raw-token");
+        verify(download,times(2)).authenticateForWorkitem("raw-token",7L);
+        verify(download,never()).authenticate(anyString());
         verifyNoInteractions(workitems,tasks,documents);
     }
 }

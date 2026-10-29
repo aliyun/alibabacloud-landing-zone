@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class DingTalkStreamClientManagerTest {
@@ -63,7 +64,7 @@ class DingTalkStreamClientManagerTest {
         assertEquals(1, starts.get());
         verify(statusStore).markConnecting(binding);
         verify(statusStore).markConnected(binding);
-        verify(statusStore, never()).markFailed(any(), any());
+        verify(statusStore, never()).markFailed(any(DingtalkRobotBindingDO.class), anyString());
     }
 
     @Test
@@ -82,7 +83,7 @@ class DingTalkStreamClientManagerTest {
         DingTalkBindingService bindingService = mock(DingTalkBindingService.class);
         when(bindingService.decryptSecret(any())).thenReturn("sk");
         DingTalkStreamStatusStore statusStore = mock(DingTalkStreamStatusStore.class);
-        doThrow(new RuntimeException("redis down")).when(statusStore).markConnecting(any());
+        doThrow(new RuntimeException("redis down")).when(statusStore).markConnecting(any(DingtalkRobotBindingDO.class));
         DingTalkStreamClientManager manager = new DingTalkStreamClientManager(
                 bindingService, new DingTalkStreamProperties(), mock(DingTalkStreamBotMessageListener.class),
                 statusStore, factory);
@@ -93,7 +94,7 @@ class DingTalkStreamClientManagerTest {
 
         assertEquals(1, starts.get());
         verify(statusStore).markConnected(binding);
-        verify(statusStore, never()).markFailed(any(), any());
+        verify(statusStore, never()).markFailed(any(DingtalkRobotBindingDO.class), anyString());
     }
 
     @Test
@@ -154,7 +155,7 @@ class DingTalkStreamClientManagerTest {
 
         assertEquals(0, starts.get());
         verify(bindingService, never()).decryptSecret(any());
-        verify(statusStore, never()).markConnecting(any());
+        verify(statusStore, never()).markConnecting(any(DingtalkRobotBindingDO.class));
     }
 
     @Test
@@ -187,7 +188,7 @@ class DingTalkStreamClientManagerTest {
 
         assertEquals(2, starts.get());
         assertEquals(1, stops.get());
-        verify(statusStore).markNotConnected(argThat(marked -> marked.getId().equals(binding.getId())
+        verify(statusStore).markNotConnected(argThat((DingtalkRobotBindingDO marked) -> marked.getId().equals(binding.getId())
                 && marked.getAppKey().equals(binding.getAppKey())));
     }
 
@@ -260,7 +261,7 @@ class DingTalkStreamClientManagerTest {
 
         assertEquals(1, starts.get());
         assertEquals(1, stops.get());
-        verify(statusStore).markNotConnected(argThat(marked -> marked.getId().equals(binding.getId())
+        verify(statusStore).markNotConnected(argThat((DingtalkRobotBindingDO marked) -> marked.getId().equals(binding.getId())
                 && marked.getAppKey().equals(binding.getAppKey())));
     }
 
@@ -326,8 +327,8 @@ class DingTalkStreamClientManagerTest {
         assertEquals(1, starts.get());
         verify(statusStore).markConnecting(binding);
         verify(statusStore).markConnected(binding);
-        verify(statusStore, never()).markFailed(any(), any());
-        verify(statusStore, never()).markNotConnected(any());
+        verify(statusStore, never()).markFailed(any(DingtalkRobotBindingDO.class), anyString());
+        verify(statusStore, never()).markNotConnected(any(DingtalkRobotBindingDO.class));
     }
 
     @Test
@@ -354,7 +355,7 @@ class DingTalkStreamClientManagerTest {
 
         verify(statusStore).markConnecting(binding);
         verify(statusStore).markFailed(eq(binding), eq("sdk boom"));
-        verify(statusStore, never()).markConnected(any());
+        verify(statusStore, never()).markConnected(any(DingtalkRobotBindingDO.class));
     }
 
     private DingtalkRobotBindingDO binding() {

@@ -299,6 +299,25 @@ public class RedisManager extends AbstractRedisManager {
         }
     }
 
+    /**
+     * Reads several keys in one round trip. Values come back exactly as stored, so a caller that
+     * expects objects must decode each one itself; that keeps a single undecodable value from
+     * failing the whole batch and lets the caller degrade just that row.
+     */
+    public List<byte[]> mget(java.util.Collection<String> keys) {
+        if (keys == null || keys.isEmpty()) {
+            return List.of();
+        }
+        byte[][] encoded = new byte[keys.size()][];
+        int index = 0;
+        for (String key : keys) {
+            encoded[index++] = stringifyKey(key).getBytes(UTF8);
+        }
+        try (Jedis jedis = jedisPool.getResource()) {
+            return jedis.mget(encoded);
+        }
+    }
+
     public void setString(String key, String value) {
         try (Jedis jedis = jedisPool.getResource()) {
             jedis.set(key, value);

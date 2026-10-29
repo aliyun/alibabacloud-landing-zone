@@ -6,6 +6,7 @@ import com.aliyun.autowonder.executor.dto.CreateExecutorRequest;
 import com.aliyun.autowonder.executor.dto.ExecutorUpdateVO;
 import com.aliyun.autowonder.executor.dto.ExecutorVO;
 import com.aliyun.autowonder.executor.dto.IssuedExecutorVO;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.squad.SquadAttributionService;
 import com.aliyun.autowonder.websocket.ExecutorSession;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -34,7 +36,6 @@ public class ExecutorService {
     final ConcurrentHashMap<Long, Instant> heartbeatPersistedAt = new ConcurrentHashMap<>();
 
     private final ExecutorDao executorDao;
-    private final ExecutorRegistry registry;
     private final TokenService tokenService;
     private final RedisManager redisManager;
     private final PresenceManager presenceManager;
@@ -63,12 +64,11 @@ public class ExecutorService {
     }
 
     @Autowired
-    public ExecutorService(ExecutorDao executorDao, ExecutorRegistry registry,
+    public ExecutorService(ExecutorDao executorDao,
                            TokenService tokenService, RedisManager redisManager,
                            PresenceManager presenceManager, SessionRegistry sessionRegistry,
                            ExecutorLaunchConfigService launchConfigService) {
         this.executorDao = executorDao;
-        this.registry = registry;
         this.tokenService = tokenService;
         this.redisManager = redisManager;
         this.presenceManager = presenceManager;
@@ -171,27 +171,37 @@ public class ExecutorService {
         if (e == null || e.getTenantId() == null || e.getTenantId() != tenantId) {
             throw new BizException(ErrorCode.EXECUTOR_NOT_FOUND);
         }
-        ExecutorVO vo = toVO(e);
+        ExecutorVO vo = toVO(e, presenceManager.presenceState(e.getId()),
+                restartService == null ? null : restartService.status(e.getId()));
         fillModelNames(List.of(vo));
         fillUpdates(tenantId, List.of(vo));
         return vo;
     }
 
     public List<ExecutorVO> listByAgent(long agentId, long tenantId) {
-        List<ExecutorVO> result = new ArrayList<>();
-        for (ExecutorDO e : executorDao.listByAgent(tenantId, agentId)) {
-            result.add(toVO(e));
-        }
-        fillSquads(tenantId, result);
-        fillModelNames(result);
-        fillUpdates(tenantId, result);
-        return result;
+        return toVOs(executorDao.listByAgent(tenantId, agentId), tenantId);
     }
 
     public List<ExecutorVO> listAll(long tenantId, List<Long> squadIds) {
-        List<ExecutorVO> result = new ArrayList<>();
-        for (ExecutorDO e : executorDao.listAll(tenantId, squadIds)) {
-            result.add(toVO(e));
+        return toVOs(executorDao.listAll(tenantId, squadIds), tenantId);
+    }
+
+    /**
+     * Maps a whole page with one presence batch and one restart-state batch. Reading each field per
+     * row made the list endpoint cost about twenty Redis round trips per executor, which is what
+     * made the executor page slow to open.
+     */
+    private List<ExecutorVO> toVOs(List<ExecutorDO> executors, long tenantId) {
+        List<Long> ids = new ArrayList<>(executors.size());
+        for (ExecutorDO e : executors) {
+            ids.add(e.getId());
+        }
+        Map<Long, PresenceManager.ExecutorPresence> presences = presenceManager.presenceStates(ids);
+        Map<Long, JSONObject> restarts = restartService == null ? Map.of() : restartService.statuses(ids);
+        List<ExecutorVO> result = new ArrayList<>(executors.size());
+        for (ExecutorDO e : executors) {
+            result.add(toVO(e, presences.getOrDefault(e.getId(), PresenceManager.ExecutorPresence.ABSENT),
+                    restarts.get(e.getId())));
         }
         fillSquads(tenantId, result);
         fillModelNames(result);
@@ -280,30 +290,31 @@ public class ExecutorService {
         log.info("executor deleted id={} agentId={}", id, agentId);
     }
 
-    private ExecutorVO toVO(ExecutorDO e) {
+    private ExecutorVO toVO(ExecutorDO e, PresenceManager.ExecutorPresence presence, JSONObject restart) {
         ExecutorVO vo = new ExecutorVO();
         vo.setId(e.getId());
         vo.setAgentId(e.getAgentId());
         vo.setAgentName(e.getAgentName());
         vo.setName(e.getName());
-        vo.setStatus(registry.isOnline(e.getId()) ? "ONLINE" : "OFFLINE");
+        vo.setStatus(presence.online() ? "ONLINE" : "OFFLINE");
         vo.setClientKind(e.getClientKind());
         vo.setLastConnectIp(e.getLastConnectIp());
         vo.setLastConnectHostname(e.getLastConnectHostname());
         vo.setLastHeartbeat(e.getLastHeartbeat());
-        vo.setVersion(presenceManager.currentVersion(e.getId()));
-        vo.setModel(presenceManager.currentModel(e.getId()));
+        vo.setVersion(presence.version());
+        vo.setModel(presence.model());
         vo.setGmtCreate(e.getGmtCreate());
         vo.setLastStartedAt(e.getLastStartedAt());
-        vo.setRestartSupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_RESTART_V1"));
-        vo.setUpdateRestartSupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_UPDATE_RESTART_V1"));
-        vo.setRestartPolicySupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_RESTART_POLICY_V1"));
-        vo.setLaunchCommandSupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_LAUNCH_COMMAND_V1"));
-        if (restartService != null) vo.setRestart(restartService.status(e.getId()));
+        Set<String> features = presence.protocolFeatures();
+        vo.setRestartSupported(features.contains("EXECUTOR_RESTART_V1"));
+        vo.setUpdateRestartSupported(features.contains("EXECUTOR_UPDATE_RESTART_V1"));
+        vo.setRestartPolicySupported(features.contains("EXECUTOR_RESTART_POLICY_V1"));
+        vo.setLaunchCommandSupported(features.contains("EXECUTOR_LAUNCH_COMMAND_V1"));
+        vo.setRestart(restart);
         if (updateService != null) {
             String target = updateService.targetVersion();
             vo.setTargetVersion(target);
-            vo.setUpgradeSupported(updateService.supportsUpgrade(e.getId()));
+            vo.setUpgradeSupported(updateService.supportsUpgrade(features));
             // One comparison feeds both flags: an empty result means the versions could not be read, which
             // is not 无需升级 — updateOne only rejects when the comparison succeeded and came out >= 0.
             OptionalInt comparison = RuntimeVersion.compare(vo.getVersion(), target);

@@ -155,6 +155,21 @@ class ExecutorSelectorTest {
     }
 
     @Test
+    void negotiatedComputingInventoryUsesOnlyComputingCapacity() {
+        when(redisManager.smembers(ExecutorSelector.execsKey(1L))).thenReturn(Set.of("10"));
+        when(executorRegistry.isAvailable(10L)).thenReturn(true);
+        when(executorRegistry.currentDispatchSnapshot(10L)).thenReturn(java.util.Optional.of(
+                new com.aliyun.autowonder.executor.ExecutorDispatchSnapshot("s", 3, true, true,
+                        Set.of(55L), Set.of(55L), Set.of(77L,78L),
+                        Set.of("CONVERSATION_COMPUTE_INVENTORY_V1"), null, 1L, Set.of())));
+        when(dispatchDao.listCapacityOccupyingIds(10L)).thenReturn(java.util.List.of(55L));
+        assertEquals(10L, selector.select(1L));
+        when(executorRegistry.currentDispatchSnapshot(10L))
+                .thenReturn(java.util.Optional.of(snapshot(3, true, Set.of(55L), Set.of(77L,78L))));
+        assertNull(selector.selectForInteraction(1L, null));
+    }
+
+    @Test
     void runningDispatchAndConversationTurnsShareRuntimeCapacity() {
         when(redisManager.smembers(ExecutorSelector.execsKey(1L))).thenReturn(Set.of("10"));
         when(executorRegistry.isAvailable(10L)).thenReturn(true);

@@ -20,6 +20,7 @@ import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemEventDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.Date;
 import java.util.List;
@@ -33,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -251,6 +253,60 @@ class ExternalWorkitemImportServiceTest {
         assertEquals(1, records.size());
         assertEquals("JIRA", records.get(0).getSourceSystem());
         assertEquals(9001L, records.get(0).getWorkitemId());
+    }
+
+    @Test
+    void importWorkitemTreatsIssueAlreadyLinkedByAnotherScopeAsDuplicate() {
+        ExternalWorkitemImportRequest req = request();
+        ExternalWorkitemLinkDO bindingLink = link(7777L);
+        bindingLink.setBindingId(2L);
+        when(linkDao.findByExternalScope(100L, 0L, "PROJ-123")).thenReturn(null);
+        when(linkDao.findFirstByExternal(100L, "JIRA", "PROJ-123")).thenReturn(bindingLink);
+        doAnswer(invocation -> {
+            invocation.<ExternalWorkitemImportRecordDO>getArgument(0).setId(7003L);
+            return null;
+        }).when(recordDao).insert(any(ExternalWorkitemImportRecordDO.class));
+
+        ExternalWorkitemImportResult result = service.importWorkitem(req, 100L, 9L);
+
+        assertFalse(result.isCreated());
+        assertTrue(result.isDuplicate());
+        assertEquals(7777L, result.getWorkitemId());
+        verify(workitemDao, never()).insert(any());
+        verify(linkDao, never()).insert(any());
+        verify(recordDao).insert(argThat(record ->
+                "DUPLICATE".equals(record.getStatus()) && Long.valueOf(7777L).equals(record.getWorkitemId())));
+        verify(auditLogService).record(argThat(record -> "IMPORT_DUPLICATE".equals(record.getAction())));
+    }
+
+    @Test
+    void importWorkitemTreatsConcurrentLinkInsertAsDuplicate() {
+        ExternalWorkitemImportRequest req = request();
+        when(linkDao.findByExternalScope(100L, 0L, "PROJ-123")).thenReturn(null);
+        when(linkDao.findFirstByExternal(100L, "JIRA", "PROJ-123")).thenReturn(null);
+        when(linkDao.findFirstByExternalForUpdate(100L, "JIRA", "PROJ-123")).thenReturn(link(7777L));
+        when(templateDao.findDefaultByType("BUG")).thenReturn(template(20L, "BUG"));
+        when(nodeDao.findInitNode(20L)).thenReturn(node(30L, 20L));
+        doAnswer(invocation -> {
+            invocation.<WorkitemDO>getArgument(0).setId(9001L);
+            return null;
+        }).when(workitemDao).insert(any(WorkitemDO.class));
+        doThrow(new DuplicateKeyException("Duplicate entry '100-JIRA-PROJ-123'"))
+                .when(linkDao).insert(any(ExternalWorkitemLinkDO.class));
+        doAnswer(invocation -> {
+            invocation.<ExternalWorkitemImportRecordDO>getArgument(0).setId(7004L);
+            return null;
+        }).when(recordDao).insert(any(ExternalWorkitemImportRecordDO.class));
+
+        ExternalWorkitemImportResult result = service.importWorkitem(req, 100L, 9L);
+
+        assertFalse(result.isCreated());
+        assertTrue(result.isDuplicate());
+        assertEquals(7777L, result.getWorkitemId());
+        verify(workitemDao).softDelete(9001L, 100L, 0, 9L);
+        verify(eventDao, never()).insert(any());
+        verify(recordDao).insert(argThat(record ->
+                "DUPLICATE".equals(record.getStatus()) && Long.valueOf(7777L).equals(record.getWorkitemId())));
     }
 
     private ExternalWorkitemImportRequest request() {

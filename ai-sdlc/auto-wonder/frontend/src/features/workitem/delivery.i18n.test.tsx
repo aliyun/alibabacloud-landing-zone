@@ -12,7 +12,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
-import { Form, message } from 'antd';
+import { Form, Modal, message } from 'antd';
 import { server } from '@/test/mocks/server';
 import { i18n } from '@/shared/i18n';
 import { useAuthStore } from '@/shared/auth/store';
@@ -29,7 +29,7 @@ function route(element: React.ReactNode) {
 }
 const language = async (locale: 'zh-CN' | 'en-US') => { await act(async () => { await i18n.changeLanguage(locale); }); };
 beforeEach(async () => { server.use(http.get('/api/dispatches/:id/runtime-trace/events', () => ok({ events: [], changed: true }))); vi.restoreAllMocks(); localStorage.clear(); useAuthStore.setState({ accessLevel: 'READ_WRITE' }); await language('zh-CN'); });
-afterEach(async () => { cleanup(); await language('zh-CN'); });
+afterEach(async () => { Modal.destroyAll(); cleanup(); await language('zh-CN'); });
 it('formats feature durations with the current locale and retains rounding boundaries', async () => {
   expect([null, -1, 0, 59499, 59500, 61000, 3600000, 3660000].map(formatDuration)).toEqual(['', '', '0秒', '59秒', '1分', '1分1秒', '1时', '1时1分']);
   await language('en-US');
@@ -43,7 +43,7 @@ it('updates delivery cards and retains expanded history and authored names', asy
   await language('en-US');
   expect(screen.getAllByText('Delivery progress').length).toBeGreaterThan(0);
   expect(screen.getAllByText(/1m 1s/).length).toBeGreaterThan(0);
-  expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Continue' }).length).toBeGreaterThan(0);
   await waitFor(() => expect(screen.getByText('Verification evidence (1)')).toBeVisible());
   expect(screen.getByRole('button', { name: `Preview artifact ${authored}` })).toBeVisible();
   await language('zh-CN');
@@ -53,13 +53,43 @@ it('switches recovery controls without changing submitted command codes or diagn
   let body: unknown;
   server.use(http.get('/api/workitems/42/recovery', () => ok({ closed: false, executions: [{ dispatchId: 44, agentId: 1, status: 'FAILED', attempt: 2, error: 'raw <reason> 中文', recovery: {} }], restarts: [] })), http.post('/api/workitems/42/recovery', async ({ request }) => { body = await request.json(); return ok(null); }));
   route(<><RecoveryControls workitemId="42" /><RecoveryControls workitemId="42" variant="execution" dispatchId={44} /></>);
-  const toggle = await screen.findByRole('switch', { name: '允许数字员工执行' });
+  const close = await screen.findByRole('button', { name: '关闭交付' });
   await language('en-US');
-  expect(screen.getByRole('switch', { name: 'Allow agents to execute' })).toBe(toggle);
-  expect(screen.getByText('Failed')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Close delivery' })).toBe(close);
+  expect(screen.queryByText('Failed')).not.toBeInTheDocument();
   expect(screen.getByText('raw <reason> 中文')).toBeVisible();
-  fireEvent.click(toggle);
+  fireEvent.click(close);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'Close delivery' })).toHaveLength(2));
+  const buttons = screen.getAllByRole('button', { name: 'Close delivery' });
+  fireEvent.click(buttons[buttons.length - 1]);
   await waitFor(() => expect(body).toEqual({ action: 'close', force: false }));
+});
+it('keeps the delivery state grouped with its disabled reopen button across locales', async () => {
+  server.use(http.get('/api/workitems/43/recovery', () => ok({ closed: true, canReopen: false, executions: [] })));
+  route(<RecoveryControls workitemId="43" />);
+  expect(await screen.findByText('交付已关闭')).toBeInTheDocument();
+  const group = screen.getByTestId('delivery-toggle');
+  expect(within(group).getByRole('button', { name: '重新开启交付' })).toBeDisabled();
+  await language('en-US');
+  expect(within(group).getByText('Delivery closed')).toBeInTheDocument();
+  expect(within(group).getByRole('button', { name: 'Reopen delivery' })).toBeDisabled();
+  expect(within(group).getByLabelText('End the unfinished cancellation first')).toBeInTheDocument();
+});
+it('keeps delivery writes blocked for read-only members', async () => {
+  useAuthStore.setState({ accessLevel: 'READ_ONLY' });
+  let writes = 0;
+  server.use(
+    http.get('/api/workitems/45/recovery', () => ok({ closed: false, executions: [] })),
+    http.post('/api/workitems/45/recovery', () => { writes += 1; return ok(null); }),
+  );
+  const error = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+  route(<RecoveryControls workitemId="45" />);
+  await userEvent.click(await screen.findByRole('button', { name: '关闭交付' }));
+  await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '关闭交付' }));
+  await waitFor(() => expect(error).toHaveBeenCalled());
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(writes).toBe(0);
+  expect(screen.getByText('交付已开启')).toBeInTheDocument();
 });
 it('switches lazy trace details while keeping selected turn and raw prompts', async () => {
   server.use(http.get('/api/dispatches/44/runtime-trace', () => ok({ changed: true, source: 'LIVE', events: [], sessions: [{ sessionId: 's1', status: 'COMPLETED', boundaries: [], turns: [{ turnId: '1', durationMs: 61000, prompt: authored, systemPrompt: '系统原文', output: 'AI 原文', observations: [], contextFiles: [], spans: [] }] }] })));
@@ -111,7 +141,7 @@ it('keeps graph selection, zoom and selected dispatch while independently locali
   fireEvent.click(screen.getByRole('button', { name: '放大' }));
   const viewport = screen.getByTestId('execution-graph-viewport');
   const zoom = viewport.getAttribute('data-zoom');
-  fireEvent.click(screen.getByRole('button', { name: '打开终端' }));
+  fireEvent.click(screen.getByRole('button', { name: '查看执行' }));
   const select = screen.getByTestId('live-activity-dispatch-select');
   fireEvent.mouseDown(within(select).getByRole('combobox'));
   fireEvent.click(await screen.findByText('Dispatch 44'));

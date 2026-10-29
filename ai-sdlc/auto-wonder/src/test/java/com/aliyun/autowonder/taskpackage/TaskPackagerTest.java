@@ -529,6 +529,50 @@ class TaskPackagerTest {
     }
 
     @Test
+    void deferredQaVerificationPinsOriginalHeadBeforeProviderStarts() throws Exception {
+        String base = "1111111111111111111111111111111111111111";
+        String head = "2222222222222222222222222222222222222222";
+        var stored = storage.put("artifacts", "deferred", ("""
+                {"repositories":[{"name":"service","branch":"fix/delivery","baseCommit":"%s","headCommit":"%s","remoteHeadCommit":"","checkoutVerification":"required"}]}
+                """).formatted(base, head).getBytes(StandardCharsets.UTF_8));
+        for (String role : List.of("QA", "AW_QA")) {
+            PackageContext c = baseCtx();
+            c.setRoleCode(role);
+            c.setRepos(List.of(new LinkedHashMap<>(Map.of("name", "service", "ref", "main", "mode", "lazy", "allowPush", false))));
+            c.setSourceRevisionArtifacts(List.of(artifactRef("deferred", stored.getOssRef())));
+            JSONObject repo = JSON.parseObject(new String(unzip(storage.get(packager.build(c).getOssRef()))
+                    .get("repos.json"), StandardCharsets.UTF_8)).getJSONArray("repos").getJSONObject(0);
+            assertEquals(head, repo.getString("ref"));
+            assertEquals(head, repo.getString("pinnedBaseCommit"));
+            assertEquals("eager", repo.getString("mode"));
+            assertEquals(base, repo.getString("deliveryBaseCommit"));
+            assertFalse(repo.getBooleanValue("allowPush"));
+            assertFalse(repo.containsKey("sourceRevisionFallbackRefs"));
+            assertFalse(repo.containsKey("deliveryUnpushedHeadCommit"));
+        }
+    }
+
+    @Test
+    void verificationInstructionCannotBeBorrowedOrTreatMalformedProofAsSuccess() {
+        String base = "1111111111111111111111111111111111111111";
+        String head = "2222222222222222222222222222222222222222";
+        for (String fields : List.of("\"remoteHeadCommit\":\"\",\"checkoutVerification\":\"unknown\"",
+                "\"remoteHeadCommit\":null,\"checkoutVerification\":\"required\"",
+                "\"remoteHeadCommit\":\"invalid\",\"checkoutVerification\":\"required\"",
+                "\"remoteHeadCommit\":\"\"")) {
+            String prefix = "{\"repositories\":[{\"name\":\"service\",\"baseCommit\":\"" + base
+                    + "\",\"headCommit\":\"" + head + "\",";
+            var current = storage.put("artifacts", "current", (prefix + fields + "}]}").getBytes(StandardCharsets.UTF_8));
+            var older = storage.put("artifacts", "older", (prefix + "\"remoteHeadCommit\":\"\",\"checkoutVerification\":\"required\"}]}").getBytes(StandardCharsets.UTF_8));
+            PackageContext c = baseCtx();
+            c.setRoleCode("AW_QA");
+            c.setRepos(List.of(new LinkedHashMap<>(Map.of("name", "service", "ref", "main"))));
+            c.setSourceRevisionArtifacts(List.of(artifactRef("current", current.getOssRef()), artifactRef("older", older.getOssRef())));
+            assertEquals("dispatch.repo_revision.qa_unpushed", assertThrows(BizException.class, () -> packager.build(c)).getMessageKey());
+        }
+    }
+
+    @Test
     void legacyRevisionKeepsExactHeadAndReviewRangeForEveryConsumer() throws Exception {
         String base = "1111111111111111111111111111111111111111";
         String head = "2222222222222222222222222222222222222222";

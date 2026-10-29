@@ -1,9 +1,12 @@
-import { ConfigProvider } from 'antd';
+import { ConfigProvider, message } from 'antd';
 import { createAppearanceTheme } from '@/shared/theme/appearance';
 import { statusCategoryOf } from '../constants';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { within, render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
+import { useAuthStore } from '@/shared/auth/store';
 import { WorkitemKanban } from './WorkitemKanban';
 import type { Workitem } from '@/shared/types/workitem';
 
@@ -35,10 +38,13 @@ function mk(partial: Partial<Workitem>): Workitem {
 }
 
 function renderKanban(props: React.ComponentProps<typeof WorkitemKanban>) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter>
-      <WorkitemKanban {...props} />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <WorkitemKanban {...props} />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -352,6 +358,17 @@ describe('WorkitemKanban 列归属（规格 3.1）', () => {
     expect(screen.queryByTestId('workitem-card-1')).not.toBeInTheDocument();
   });
 
+  it('renders the CANCELED column only when the filter explicitly selects it', () => {
+    renderKanban({
+      items: [mk({ id: 1, title: '已取消工单', statusCategory: 'CANCELED' })],
+      columnKeys: ['CANCELED'],
+      columnTotals: { CANCELED: 1 },
+    });
+    expect(screen.getAllByTestId(/^kanban-column-/)).toHaveLength(1);
+    expect(screen.getByTestId('kanban-column-CANCELED')).toContainElement(screen.getByTestId('workitem-card-1'));
+    expect(screen.getByText('已取消')).toBeInTheDocument();
+  });
+
   it('falls back to the NEW column when the server category is missing', () => {
     renderKanban({ items: [mk({ id: 1, title: '兜底卡片', statusCategory: null })] });
     expect(screen.getByTestId('kanban-column-NEW')).toContainElement(screen.getByTestId('workitem-card-1'));
@@ -367,7 +384,11 @@ describe('WorkitemKanban 排队标记', () => {
     expect(within(card).getByText('开发中')).toBeInTheDocument();
     expect(statusCategoryOf(item)).toBe('IN_PROGRESS');
     expect(screen.getByTestId('kanban-column-IN_PROGRESS')).toContainElement(card);
-    rerender(<MemoryRouter><WorkitemKanban items={[{ ...item, executionStatus: 'RUNNING' }]} /></MemoryRouter>);
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter><WorkitemKanban items={[{ ...item, executionStatus: 'RUNNING' }]} /></MemoryRouter>
+      </QueryClientProvider>,
+    );
     expect(screen.queryByText('排队中')).not.toBeInTheDocument();
   });
 
@@ -408,5 +429,43 @@ describe('WorkitemKanban 看板横向自适应', () => {
     expect(column.style.maxWidth).toBe('360px');
     expect(column.style.minWidth).toBe('260px');
     expect(column.parentElement!.style.justifyContent).not.toBe('center');
+  });
+});
+
+describe('WorkitemKanban 标签', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ accessLevel: 'READ_WRITE', readOnlyDomains: [] });
+  });
+
+  afterEach(() => {
+    message.destroy();
+    useAuthStore.getState().clear();
+  });
+
+  it('shows the tags of a workitem below its title and collapses the overflow', () => {
+    renderKanban({ items: [mk({ id: 7, title: '看板标题', tags: ['发布', '线上', '后端'] })] });
+
+    const card = screen.getByTestId('workitem-card-7');
+    expect(within(card).getByText('发布')).toBeInTheDocument();
+    expect(within(card).getByText('线上')).toBeInTheDocument();
+    expect(within(card).getByTestId('workitem-tags-overflow')).toHaveTextContent('+1');
+    expect(within(card).getByRole('button', { name: '编辑标签' })).toBeInTheDocument();
+    const title = within(card).getByText('看板标题');
+    const tags = within(card).getByTestId('workitem-tags-cell-7');
+    expect(title.compareDocumentPosition(tags) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('keeps read-only members away from the writable tag editor', async () => {
+    const user = userEvent.setup();
+    useAuthStore.setState({ accessLevel: 'READ_ONLY' });
+    renderKanban({ items: [mk({ id: 8, title: '只读看板', tags: ['发布'] })] });
+
+    const card = screen.getByTestId('workitem-card-8');
+    expect(within(card).queryByRole('button', { name: '编辑标签' })).not.toBeInTheDocument();
+
+    await user.click(within(card).getByText('发布'));
+
+    expect(await screen.findByText(/编辑标签需要读写权限/)).toBeInTheDocument();
+    expect(screen.queryByTestId('workitem-tags-editor')).not.toBeInTheDocument();
   });
 });

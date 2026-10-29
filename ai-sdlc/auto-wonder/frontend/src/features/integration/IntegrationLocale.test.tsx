@@ -138,6 +138,12 @@ it('keeps a false Aone result and protocol checks raw even when they match owned
 it.each(['FEISHU', 'SLACK', 'constructor'])('updates independently mounted channel %s with stable selection and request count', async provider => {
   let calls = 0;
   server.use(http.get('/api/platform/im-channels', () => { calls++; return HttpResponse.json(ok([{ provider, selected: true, enabled: false }])); }),
+    http.get('/api/platform/im-channels/selection', () => HttpResponse.json(ok({ provider, generation: 1, activatedAt: null }))),
+    http.get('/api/integrations/channels/group-config', () => HttpResponse.json(ok({
+      provider: 'DINGTALK', configured: true, ready: true, desiredEnabled: true,
+      appKey: 'platform-app', robotCode: 'platform-robot', selectionGeneration: 1,
+      status: 'ACTIVE', drainingCount: 0, failedCount: 0, unknownCount: 0,
+    }))),
     http.get('/api/integrations/feishu/bindings', () => HttpResponse.json(ok([]))));
   const { router } = mount(provider === 'FEISHU' ? <IntegrationsHubPage /> : <ChannelIntegrationPage />, '/integrations?tab=channels&keep=raw');
   await screen.findByText(provider === 'FEISHU' ? '飞书机器人绑定' : '该渠道尚未接入'); await locale('en-US');
@@ -184,21 +190,45 @@ it('preserves Feishu edit encryption choice, blank secrets, disabled app ID and 
   await waitFor(() => expect(success).toHaveBeenCalledWith('Feishu binding saved. Configure the callback URL and publish the Feishu app.'));
 });
 
-it('refreshes visible Feishu create validation while keeping password visibility and pristine optional fields', async () => {
-  const user = localeUser(); server.use(http.get('/api/integrations/feishu/bindings', () => HttpResponse.json(ok([]))));
+it('refreshes visible Feishu shared-create validation and drafts while keeping the selected agent', async () => {
+  const user = localeUser(); let body: FeishuBindingRequest | undefined;
+  server.use(http.get('/api/integrations/feishu/bindings', () => HttpResponse.json(ok([]))),
+    http.post('/api/integrations/feishu/bindings', async ({ request }) => {
+      body = await request.json() as FeishuBindingRequest;
+      return HttpResponse.json(ok({ id: 9, bindingMode: 'SHARED', groupId: 'oc_group', agentId: 7, status: 'ENABLED', appId: 'cli_shared' }));
+    }));
   mount(<FeishuBindingPanel />); await user.click(await screen.findByRole('button', { name: '新建飞书绑定' }));
-  await user.type(screen.getByLabelText('App ID'), 'invalid'); await user.click(screen.getByRole('button', { name: /保\s*存/ })); await screen.findByText('请输入有效的 App ID（cli_ 开头）');
-  const secret = screen.getByLabelText('App Secret'); await user.type(secret, 'secret-draft'); await locale('en-US');
-  expect(await screen.findByText('Enter a valid App ID starting with cli_')).toBeInTheDocument(); expect(screen.getByLabelText('App Secret')).toBe(secret); expect(secret).toHaveValue('secret-draft');
-  const drawer = within(screen.getByRole('dialog', { name: 'New Feishu binding' })); const toggle = drawer.getAllByRole('button', { name: 'Show secret' })[0];
-  toggle.focus(); await user.keyboard(' '); expect(secret).toHaveAttribute('type', 'text'); await locale('zh-CN'); expect(secret).toHaveAttribute('type', 'text');
-  expect(drawer.getByRole('button', { name: '隐藏密钥' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /保\s*存/ })); await screen.findByText('请填写群 ID');
+  await user.click(screen.getByRole('combobox', { name: '关联数字员工' })); await user.click(await screen.findByText('<em>员工</em>'));
+  await locale('en-US');
+  expect(await screen.findByText('Enter the group ID')).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Linked Agent' })).toBeInTheDocument();
+  const groupId = screen.getByLabelText('Group ID'); await user.type(groupId, 'oc_group');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(body).toMatchObject({ bindingMode: 'SHARED', groupId: 'oc_group', agentId: 7, status: 'ENABLED' }));
+  // Saving closes the form immediately; there is no confirmation step to translate any more.
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New Feishu binding' })).not.toBeInTheDocument());
+  await locale('zh-CN');
+  expect(screen.queryByText('绑定已创建 · 等待群内确认')).not.toBeInTheDocument();
 });
 
 it('preserves unknown binding/transport codes instead of guessing localized meanings', async () => {
-  server.use(http.get('/api/integrations/dingtalk/bindings', () => HttpResponse.json(ok([{ ...ding, transportMode: 'constructor', agentId: 8 }, { ...ding, id: 9, robotCode: 'health_raw', streamStatus: 'toString' }]))));
-  const view = mount(<DingTalkBindingPanel />); await screen.findByText('robot_raw'); await locale('en-US');
-  expect(screen.getByText('constructor')).toBeInTheDocument(); expect(screen.getByText('toString')).toBeInTheDocument(); expect(screen.getByText('新建绑定 (<b>用户角色</b>)')).toBeInTheDocument();
+  server.use(http.get('/api/integrations/dingtalk/bindings', () => HttpResponse.json(ok([
+    { ...ding, transportMode: 'constructor', agentId: 8 },
+    { ...ding, id: 9, transportMode: 'STREAM', streamStatus: 'toString', status: 'constructor' },
+  ]))));
+  const view = mount(<DingTalkBindingPanel />); await screen.findAllByText('dingraw'); await locale('en-US');
+  // Unknown status codes are rendered verbatim rather than being mapped to a localized meaning.
+  expect(screen.getByText('constructor')).toBeInTheDocument();
+  const details = screen.getAllByRole('button', { name: 'Details' });
+  await userEvent.click(details[0]);
+  const first = within(await screen.findByRole('dialog', { name: 'Binding details' }));
+  expect(first.getByText('constructor')).toBeInTheDocument();
+  await userEvent.click(first.getAllByRole('button', { name: 'Close' })[0]);
+  await userEvent.click(screen.getAllByRole('button', { name: 'Details' })[1]);
+  const second = within(await screen.findByRole('dialog', { name: 'Binding details' }));
+  expect(second.getByText(/toString/)).toBeInTheDocument();
+  expect(screen.getByText('新建绑定 (<b>用户角色</b>)')).toBeInTheDocument();
   view.unmount();
   server.use(http.get('/api/integrations/feishu/bindings', () => HttpResponse.json(ok([{ id: 2, appId: 'cli_raw', agentId: 8, status: 'constructor' }]))));
   mount(<FeishuBindingPanel />); await screen.findByText('cli_raw'); expect(screen.getByText('constructor')).toBeInTheDocument();
@@ -256,24 +286,32 @@ it('uses current locale for Aone zero/one/many counts, mixed reused saves and de
   await waitFor(() => expect(error).toHaveBeenCalledWith('<b>原始 SDK 错误</b>'));
 }, 20000);
 
-it('keeps DingTalk toggle/edit/delete secrets omitted and uses completion locale while health details stay raw', async () => {
-  const user = localeUser(); const success = vi.spyOn(message, 'success'); const toggle = deferred<unknown>(); const remove = deferred<void>();
+it('keeps DingTalk edit/delete secrets omitted and uses completion locale while health details stay raw', async () => {
+  const user = localeUser(); const success = vi.spyOn(message, 'success'); const saveGate = deferred<unknown>(); const remove = deferred<void>();
   const bodies: DingTalkBindingRequest[] = []; let deletes = 0;
   const binding = { ...ding, streamStatus: 'FAILED', streamError: '<b>原始钉钉错误</b>' };
   server.use(http.get('/api/integrations/dingtalk/bindings', () => HttpResponse.json(ok([binding]))),
-    http.put('/api/integrations/dingtalk/bindings/3', async ({ request }) => { const body = await request.json() as DingTalkBindingRequest; bodies.push(body); return HttpResponse.json(ok(bodies.length === 1 ? await toggle.promise : binding)); }),
+    http.put('/api/integrations/dingtalk/bindings/3', async ({ request }) => { const body = await request.json() as DingTalkBindingRequest; bodies.push(body); return HttpResponse.json(ok(await saveGate.promise)); }),
     http.delete('/api/integrations/dingtalk/bindings/3', async () => { deletes++; await remove.promise; return HttpResponse.json(ok(null)); }));
-  mount(<DingTalkBindingPanel />); await screen.findByText('连接失败');
-  await user.hover(screen.getByText('连接失败')); expect(await screen.findByText('<b>原始钉钉错误</b>')).toBeInTheDocument();
-  await user.click(screen.getByRole('switch', { name: '切换钉钉绑定状态' })); await waitFor(() => expect(bodies).toHaveLength(1));
-  await locale('en-US'); await act(async () => { toggle.resolve(binding); });
-  await waitFor(() => expect(success).toHaveBeenCalledWith('Status updated'));
-  expect(bodies[0]).toMatchObject({ status: 'DISABLED', transportMode: 'STREAM', streamEnv: 'ONLINE' }); expect(bodies[0].appSecret).toBeUndefined();
-  await user.click(screen.getByRole('button', { name: 'Edit' })); const secret = screen.getByLabelText('appSecret (leave blank to keep existing)'); expect(secret).toHaveValue('');
-  await locale('zh-CN'); await user.click(screen.getByRole('button', { name: /保\s*存/ })); await waitFor(() => expect(bodies).toHaveLength(2)); expect(bodies[1].appSecret).toBeUndefined();
-  await user.click(screen.getByRole('button', { name: '关闭' })); await user.click(screen.getByRole('button', { name: /删\s*除/ }));
+  mount(<DingTalkBindingPanel />); await screen.findByText('dingraw');
+  // Technical health moved into the read-only details and keeps the raw provider error.
+  await user.click(screen.getByRole('button', { name: '详情' }));
+  let detail = within(await screen.findByRole('dialog', { name: '绑定详情' }));
+  expect(detail.getByText(/原始钉钉错误/)).toBeInTheDocument();
+
+  await user.click(detail.getByRole('button', { name: /编\s*辑/ }));
+  const secret = screen.getByLabelText('appSecret（留空=不修改）'); expect(secret).toHaveValue('');
+  await locale('en-US'); await user.click(screen.getByRole('button', { name: /保\s*存|Save/ })); await waitFor(() => expect(bodies).toHaveLength(1));
+  expect(bodies[0]).toMatchObject({ status: 'ENABLED', transportMode: 'STREAM', streamEnv: 'ONLINE' }); expect(bodies[0].appSecret).toBeUndefined();
+  await act(async () => { saveGate.resolve(binding); });
+  await waitFor(() => expect(success).toHaveBeenCalledWith('Binding saved'));
+
+  await user.click(screen.getByRole('button', { name: /详情|Details/ }));
+  detail = within(await screen.findByRole('dialog', { name: /绑定详情|Binding details/ }));
+  await user.click(detail.getByRole('button', { name: /删除绑定|Delete binding/ }));
+  const confirm = within(await screen.findByRole('tooltip'));
   await locale('en-US'); expect(screen.getByText('Delete this binding?')).toBeInTheDocument(); expect(deletes).toBe(0);
-  await user.click(screen.getAllByRole('button', { name: 'Delete' })[1]); await waitFor(() => expect(deletes).toBe(1));
+  await user.click(confirm.getByRole('button', { name: /Delete binding/ })); await waitFor(() => expect(deletes).toBe(1));
   await locale('zh-CN'); await act(async () => { remove.resolve(); }); await waitFor(() => expect(success).toHaveBeenCalledWith('绑定已删除'));
 });
 
@@ -296,8 +334,12 @@ it.each([['', 'Delete failed'], ['保存失败', '保存失败']])('keeps deferr
   const user = localeUser(); const error = vi.spyOn(message, 'error'); const remove = deferred<void>(); let started = false;
   server.use(http.get('/api/integrations/feishu/bindings', () => HttpResponse.json(ok([{ id: 4, appId: 'cli_raw', agentId: 7, status: 'ENABLED' }]))),
     http.delete('/api/integrations/feishu/bindings/4', async () => { started = true; await remove.promise; return HttpResponse.json({ success: false, code: '10000', message: detail }); }));
-  mount(<FeishuBindingPanel />); await user.click(await screen.findByRole('button', { name: /删\s*除/ }));
-  await user.click(screen.getAllByRole('button', { name: /删\s*除/ })[1]); await waitFor(() => expect(started).toBe(true));
+  mount(<FeishuBindingPanel />); await screen.findByText('cli_raw');
+  await user.click(screen.getByRole('button', { name: '详情' }));
+  const detailDrawer = within(await screen.findByRole('dialog', { name: '绑定详情' }));
+  await user.click(detailDrawer.getByRole('button', { name: '删除绑定' }));
+  const confirm = within(await screen.findByRole('tooltip'));
+  await user.click(confirm.getByRole('button', { name: '删除绑定' })); await waitFor(() => expect(started).toBe(true));
   await locale('en-US'); await act(async () => { remove.resolve(); }); await waitFor(() => expect(error).toHaveBeenCalledWith(expected));
 });
 

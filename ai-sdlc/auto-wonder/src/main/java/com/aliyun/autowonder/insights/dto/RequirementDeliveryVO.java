@@ -5,7 +5,12 @@ import lombok.Setter;
 
 import java.util.List;
 
-/** 需求交付吞吐、交付时长与每周目标完成比例。统计口径见 {@code RequirementDeliveryService}。 */
+/**
+ * 需求交付吞吐、交付时长与每周目标完成比例。统计口径见 {@code RequirementDeliveryService}。
+ * <p>
+ * 数据洞察「需求交付」tab 已下线（工单 #56970），响应结构保持不变以兼容存量调用方。
+ */
+@Deprecated
 @Getter
 @Setter
 public class RequirementDeliveryVO {

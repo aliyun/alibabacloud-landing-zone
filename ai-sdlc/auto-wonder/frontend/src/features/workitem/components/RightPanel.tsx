@@ -7,18 +7,20 @@ import { CLARIFICATION_THEME } from '../clarification/theme';
 import { SquadMembers } from './SquadMembers';
 import { WatcherList } from './WatcherList';
 import { DeliveryProgress, WorkflowPlanSummary } from './DeliveryProgress';
+import { ExecutionControlTimeline } from './ExecutionControlTimeline';
 import { RecoveryControls } from './RecoveryControls';
 import { DebugLogList } from './DebugLogList';
 import { ExternalCollaborationCard } from './ExternalCollaborationCard';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import type {
   Participant,
+  TimelineItem,
   DeliveryProgress as DeliveryProgressModel,
   DeliveryStep,
   Artifact,
   ExternalCollaboration,
 } from '@/shared/types/workitem';
-import { useContinueDispatch, usePauseDispatch } from '../hooks';
+import { useExecutionControl } from '../hooks';
 import { AI_CLARIFICATION_ENABLED } from '../featureFlags';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import type { ClarifyContext, ClarifyPanelMode } from '../clarifyView';
@@ -27,6 +29,7 @@ const CLARIFY_MIN_HEIGHT = 280;
 
 interface RightPanelProps {
   workitemId: string;
+  timeline?: TimelineItem[];
   participants: Participant[];
   participantsLoading?: boolean;
   externalCollaboration?: ExternalCollaboration | null;
@@ -37,6 +40,7 @@ interface RightPanelProps {
   onRetryProgress?: () => void;
   terminalStatus?: string | null;
   artifacts: Artifact[];
+  clarificationArtifacts?: Artifact[];
   artifactsLoading?: boolean;
   onClarifyConfirm?: (result: string) => void;
   onModeChange?: (mode: ClarifyPanelMode) => void;
@@ -56,6 +60,7 @@ interface RightPanelProps {
 
 export function RightPanel({
   workitemId,
+  timeline = [],
   participants,
   participantsLoading,
   externalCollaboration,
@@ -66,6 +71,7 @@ export function RightPanel({
   onRetryProgress,
   terminalStatus,
   artifacts,
+  clarificationArtifacts,
   artifactsLoading,
   onModeChange,
   initialMode,
@@ -85,8 +91,7 @@ export function RightPanel({
    *  没有这个意图记录，用户按 Esc 退出后会被下一次回调硬拽回全屏（违反需求 D4）。
    *  仅在本次澄清会话内有效：返回进度再次进入澄清时重置，重新享受自动全屏。 */
   const userExitedFullscreenRef = useRef(false);
-  const continueMutation = useContinueDispatch(workitemId);
-  const pauseMutation = usePauseDispatch(workitemId);
+  const executionControl = useExecutionControl(workitemId);
   const accessCommand = useAccessCommand();
 
   const applyMode = useCallback((next: ClarifyPanelMode) => {
@@ -181,6 +186,7 @@ export function RightPanel({
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <WorkitemClarificationPanel
             workitemId={workitemId}
+            artifacts={clarificationArtifacts ?? artifacts}
             fullscreen={clarifyFullscreen}
             headerPrefix={(
               <Button
@@ -264,9 +270,13 @@ export function RightPanel({
         {progressError && <Alert type="warning" showIcon
           message={t(progress ? 'delivery.refreshFailed' : 'delivery.loadFailed')}
           action={<Button size="small" onClick={onRetryProgress}>{t('delivery.retryLoad')}</Button>} />}
+        {executionControl.isError && <Alert type="error" showIcon closable
+          message={executionControl.error?.message || t('messages.executionFailed')}
+          onClose={() => executionControl.reset()} />}
         <DeliveryProgress
+          renderControlTimeline={(dispatchId, compact) => <ExecutionControlTimeline key={`controls-${dispatchId}`} dispatchId={dispatchId} items={timeline} compact={compact} />}
           showWorkflowPlan={false}
-          renderRecovery={(dispatchId) => <RecoveryControls key={dispatchId} workitemId={workitemId} variant="execution" dispatchId={dispatchId} />}
+          renderRecovery={(dispatchId) => <RecoveryControls key={`recovery-${dispatchId}`} workitemId={workitemId} variant="execution" dispatchId={dispatchId} />}
           restartHistory={<RecoveryControls workitemId={workitemId} variant="history" />}
           steps={steps}
           progress={progress}
@@ -274,18 +284,12 @@ export function RightPanel({
           artifacts={artifacts}
           artifactsLoading={artifactsLoading}
           loading={stepsLoading}
-          onContinue={(dispatchId) => accessCommand(
+          onExecutionAction={(attempt, action) => accessCommand(
             'READ_WRITE',
-            t('detail.resumeCommand'),
-            () => continueMutation.mutate({ dispatchId }),
+            action === 'pause' ? t('detail.pauseCommand') : action === 'resume' ? t('detail.resumeCommand') : t('detail.endExecutionCommand'),
+            () => executionControl.mutate({ dispatchId: attempt.dispatchId, action }),
           )}
-          continuingDispatchId={continueMutation.isPending ? continueMutation.variables?.dispatchId : null}
-          onPause={(dispatchId) => accessCommand(
-            'READ_WRITE',
-            t('detail.pauseCommand'),
-            () => pauseMutation.mutate({ dispatchId }),
-          )}
-          pausingDispatchId={pauseMutation.isPending ? pauseMutation.variables?.dispatchId : null}
+          pendingExecutionAction={executionControl.isPending ? executionControl.variables ?? null : null}
         />
         <DebugLogList workitemId={workitemId} />
       </Space>

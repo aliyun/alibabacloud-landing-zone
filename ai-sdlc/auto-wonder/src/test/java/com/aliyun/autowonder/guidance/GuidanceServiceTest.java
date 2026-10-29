@@ -81,6 +81,8 @@ class GuidanceServiceTest {
         comment.setId(600L);
         comment.setTenantId(100L);
         comment.setWorkitemId(50L);
+        comment.setAuthorType("HUMAN");
+        comment.setAuthorRef(7L);
         comment.setContentMd("comment body from canonical table");
         when(commentDao.findById(100L, 600L)).thenReturn(comment);
         doAnswer(invocation -> {
@@ -154,6 +156,94 @@ class GuidanceServiceTest {
 
         verify(guidanceDao, never()).insert(any(GuidanceDO.class));
         verifyNoInteractions(dispatchService);
+    }
+
+    @Test
+    void agentAuthoredCommentIgnoresExplicitAgentTargets() {
+        authorComment("AGENT", 40013L);
+
+        service.createForComment(100L, 50L, 600L, "@AW测试工程师 请执行", List.of(40013L), 7L);
+
+        verify(commentDao).findById(100L, 600L);
+        verify(guidanceDao, never()).insert(any(GuidanceDO.class));
+        verify(workitemService, never()).getParticipants(anyLong(), anyLong());
+        verifyNoInteractions(dispatchService);
+    }
+
+    @Test
+    void agentAuthoredCommentIgnoresTextAgentMention() {
+        authorComment("AGENT", 40013L);
+
+        service.createForComment(100L, 50L, 600L, "请 @AW全栈开发 重新修改", null, 7L);
+
+        verify(guidanceDao, never()).insert(any(GuidanceDO.class));
+        verify(workitemService, never()).getParticipants(anyLong(), anyLong());
+        verifyNoInteractions(dispatchService);
+    }
+
+    @Test
+    void agentAuthoredMentionOnlyCommentDoesNotStartFormalWorkflow() {
+        authorComment("AGENT", 40013L);
+        when(dispatchDao.listByWorkitem(100L, 50L)).thenReturn(List.of());
+
+        service.createForComment(100L, 50L, 600L, "@AW全栈开发", List.of(40013L), 7L);
+
+        verify(workitemService, never()).rebindForInteractionRework(anyLong(), anyLong(), anyLong(),
+                anyLong(), anyLong(), anyLong());
+        verify(workitemService, never()).addAgentComment(anyLong(), eq("收到，已转入正式工作流程。"),
+                anyLong(), anyLong());
+        verify(dispatchService, never()).enqueue(anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+        verify(guidanceDao, never()).insert(any(GuidanceDO.class));
+    }
+
+    @Test
+    void agentAuthoredCommentSkipsClosedDeliveryValidation() {
+        authorComment("AGENT", 40013L);
+        when(dispatchService.enqueueCommentInteraction(anyLong(), anyLong(), anyLong(), any(), anyBoolean(),
+                any(), anyLong(), anyLong())).thenThrow(closedDeliveryConflict());
+
+        service.createForComment(100L, 50L, 600L, "@AW全栈开发 看下", List.of(40013L), 7L);
+
+        verify(guidanceDao, never()).insert(any(GuidanceDO.class));
+        verifyNoInteractions(dispatchService);
+    }
+
+    @Test
+    void humanAuthoredCommentStillCreatesInteraction() {
+        DispatchDO interaction = dispatch(94L, "PENDING");
+        when(dispatchService.enqueueCommentInteraction(100L, 50L, 40013L, null, false,
+                811L, 701L, 7L)).thenReturn(interaction);
+
+        service.createForComment(100L, 50L, 600L, "@AW全栈开发 看下", List.of(40013L), 7L);
+
+        verify(guidanceDao).insert(argThat(row -> Long.valueOf(40013L).equals(row.getTargetAgentId())));
+        verify(dispatchService).enqueueCommentInteraction(100L, 50L, 40013L, null, false,
+                811L, 701L, 7L);
+    }
+
+    @Test
+    void externalAuthoredCommentStillCreatesInteraction() {
+        authorComment("EXTERNAL", 900L);
+        DispatchDO interaction = dispatch(94L, "PENDING");
+        when(dispatchService.enqueueCommentInteraction(100L, 50L, 40013L, null, false,
+                811L, 701L, 7L)).thenReturn(interaction);
+
+        service.createForComment(100L, 50L, 600L, "@AW全栈开发 看下", List.of(40013L), 7L);
+
+        verify(guidanceDao).insert(argThat(row -> Long.valueOf(40013L).equals(row.getTargetAgentId())));
+        verify(dispatchService).enqueueCommentInteraction(100L, 50L, 40013L, null, false,
+                811L, 701L, 7L);
+    }
+
+    private void authorComment(String authorType, long authorRef) {
+        WorkitemCommentDO comment = new WorkitemCommentDO();
+        comment.setId(600L);
+        comment.setTenantId(100L);
+        comment.setWorkitemId(50L);
+        comment.setAuthorType(authorType);
+        comment.setAuthorRef(authorRef);
+        comment.setContentMd("comment body from canonical table");
+        when(commentDao.findById(100L, 600L)).thenReturn(comment);
     }
 
     private static BizException closedDeliveryConflict() {

@@ -28,6 +28,8 @@ import com.aliyun.autowonder.workitem.dto.CommentInteractionVO;
 import com.aliyun.autowonder.workitem.dto.CommentVO;
 import com.aliyun.autowonder.workitem.dto.ParticipantVO;
 import com.aliyun.autowonder.workitem.dto.TimelineItemVO;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +47,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GuidanceService {
+    private static final Logger log = LoggerFactory.getLogger(GuidanceService.class);
     private static final String FORMAL_WORKFLOW_ACKNOWLEDGEMENT = "收到，已转入正式工作流程。";
     private static final Set<String> ACTIVE_TURN_STATUSES = Set.of(
             "PENDING", "PACKAGING", "DISPATCHED", "ACKED", "RUNNING", "PAUSING", "PAUSE_FAILED");
@@ -92,6 +95,16 @@ public class GuidanceService {
     @Transactional
     public void createForComment(long workspaceId, long workitemId, long commentId, String contentMd,
             List<Long> explicitTargetAgentIds, long creatorId) {
+        WorkitemCommentDO comment = requireComment(workspaceId, ExecutionSourceType.WORKITEM, workitemId, commentId);
+        if ("AGENT".equals(comment.getAuthorType())) {
+            // An agent-authored comment must never wake another agent, whether the target came
+            // from targetAgentIds or from text. Human mentions are already persisted by the
+            // comment service before this method runs.
+            log.info("drop agent targets on agent-authored comment workitemId={} commentId={} "
+                            + "authorAgentId={} explicitTargets={}",
+                    workitemId, commentId, comment.getAuthorRef(), explicitTargetAgentIds);
+            return;
+        }
         List<Long> targetAgentIds = explicitTargetAgentIds == null ? List.of()
                 : explicitTargetAgentIds.stream().filter(Objects::nonNull).distinct().toList();
         if (targetAgentIds.isEmpty()) {

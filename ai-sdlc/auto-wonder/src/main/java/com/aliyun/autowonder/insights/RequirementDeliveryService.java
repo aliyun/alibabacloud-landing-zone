@@ -28,7 +28,11 @@ import java.util.List;
  * 交付完成时间 = 最近一次进入 DONE 类节点的状态事件（重开后再交付取最近一次，按 workitem 去重）；
  * 交付开始时间 = 首次正式交付派发（最早 dispatch），缺失不编造并单列缺失样本；
  * 交付时长 = 完成 - 开始的端到端墙钟时长，包含等待、暂停、返工与重试。
+ * <p>
+ * 数据洞察「需求交付」tab 已下线（工单 #56970）。统计逻辑保留以兼容存量接口与测试，
+ * {@link #TARGET_SETTING_KEY} 对应的用户级设置不再有界面入口。
  */
+@Deprecated
 @Service
 public class RequirementDeliveryService {
 

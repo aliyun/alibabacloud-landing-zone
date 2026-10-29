@@ -188,4 +188,17 @@ describe('LiveActivityPanel', () => {
     expect(screen.queryByTestId('live-activity-awaiting')).toBeNull();
     expect(screen.getByTestId('live-activity-panel')).toBeTruthy();
   });
+  it('uses structured tool metadata in the compact headline and retains raw details and failures', () => {
+    const action = buildAction({ actionType: 'MCP_CALL', summaryTarget: 'autowonder.get_dispatch_turn',
+      summary: '[OUTPUT TRUNCATED] {"command":"raw diagnostic"}', status: 'FAILED' });
+    mockUseLiveActivity.mockReturnValue({ actions: [action], currentAction: action,
+      lastUpdatedAt: null, lastSeq: 1, truncated: false, awaitingRuntime: false, loading: false, error: null });
+    const view = render(<LiveActivityPanel dispatchId={10} summaryOnly />);
+    expect(screen.getByTestId('live-activity-current')).toHaveTextContent('MCP 调用 · autowonder.get_dispatch_turn');
+    expect(screen.getByTestId('live-activity-current')).not.toHaveTextContent('OUTPUT TRUNCATED');
+    expect(screen.getByText('失败')).toBeInTheDocument();
+    view.rerender(<LiveActivityPanel dispatchId={10} />);
+    expect(screen.getByTestId('live-activity-current')).toHaveTextContent(action.summary!);
+  });
+
 });

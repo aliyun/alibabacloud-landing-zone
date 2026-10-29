@@ -3,14 +3,20 @@ import { apiClient } from '@/shared/api/client';
 export const DINGTALK_DEFAULT_BASE_URL = 'https://api.dingtalk.com';
 
 export type BindingStatus = 'ENABLED' | 'DISABLED';
+export type BindingMode = 'SHARED' | 'LEGACY';
 export type TransportMode = 'HTTP_CALLBACK' | 'STREAM';
 export type StreamEnv = 'ONLINE';
 export type StreamStatus = 'CONNECTED' | 'CONNECTING' | 'FAILED' | 'NOT_CONNECTED';
 
 export interface DingTalkBinding {
   id: number;
+  bindingMode: BindingMode;
+  platformConfigId: number | null;
+  groupId: string | null;
+  routeVersion: number;
+  version: number;
   appKey: string;
-  appSecretMasked: string;
+  appSecretMasked: string | null;
   robotCode: string;
   agentId: number;
   transportMode: TransportMode;
@@ -26,6 +32,7 @@ export interface DingTalkBinding {
   callbackUrl: string | null;
 }
 
+/** Legacy standalone-robot payload; only accepted when editing a stored LEGACY binding. */
 export interface DingTalkBindingRequest {
   appKey: string;
   appSecret?: string;
@@ -39,6 +46,17 @@ export interface DingTalkBindingRequest {
   status?: BindingStatus;
 }
 
+/** Shared group-chat payload; only needs the external group and the linked digital worker. */
+export interface DingTalkSharedBindingRequest {
+  bindingMode?: 'SHARED';
+  groupId: string;
+  agentId: number;
+  status?: BindingStatus;
+  version?: number;
+}
+
+export type DingTalkBindingPayload = DingTalkBindingRequest | DingTalkSharedBindingRequest;
+
 const BASE = '/api/integrations/dingtalk/bindings';
 
 export async function listDingTalkBindings(): Promise<DingTalkBinding[]> {
@@ -47,7 +65,7 @@ export async function listDingTalkBindings(): Promise<DingTalkBinding[]> {
 }
 
 export async function createDingTalkBinding(
-  body: DingTalkBindingRequest,
+  body: DingTalkBindingPayload,
 ): Promise<DingTalkBinding> {
   const resp = await apiClient.post<DingTalkBinding>(BASE, body);
   return resp.data;
@@ -55,7 +73,7 @@ export async function createDingTalkBinding(
 
 export async function updateDingTalkBinding(
   id: number,
-  body: DingTalkBindingRequest,
+  body: DingTalkBindingPayload,
 ): Promise<DingTalkBinding> {
   const resp = await apiClient.put<DingTalkBinding>(`${BASE}/${id}`, body);
   return resp.data;

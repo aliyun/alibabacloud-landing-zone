@@ -94,9 +94,17 @@ public interface DispatchDao {
                                                      @Param("afterId") long afterId,
                                                      @Param("limit") int limit);
 
-    /** Pause predecessors whose durable state proves WAITING_FOR_PAUSE may be released. */
+    /**
+     * Paused or terminal predecessors that still have a waiting rework. This is only a
+     * candidate list; callers must prove the executor released the row before activating.
+     */
     List<DispatchDO> listReleasedPausePredecessors(@Param("executorId") Long executorId,
+                                                   @Param("afterId") long afterId,
                                                    @Param("limit") int limit);
+
+    /** Cheap guard for the result hot path before taking the workitem/control locks. */
+    boolean existsWaitingForPredecessor(@Param("tenantId") long tenantId,
+                                        @Param("predecessorId") long predecessorId);
 
     /**
      * In-flight dispatches of one workspace, oldest first, for the logical-delete linkage (D5).

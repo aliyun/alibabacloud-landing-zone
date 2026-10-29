@@ -4,13 +4,17 @@ import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONObject;
 
 import java.time.*;
-import java.time.temporal.WeekFields;
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class HumanAgentParticipationCalculator {
 
-    public enum Granularity { DAY, WEEK, MONTH }
+    static final int SLOW_TAIL_SIZE = 10;
+
+    private static final Comparator<HumanAgentParticipationFact> SLOW_TAIL_ORDER =
+            Comparator.comparingLong(HumanAgentParticipationFact::totalDurationSeconds).reversed()
+                    .thenComparing(HumanAgentParticipationFact::completedAt, Comparator.reverseOrder())
+                    .thenComparing(Comparator.comparingLong(HumanAgentParticipationFact::workitemId).reversed());
 
     public static class ParticipationSummary {
         private final List<HumanAgentParticipationFact> eligibleFacts;
@@ -103,8 +107,10 @@ public class HumanAgentParticipationCalculator {
                         .findFirst().ifPresent(done -> {
                             HumanAgentParticipationFact excluded = new HumanAgentParticipationFact(
                                     done.getWorkitemId(), done.getTitle(), done.getEventAt().toInstant(), 0, 0, 0);
+                            excluded.setWorkType(done.getWorkType());
                             excluded.setExclusionReason("CREATE".equals(entry.getValue().get(0).getEventType())
                                     ? "INVALID_TIMELINE" : "MISSING_CREATE");
+                            excluded.setChainQuality(excluded.exclusionReason());
                             facts.add(excluded);
                         });
             }
@@ -154,7 +160,8 @@ public class HumanAgentParticipationCalculator {
             } else if ("STATUS_CHANGE".equals(e.getEventType()) && e.isTerminal()) {
                 if (foundTerminal) continue;
                 Instant eventAt = e.getEventAt().toInstant();
-                if (eventAt.isAfter(cutoff)) return null;
+                // 快照 cutoff 左闭右开：恰在 cutoff 的完成事件归今日实时尾（P2 边界）。
+                if (!eventAt.isBefore(cutoff)) return null;
                 if (eventAt.isBefore(cursor)) return null;
                 long intervalSeconds = Duration.between(cursor, eventAt).getSeconds();
                 if ("AGENT".equals(owner)) {
@@ -175,9 +182,13 @@ public class HumanAgentParticipationCalculator {
                 first.getWorkitemId(), first.getTitle(), terminalAt,
                 totalSeconds, humanSeconds, agentSeconds);
         fact.setCreatedAt(createdAt);
+        fact.setWorkType(first.getWorkType());
         fact.setAgentParticipated(agentParticipated);
         fact.setInferredAssignment(inferredAssignment);
-        if (unknownAssignment) fact.setExclusionReason("UNKNOWN_ASSIGNEE");
+        if (unknownAssignment) {
+            fact.setExclusionReason("UNKNOWN_ASSIGNEE");
+            fact.setChainQuality("UNKNOWN_ASSIGNEE");
+        }
         return fact;
     }
 
@@ -199,14 +210,9 @@ public class HumanAgentParticipationCalculator {
     }
 
     public ParticipationSummary summarize(List<HumanAgentParticipationFact> allFacts,
-                                           LocalDate start, LocalDate end,
-                                           Granularity granularity, ZoneId zone) {
+                                           LocalDate start, LocalDate end, ZoneId zone) {
         List<HumanAgentParticipationFact> inRange = allFacts.stream()
-                .filter(f -> f.exclusionReason() == null)
-                .filter(f -> {
-                    LocalDate completedDate = f.completedAt().atZone(zone).toLocalDate();
-                    return !completedDate.isBefore(start) && !completedDate.isAfter(end);
-                })
+                .filter(f -> isEligibleInRange(f, start, end, zone))
                 .collect(Collectors.toList());
 
         if (inRange.isEmpty()) {
@@ -234,29 +240,45 @@ public class HumanAgentParticipationCalculator {
         int p90Rank = (int) Math.ceil(n * 0.90d);
         HumanAgentParticipationFact p90 = sortedAsc.get(p90Rank - 1);
 
-        int tailSize = Math.max(1, (int) Math.ceil(n * 0.10d));
-        List<HumanAgentParticipationFact> sortedDesc = inRange.stream()
-                .sorted(Comparator.comparingLong(HumanAgentParticipationFact::totalDurationSeconds).reversed()
-                        .thenComparing(HumanAgentParticipationFact::completedAt, Comparator.reverseOrder())
-                        .thenComparing(Comparator.comparingLong(HumanAgentParticipationFact::workitemId).reversed()))
-                .limit(tailSize)
-                .collect(Collectors.toList());
+        List<HumanAgentParticipationFact> sortedDesc = slowTail(inRange, start, end, zone);
 
-        List<TrendBucket> trend = buildTrend(inRange, granularity, zone, start, end);
+        List<TrendBucket> trend = buildTrend(inRange, zone, start, end);
 
         return new ParticipationSummary(inRange, avgTotal, avgHuman, avgAgent, p90, sortedDesc, trend);
     }
 
+    /** Fixed top-N slowest workitems inside the range; null/empty input yields an empty tail. */
+    public static List<HumanAgentParticipationFact> slowTail(List<HumanAgentParticipationFact> facts,
+                                                              LocalDate start, LocalDate end, ZoneId zone) {
+        if (facts == null || facts.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return facts.stream()
+                .filter(f -> isEligibleInRange(f, start, end, zone))
+                .sorted(SLOW_TAIL_ORDER)
+                .limit(SLOW_TAIL_SIZE)
+                .collect(Collectors.toList());
+    }
+
+    private static boolean isEligibleInRange(HumanAgentParticipationFact fact, LocalDate start,
+                                             LocalDate end, ZoneId zone) {
+        if (fact.exclusionReason() != null) {
+            return false;
+        }
+        LocalDate completedDate = fact.completedAt().atZone(zone).toLocalDate();
+        return !completedDate.isBefore(start) && !completedDate.isAfter(end);
+    }
+
     private List<TrendBucket> buildTrend(List<HumanAgentParticipationFact> facts,
-                                          Granularity granularity, ZoneId zone, LocalDate start, LocalDate end) {
+                                          ZoneId zone, LocalDate start, LocalDate end) {
         Map<String, List<HumanAgentParticipationFact>> buckets = new TreeMap<>();
         for (HumanAgentParticipationFact f : facts) {
-            String label = bucketLabel(f.completedAt(), granularity, zone);
+            String label = bucketLabel(f.completedAt(), zone);
             buckets.computeIfAbsent(label, k -> new ArrayList<>()).add(f);
         }
 
         for (LocalDate day = start; !day.isAfter(end); day = day.plusDays(1)) {
-            buckets.putIfAbsent(bucketLabel(day.atStartOfDay(zone).toInstant(), granularity, zone), Collections.emptyList());
+            buckets.putIfAbsent(bucketLabel(day.atStartOfDay(zone).toInstant(), zone), Collections.emptyList());
         }
         List<TrendBucket> result = new ArrayList<>();
         for (Map.Entry<String, List<HumanAgentParticipationFact>> entry : buckets.entrySet()) {
@@ -280,18 +302,21 @@ public class HumanAgentParticipationCalculator {
         return result;
     }
 
-    static String bucketLabel(Instant instant, Granularity granularity, ZoneId zone) {
-        LocalDate date = instant.atZone(zone).toLocalDate();
-        switch (granularity) {
-            case DAY:
-                return date.toString();
-            case WEEK:
-                LocalDate monday = date.with(WeekFields.ISO.dayOfWeek(), 1);
-                return monday.toString();
-            case MONTH:
-                return date.withDayOfMonth(1).toString();
-            default:
-                throw new IllegalArgumentException("Unknown granularity: " + granularity);
+    static String bucketLabel(Instant instant, ZoneId zone) {
+        return instant.atZone(zone).toLocalDate().toString();
+    }
+
+    public static Integer averageMinutes(List<HumanAgentParticipationFact> facts) {
+        if (facts == null || facts.isEmpty()) return null;
+        long totalSeconds = 0;
+        int sampleSize = 0;
+        for (HumanAgentParticipationFact fact : facts) {
+            if (fact.exclusionReason() != null) continue;
+            totalSeconds += fact.totalDurationSeconds();
+            sampleSize++;
         }
+        if (sampleSize == 0) return null;
+        long averageSeconds = totalSeconds / sampleSize;
+        return (int) Math.round(averageSeconds / 60.0d);
     }
 }

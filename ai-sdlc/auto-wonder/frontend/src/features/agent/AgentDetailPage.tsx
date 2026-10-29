@@ -409,9 +409,17 @@ export function AgentDetailPage() {
               {agent.squadNames.map((name, i) => <Tag key={name + i} color="cyan">{name}</Tag>)}
             </Space>
           )}
+          {agent.officialConfiguration && (
+            <Space wrap>
+              <Typography.Text>{t('display.officialCapabilities')}</Typography.Text>
+              {agent.officialConfiguration.capabilities.map(capability => (
+                <Tag key={capability.id}>{capability.name}</Tag>
+              ))}
+            </Space>
+          )}
           <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-            <AgentIdentitySection title="SOUL.md" content={agent.businessBackground} />
-            <AgentIdentitySection title="AGENT.md" content={agent.responsibilities} />
+            <AgentIdentitySection title="SOUL.md" content={agent.officialConfiguration?.businessBackground ?? agent.businessBackground} />
+            <AgentIdentitySection title="AGENT.md" content={agent.officialConfiguration?.responsibilities ?? agent.responsibilities} />
           </div>
         </Space>
       </Card>

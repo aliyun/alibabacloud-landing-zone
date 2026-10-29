@@ -37,6 +37,14 @@ class SdlcServiceTest {
         agentDao = mock(AgentDao.class);
         service = new SdlcService(sdlcDao, stepDao, statusNodeDao, workitemDao,
                 agentVersionDao, agentDao);
+        // Existing content/VO fixtures are shared with the structural current-read variants.
+        when(sdlcDao.findByIdForUpdate(anyLong(), anyLong()))
+                .thenAnswer(call -> sdlcDao.findById(call.getArgument(0)));
+        when(stepDao.listBySdlcForUpdate(anyLong(), anyLong()))
+                .thenAnswer(call -> stepDao.listBySdlc(call.getArgument(0)));
+        when(stepDao.softDelete(anyLong(), anyLong(), anyLong(), anyInt(), anyLong())).thenReturn(1);
+        when(stepDao.updateOrder(anyLong(), anyLong(), anyLong(), anyInt(), anyLong())).thenReturn(1);
+
     }
 
     @Test
@@ -178,6 +186,7 @@ class SdlcServiceTest {
         UpdateStepRequest updateStep = new UpdateStepRequest();
         updateStep.setName("updated");
         service.updateStep(9L, 1L, updateStep, 100L, 7L);
+        when(stepDao.listBySdlcForUpdate(9L, 100L)).thenReturn(List.of(step, second, third), List.of(second, third));
         service.deleteStep(9L, 1L, 100L, 7L);
 
         ReorderRequest reorder = new ReorderRequest();
@@ -187,9 +196,9 @@ class SdlcServiceTest {
         verify(stepDao).insert(any(SdlcStepDO.class));
         verify(stepDao).update(argThat((SdlcStepDO st) ->
                 stepWrite(st) && "updated".equals(st.getName())));
-        verify(stepDao).softDelete(1L, 100L, 7L);
-        verify(stepDao, times(2)).updateOrder(2L, 100L, 1, 7L);
-        verify(stepDao, times(2)).updateOrder(3L, 100L, 2, 7L);
+        verify(stepDao).softDelete(1L, 100L, 9L, -1, 7L);
+        verify(stepDao, times(2)).updateOrder(2L, 100L, 9L, 1, 7L);
+        verify(stepDao, times(2)).updateOrder(3L, 100L, 9L, 2, 7L);
     }
 
     @Test
@@ -239,7 +248,7 @@ class SdlcServiceTest {
         when(sdlcDao.softDelete(9L, 100L, 0, 7L)).thenReturn(1);
         service.delete(9L, 100L, 7L);
         verify(sdlcDao).softDelete(9L, 100L, 0, 7L);
-        verify(stepDao).deleteAllBySdlc(9L, 100L);
+        verify(stepDao).deleteAllForDeletedParent(9L, 100L);
     }
 
     @Test
@@ -598,10 +607,11 @@ class SdlcServiceTest {
         remaining.setStepOrder(2);
         when(stepDao.listBySdlc(9L)).thenReturn(List.of(remaining));
 
+        when(stepDao.listBySdlcForUpdate(9L, 100L)).thenReturn(List.of(step, remaining));
         service.deleteStep(9L, 1L, 100L, 7L);
 
-        verify(stepDao).softDelete(1L, 100L, 7L);
-        verify(stepDao).updateOrder(2L, 100L, 1, 7L);
+        verify(stepDao).softDelete(1L, 100L, 9L, -1, 7L);
+        verify(stepDao).updateOrder(2L, 100L, 9L, 1, 7L);
     }
 
     @Test
@@ -627,8 +637,8 @@ class SdlcServiceTest {
 
         verify(stepDao).update(argThat((SdlcStepDO st) ->
                 stepWrite(st) && "new".equals(st.getName())));
-        verify(stepDao).updateOrder(2L, 100L, 1, 7L);
-        verify(stepDao).updateOrder(1L, 100L, 2, 7L);
+        verify(stepDao).updateOrder(2L, 100L, 9L, 1, 7L);
+        verify(stepDao).updateOrder(1L, 100L, 9L, 2, 7L);
     }
 
     @Test
@@ -687,20 +697,83 @@ class SdlcServiceTest {
     }
 
     @Test
+    void reorder_null_ids_is_noop_without_reading_or_writing_children() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        ReorderRequest req = new ReorderRequest();
+
+        assertDoesNotThrow(() -> service.reorderSteps(9L, req, 100L, 7L));
+
+        verify(sdlcDao).findByIdForUpdate(9L, 100L);
+        verifyNoInteractions(stepDao);
+    }
+
+    @Test
+    void reorder_empty_ids_is_noop_without_reading_or_writing_children() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        ReorderRequest req = new ReorderRequest();
+        req.setStepIds(List.of());
+
+        assertDoesNotThrow(() -> service.reorderSteps(9L, req, 100L, 7L));
+
+        verify(sdlcDao).findByIdForUpdate(9L, 100L);
+        verifyNoInteractions(stepDao);
+    }
+
+    @Test
+    void reorder_null_and_empty_ids_still_require_existing_parent() {
+        ReorderRequest req = new ReorderRequest();
+        assertEquals("16001", assertThrows(BizException.class,
+                () -> service.reorderSteps(9L, req, 100L, 7L)).getCode());
+        req.setStepIds(List.of());
+        assertEquals("16001", assertThrows(BizException.class,
+                () -> service.reorderSteps(9L, req, 100L, 7L)).getCode());
+        verifyNoInteractions(stepDao);
+    }
+
+    @Test
+    void reorder_null_and_empty_ids_still_require_editable_parent() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "ACTIVE"));
+        ReorderRequest req = new ReorderRequest();
+        assertEquals("16003", assertThrows(BizException.class,
+                () -> service.reorderSteps(9L, req, 100L, 7L)).getCode());
+        req.setStepIds(List.of());
+        assertEquals("16003", assertThrows(BizException.class,
+                () -> service.reorderSteps(9L, req, 100L, 7L)).getCode());
+        verifyNoInteractions(stepDao);
+    }
+
+    @Test
+    void reorder_duplicate_ids_still_reject_before_allocation_or_writes() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        SdlcStepDO first = new SdlcStepDO(); first.setId(1L);
+        SdlcStepDO second = new SdlcStepDO(); second.setId(2L);
+        when(stepDao.listBySdlcForUpdate(9L, 100L)).thenReturn(List.of(first, second));
+        ReorderRequest req = new ReorderRequest();
+        req.setStepIds(List.of(1L, 1L));
+
+        assertEquals("16011", assertThrows(BizException.class,
+                () -> service.reorderSteps(9L, req, 100L, 7L)).getCode());
+
+        verify(stepDao, never()).minNegativeOrderForUpdate(anyLong(), anyLong());
+        verify(stepDao, never()).negativeOrdersForUpdate(anyLong(), anyLong(), anyLong(), anyInt());
+        verify(stepDao, never()).updateOrder(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
     void reorder_updates_all_steps() {
         SdlcDO s = sdlc(9L, "DRAFT");
         when(sdlcDao.findById(9L)).thenReturn(s);
         SdlcStepDO st1 = new SdlcStepDO(); st1.setId(1L); st1.setSdlcId(9L);
         SdlcStepDO st2 = new SdlcStepDO(); st2.setId(2L); st2.setSdlcId(9L);
         when(stepDao.listBySdlc(9L)).thenReturn(List.of(st1, st2));
-        when(stepDao.updateOrder(anyLong(), eq(100L), anyInt(), eq(7L))).thenReturn(1);
+        when(stepDao.updateOrder(anyLong(), eq(100L), eq(9L), anyInt(), eq(7L))).thenReturn(1);
 
         ReorderRequest req = new ReorderRequest();
         req.setStepIds(List.of(2L, 1L));
         service.reorderSteps(9L, req, 100L, 7L);
 
-        verify(stepDao).updateOrder(2L, 100L, 1, 7L);
-        verify(stepDao).updateOrder(1L, 100L, 2, 7L);
+        verify(stepDao).updateOrder(2L, 100L, 9L, 1, 7L);
+        verify(stepDao).updateOrder(1L, 100L, 9L, 2, 7L);
     }
 
     @Test
@@ -823,11 +896,12 @@ class SdlcServiceTest {
         when(stepDao.findById(2L)).thenReturn(s2);
         when(stepDao.listBySdlc(9L)).thenReturn(List.of(s1, s3));
 
+        when(stepDao.listBySdlcForUpdate(9L, 100L)).thenReturn(List.of(s1, s2, s3));
         service.deleteStep(9L, 2L, 100L, 7L);
 
-        verify(stepDao).softDelete(2L, 100L, 7L);
-        verify(stepDao, never()).updateOrder(eq(1L), anyLong(), anyInt(), anyLong());
-        verify(stepDao).updateOrder(3L, 100L, 2, 7L);
+        verify(stepDao).softDelete(2L, 100L, 9L, -1, 7L);
+        verify(stepDao, never()).updateOrder(eq(1L), anyLong(), eq(9L), anyInt(), anyLong());
+        verify(stepDao).updateOrder(3L, 100L, 9L, 2, 7L);
     }
 
     @Test
@@ -838,10 +912,11 @@ class SdlcServiceTest {
         when(stepDao.findById(1L)).thenReturn(s1);
         when(stepDao.listBySdlc(9L)).thenReturn(List.of());
 
+        when(stepDao.listBySdlcForUpdate(9L, 100L)).thenReturn(List.of(s1));
         service.deleteStep(9L, 1L, 100L, 7L);
 
-        verify(stepDao).softDelete(1L, 100L, 7L);
-        verify(stepDao, never()).updateOrder(anyLong(), anyLong(), anyInt(), anyLong());
+        verify(stepDao).softDelete(1L, 100L, 9L, -1, 7L);
+        verify(stepDao, never()).updateOrder(anyLong(), anyLong(), eq(9L), anyInt(), anyLong());
     }
 
     @Test
@@ -934,17 +1009,17 @@ class SdlcServiceTest {
         SdlcStepDO st1 = new SdlcStepDO(); st1.setId(1L); st1.setSdlcId(9L); st1.setStepOrder(1);
         SdlcStepDO st2 = new SdlcStepDO(); st2.setId(2L); st2.setSdlcId(9L); st2.setStepOrder(2);
         when(stepDao.listBySdlc(9L)).thenReturn(List.of(st1, st2));
-        when(stepDao.updateOrder(anyLong(), eq(100L), anyInt(), eq(7L))).thenReturn(1);
+        when(stepDao.updateOrder(anyLong(), eq(100L), eq(9L), anyInt(), eq(7L))).thenReturn(1);
 
         ReorderRequest req = new ReorderRequest();
         req.setStepIds(List.of(2L, 1L));
         service.reorderSteps(9L, req, 100L, 7L);
 
         org.mockito.InOrder inOrder = inOrder(stepDao);
-        inOrder.verify(stepDao).updateOrder(2L, 100L, Integer.MIN_VALUE, 7L);
-        inOrder.verify(stepDao).updateOrder(1L, 100L, Integer.MIN_VALUE + 1, 7L);
-        inOrder.verify(stepDao).updateOrder(2L, 100L, 1, 7L);
-        inOrder.verify(stepDao).updateOrder(1L, 100L, 2, 7L);
+        inOrder.verify(stepDao).updateOrder(2L, 100L, 9L, -1, 7L);
+        inOrder.verify(stepDao).updateOrder(1L, 100L, 9L, -2, 7L);
+        inOrder.verify(stepDao).updateOrder(2L, 100L, 9L, 1, 7L);
+        inOrder.verify(stepDao).updateOrder(1L, 100L, 9L, 2, 7L);
     }
 
     @Test
@@ -1164,7 +1239,7 @@ class SdlcServiceTest {
             }
         }
         verify(sdlcDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
-        verify(stepDao, never()).deleteAllBySdlc(anyLong(), anyLong());
+        verify(stepDao, never()).deleteAllForDeletedParent(anyLong(), anyLong());
     }
 
     private static void assertBilingual(com.aliyun.autowonder.common.error.BizException error, String english) {
@@ -1192,6 +1267,17 @@ class SdlcServiceTest {
         assertBilingual(assertThrows(BizException.class, () -> service.updateStep(9L, 1L, update, 100L, 7L)),
                 "checklistJson must be an array");
         verify(stepDao, never()).insert(any()); verify(stepDao, never()).update(any());
+    }
+
+    @Test
+    void orderCapacityErrorIsBilingualAndKeepsRawDiagnostic() {
+        var error = new BizException(com.aliyun.autowonder.common.error.ErrorCode.SDLC_STEP_ORDER_EXHAUSTED);
+        assertEquals("16015", error.getCode());
+        assertEquals("No available step order remains.", com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.US));
+        assertEquals("没有可用的步骤序号。", com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.SIMPLIFIED_CHINESE));
+        assertEquals("没有可用的步骤序号。", error.getLocalizedMessage());
     }
 
 }

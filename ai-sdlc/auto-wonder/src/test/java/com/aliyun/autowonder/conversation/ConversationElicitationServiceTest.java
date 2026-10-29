@@ -33,6 +33,92 @@ class ConversationElicitationServiceTest {
     private ConversationBrowserEventPublisher browserEventPublisher;
     private ConversationElicitationService service;
 
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"accept","decline"})
+    void legacyHumanAdmissionReleasesRowLocksBeforeTransport(String action) {
+        var record=pending("human",100L);
+        when(dao.findByRequestId(1,10,"human")).thenReturn(record);
+        when(dao.settleIfPending(eq(1L),eq(10L),eq("human"),anyString(),any())).thenReturn(1);
+        var locked=new java.util.concurrent.atomic.AtomicBoolean();
+        var manager=new org.springframework.transaction.support.AbstractPlatformTransactionManager() {
+            protected Object doGetTransaction(){return new Object();}
+            protected void doBegin(Object tx,org.springframework.transaction.TransactionDefinition definition){locked.set(true);}
+            protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus status){locked.set(false);}
+            protected void doRollback(org.springframework.transaction.support.DefaultTransactionStatus status){locked.set(false);}
+        };
+        service.configureLegacyAnswerTransaction(manager);
+        org.mockito.Mockito.doAnswer(invocation->{org.junit.jupiter.api.Assertions.assertFalse(locked.get());return null;})
+                .when(transport).sendElicitationReply(any(),eq(100L),eq("human"),eq(action),any());
+        service.reply(1,10,"human",action,"{}");
+        verify(transport).sendElicitationReply(any(),eq(100L),eq("human"),eq(action),any());
+    }
+
+    @Test void failedLegacySendAfterExpiryCannotRestorePending() {
+        var record=pending("human",100L);when(dao.findByRequestId(1,10,"human")).thenReturn(record);
+        when(dao.settleIfPending(1,10,"human","ANSWERED","{}")).thenReturn(1);
+        var active=turn("IN","PROCESSING");active.setDispatchAttempt(2);
+        when(turnDao.findByConversationTurn(1L,10L,100L)).thenReturn(active);
+        org.mockito.Mockito.doAnswer(invocation->{
+            active.setSourceContext("{\"questionExpiryStop\":{\"attempt\":2,\"executorId\":9,\"requestedAt\":1}}");
+            throw new IllegalStateException("wire failed");
+        }).when(transport).sendElicitationReply(any(),eq(100L),eq("human"),eq("accept"),eq("{}"));
+        assertThrows(IllegalStateException.class,()->service.reply(1,10,"human","accept","{}"));
+        verify(dao,never()).restorePendingIfStatus(anyLong(),anyLong(),anyString(),anyString());
+    }
+
+    @Test
+    void negotiatedQuestionRecordsDeliveryIdentityFromCurrentTurn() {
+        AgentConversationTurnDO active = turn("IN", "PROCESSING");
+        active.setDispatchAttempt(3);
+        when(turnDao.findByConversationTurn(1L, 10L, 100L)).thenReturn(active);
+        service.onEvent(1, 10, 100, "acp_elicitation",
+                openedPayload("r1").replace("\"mode\":", "\"answerProtocolVersion\":1,\"mode\":"));
+        ArgumentCaptor<AgentConversationElicitationDO> saved = ArgumentCaptor.forClass(AgentConversationElicitationDO.class);
+        verify(dao).insertIfAbsent(saved.capture());
+        assertEquals(1, saved.getValue().getAnswerProtocolVersion());
+        assertEquals(3, saved.getValue().getDispatchAttempt());
+        assertEquals(9L, saved.getValue().getExecutorId());
+    }
+
+    @Test
+    void negotiatedExpiryDelegatesToSystemStopCoordinator() {
+        AgentConversationElicitationDO question = new AgentConversationElicitationDO();
+        question.setTenantId(1L);question.setConversationId(10L);question.setTurnId(100L);
+        question.setId(1L);question.setRequestId("expired");question.setAnswerProtocolVersion(1);
+        when(dao.listPendingOlderThan(any(),anyLong(),anyInt())).thenReturn(List.of(question));
+        var delivery=mock(ConversationAnswerDeliveryService.class);
+        when(delivery.expireQuestion(eq(question),any())).thenReturn(true);
+        service.setAnswerDeliveryService(delivery);
+        service.expirePending(new Date(),100);
+        verify(delivery).expireQuestion(eq(question),any());
+        verify(transport,never()).sendElicitationReply(any(),anyLong(),anyString(),anyString(),any());
+    }
+
+    @Test
+    void legacyReplyEntryCannotBypassPersistedActor() {
+        var record = new AgentConversationElicitationDO();
+        record.setTurnId(100L); record.setStatus("PENDING"); record.setRequestId("actor-card");
+        when(dao.findByRequestId(1L, 10L, "actor-card")).thenReturn(record);
+        var active = turn("IN", "PROCESSING"); active.setSubmittedUserId(70L);
+        when(turnDao.findByConversationTurn(1L, 10L, 100L)).thenReturn(active);
+        assertThrows(BizException.class, () -> service.reply(1L, 10L, "actor-card", "accept", "{}"));
+        verify(dao, never()).settleIfPending(anyLong(), anyLong(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void negotiatedCardRejectsDifferentUserBeforeDurableAnswerAndKeepsOriginalActor() {
+        var record = new AgentConversationElicitationDO();
+        record.setTurnId(100L); record.setStatus("PENDING"); record.setRequestId("actor-card"); record.setAnswerProtocolVersion(1);
+        when(dao.findByRequestId(1L, 10L, "actor-card")).thenReturn(record);
+        var active = turn("IN", "PROCESSING"); active.setSubmittedUserId(70L);
+        when(turnDao.findByConversationTurn(1L, 10L, 100L)).thenReturn(active);
+        var delivery = mock(ConversationAnswerDeliveryService.class); service.setAnswerDeliveryService(delivery);
+        assertThrows(BizException.class, () -> service.reply(1L, 10L, "actor-card", "accept", "{}", 71L));
+        verify(delivery, never()).submit(anyLong(), anyLong(), anyString(), anyString(), any());
+        service.reply(1L, 10L, "actor-card", "accept", "{}", 70L);
+        verify(delivery).submit(1L, 10L, "actor-card", "accept", "{}");
+        assertEquals(70L, active.getSubmittedUserId());
+    }
+
     @BeforeEach
     void setUp() {
         dao = mock(AgentConversationElicitationDao.class);
@@ -47,6 +133,8 @@ class ConversationElicitationServiceTest {
         when(convDao.findById(1L, 10L)).thenReturn(conversation());
         when(runtimePresence.isExecutorOnline(9L)).thenReturn(true);
         when(turnDao.findByConversationTurn(1L, 10L, 100L)).thenReturn(turn("IN", "PROCESSING"));
+        when(turnDao.findByConversationTurnForUpdate(anyLong(),anyLong(),anyLong())).thenAnswer(invocation ->
+                turnDao.findByConversationTurn(invocation.getArgument(0),invocation.getArgument(1),invocation.getArgument(2)));
     }
 
     private AgentConversationTurnDO turn(String direction, String status) {
@@ -120,6 +208,7 @@ class ConversationElicitationServiceTest {
         record.setTenantId(1L);
         record.setConversationId(10L);
         record.setTurnId(turnId);
+        record.setId(turnId);
         record.setRequestId(requestId);
         record.setMode("form");
         record.setStatus("PENDING");
@@ -561,79 +650,59 @@ class ConversationElicitationServiceTest {
         assertEquals("req-2", settled.get(0).getRequestId());
     }
 
-    /** S10：过期置 EXPIRED 并下发 decline，避免执行器永久占槽。 */
     @Test
-    void expirySettlesAndDeclines() {
-        when(dao.listPendingOlderThan(any(Date.class), anyInt()))
-                .thenReturn(List.of(pending("req-1", 100L)));
-        when(dao.settleIfPending(anyLong(), anyLong(), anyString(), anyString(), any())).thenReturn(1);
-
-        service.expirePending(new Date(), 50);
-
-        verify(dao).settleIfPending(1L, 10L, "req-1", "EXPIRED", null);
-        verify(transport).sendElicitationReply(any(AgentConversationDO.class), eq(100L),
-                eq("req-1"), eq("decline"), isNull());
-    }
-
-    /** S11：抢不到状态转移（用户刚好同时回答了）就不下发帧，避免重复答案。 */
-    @Test
-    void expirySkipsRecordsLostToConcurrentReply() {
-        when(dao.listPendingOlderThan(any(Date.class), anyInt()))
-                .thenReturn(List.of(pending("req-1", 100L)));
-        when(dao.settleIfPending(anyLong(), anyLong(), anyString(), anyString(), any())).thenReturn(0);
-
-        service.expirePending(new Date(), 50);
-
+    void legacyExpiryDelegatesToTheSameCoordinatorWithoutAnAnswer() {
+        var question = pending("req-1",100L);
+        when(dao.listPendingOlderThan(any(Date.class),anyLong(),anyInt())).thenReturn(List.of(question));
+        var delivery=mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+        service.expirePending(new Date(),50);
+        verify(delivery).expireQuestion(eq(question),any());
         verifyNoFrameSent();
     }
 
-    /**
-     * 执行器掉线或会话已删时仍必须落 EXPIRED，否则卡片永久 PENDING，
-     * 过期任务每分钟都会重新捞到它。
-     */
     @Test
-    void expiryStillSettlesWhenRuntimeIsGone() {
-        when(dao.listPendingOlderThan(any(Date.class), anyInt()))
-                .thenReturn(List.of(pending("req-1", 100L), pending("req-2", 100L)));
-        when(dao.settleIfPending(anyLong(), anyLong(), anyString(), anyString(), any())).thenReturn(1);
-        AgentConversationDO unbound = new AgentConversationDO();
-        unbound.setId(10L);
-        unbound.setTenantId(1L);
-        when(convDao.findById(1L, 10L)).thenReturn(null).thenReturn(unbound);
-
-        service.expirePending(new Date(), 50);
-
-        verify(dao).settleIfPending(1L, 10L, "req-1", "EXPIRED", null);
-        verify(dao).settleIfPending(1L, 10L, "req-2", "EXPIRED", null);
-        verifyNoFrameSent();
+    void fullPageOfUnprovableCandidatesDoesNotStarveLaterDueQuestion() {
+        var all=new java.util.ArrayList<AgentConversationElicitationDO>();
+        for(long id=1;id<=201;id++) { var q=pending("q"+id,id);q.setId(id);all.add(q); }
+        when(dao.listPendingOlderThan(any(),anyLong(),anyInt())).thenAnswer(invocation->all.stream().filter(q->q.getId()>(long)invocation.getArgument(1)).limit((int)invocation.getArgument(2)).toList());
+        var delivery=mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+        service.expirePending(new Date(),200);service.expirePending(new Date(),200);
+        verify(delivery).expireQuestion(eq(all.get(200)),any());
+        service.expirePending(new Date(),200);
+        verify(delivery,times(2)).expireQuestion(eq(all.getFirst()),any());
+        verify(dao,times(2)).listPendingOlderThan(any(),eq(0L),eq(200));
+        verify(dao).listPendingOlderThan(any(),eq(200L),eq(200));
     }
 
     @Test
     void expiryIsNoopWhenNothingStale() {
-        when(dao.listPendingOlderThan(any(Date.class), anyInt())).thenReturn(List.of());
-
-        service.expirePending(new Date(), 50);
-
-        verify(dao, never()).settleIfPending(anyLong(), anyLong(), anyString(), anyString(), any());
+        when(dao.listPendingOlderThan(any(Date.class),anyLong(),anyInt())).thenReturn(List.of());
+        service.expirePending(new Date(),50);
+        verify(dao,never()).settleIfPending(anyLong(),anyLong(),anyString(),anyString(),any());
     }
 
-    /**
-     * 过期 / 取消只发执行器帧时，执行器离线或超时后前端卡片会永远停在未解决态。
-     * 卡片进终态必须向浏览器推一条 acp_elicitation_resolved。
-     */
     @Test
-    void expiryPushesResolvedEventToBrowser() {
-        when(dao.listPendingOlderThan(any(Date.class), anyInt()))
-                .thenReturn(List.of(pending("req-1", 100L)));
-        when(dao.settleIfPending(anyLong(), anyLong(), anyString(), anyString(), any())).thenReturn(1);
+    void expiryFailureDoesNotSkipRemainingCandidates() {
+        var first=pending("first",100L); var second=pending("second",200L);
+        when(dao.listPendingOlderThan(any(),anyLong(),anyInt())).thenReturn(List.of(first,second));
+        var delivery=mock(ConversationAnswerDeliveryService.class);
+        when(delivery.expireQuestion(eq(first),any())).thenThrow(new IllegalStateException("retry later"));
+        service.setAnswerDeliveryService(delivery);
+        service.expirePending(new Date(),50);
+        verify(delivery).expireQuestion(eq(second),any()); verifyNoFrameSent();
+    }
 
-        service.expirePending(new Date(), 50);
-
-        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        verify(browserEventPublisher).publishServerEvent(eq(1L), eq(10L), eq(100L),
-                eq("acp_elicitation_resolved"), payload.capture());
-        assertTrue(payload.getValue().contains("\"requestId\":\"req-1\""), payload.getValue());
-        assertTrue(payload.getValue().contains("\"action\":\"decline\""), payload.getValue());
+    @Test
+    void expiryPushesTruthfulStatusToBrowserWithoutRuntimeAnswer() {
+        var expired=pending("req-1",100L); expired.setStatus("EXPIRED");
+        service.notifySystemStopped(List.of(expired));
+        ArgumentCaptor<String> payload=ArgumentCaptor.forClass(String.class);
+        verify(browserEventPublisher).publishCommittedServerEvent(eq(1L),eq(10L),eq(100L),eq("acp_elicitation_resolved"),payload.capture());
+        assertTrue(payload.getValue().contains("\"status\":\"EXPIRED\""));
+        assertTrue(payload.getValue().contains("\"action\":\"cancel\""));
+        verifyNoFrameSent();
     }
 
     @Test

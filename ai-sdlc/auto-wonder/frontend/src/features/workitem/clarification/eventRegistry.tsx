@@ -8,8 +8,14 @@ import { CLARIFICATION_THEME } from './theme';
 import { PlanCard } from './cards/PlanCard';
 import { ToolCallNode } from './cards/ToolCallNode';
 import { ElicitationCard } from './cards/ElicitationCard';
+import type { Artifact } from '@/shared/types/workitem';
 
-export type TimelineNodeRenderer = (node: TimelineNode) => ReactNode;
+export interface TimelineArtifactContext {
+  artifacts: Artifact[];
+  onArtifactClick: (artifact: Artifact) => void;
+}
+
+export type TimelineNodeRenderer = (node: TimelineNode, artifactContext?: TimelineArtifactContext) => ReactNode;
 
 /** 折叠块的摘要行：与 master 的浅色规范一致，用 textMuted 而非自造灰。 */
 const SUMMARY_STYLE = {
@@ -27,7 +33,14 @@ const DETAIL_PRE_STYLE = {
 };
 
 export const timelineRenderers: Readonly<Record<string, TimelineNodeRenderer>> = {
-  text: (node) => (node.text ? <MarkdownView className="aw-clarify-md" content={node.text} /> : null),
+  text: (node, artifactContext) => (node.text ? (
+    <MarkdownView
+      className="aw-clarify-md"
+      content={node.text}
+      artifacts={artifactContext?.artifacts}
+      onArtifactClick={artifactContext?.onArtifactClick}
+    />
+  ) : null),
 
   thinking: (node) => (node.text ? (
     <details style={{ marginBottom: 8 }}>
@@ -78,20 +91,24 @@ export const timelineRenderers: Readonly<Record<string, TimelineNodeRenderer>> =
         schema={card.requestedSchema}
         resolved
         action={card.action}
+        expired={card.status === 'EXPIRED'}
         answers={card.content}
       />
     );
   },
 };
 
-export function renderTimelineNode(node: TimelineNode): ReactNode {
-  return <TimelineNodeView node={node} />;
+export function renderTimelineNode(node: TimelineNode, artifactContext?: TimelineArtifactContext): ReactNode {
+  return <TimelineNodeView node={node} artifactContext={artifactContext} />;
 }
 
-function TimelineNodeView({ node }: { node: TimelineNode }) {
+function TimelineNodeView({ node, artifactContext }: {
+  node: TimelineNode;
+  artifactContext?: TimelineArtifactContext;
+}) {
   useTranslation('workitem');
   const renderer = timelineRenderers[node.kind] ?? renderUnknownNode;
-  return renderer(node);
+  return renderer(node, artifactContext);
 }
 
 function renderUnknownNode(node: TimelineNode): ReactNode {

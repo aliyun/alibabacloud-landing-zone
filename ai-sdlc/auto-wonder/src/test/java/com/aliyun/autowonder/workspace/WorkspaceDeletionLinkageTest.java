@@ -9,6 +9,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 import java.util.Set;
@@ -28,6 +30,7 @@ class WorkspaceDeletionLinkageTest {
     private ScheduledTaskDao scheduledTaskDao;
     private DispatchDao dispatchDao;
     private DispatchPauseService dispatchPauseService;
+    private JdbcTemplate jdbc;
     private WorkspaceDeletionLinkage linkage;
 
     @BeforeEach
@@ -35,7 +38,8 @@ class WorkspaceDeletionLinkageTest {
         scheduledTaskDao = mock(ScheduledTaskDao.class);
         dispatchDao = mock(DispatchDao.class);
         dispatchPauseService = mock(DispatchPauseService.class);
-        linkage = new WorkspaceDeletionLinkage(scheduledTaskDao, dispatchDao, dispatchPauseService);
+        jdbc = mock(JdbcTemplate.class);
+        linkage = new WorkspaceDeletionLinkage(scheduledTaskDao, dispatchDao, dispatchPauseService, jdbc);
         // stopInFlightDispatches iterates the result directly, so the default has to be an empty
         // list rather than the null a bare mock returns.
         when(dispatchDao.listInFlightByTenant(anyLong(), anyCollection(), anyInt()))
@@ -66,6 +70,50 @@ class WorkspaceDeletionLinkageTest {
         when(scheduledTaskDao.pauseActiveByWorkspace(WORKSPACE_ID, OPERATOR_ID)).thenReturn(0);
 
         assertEquals(0, linkage.pauseScheduledTasks(WORKSPACE_ID, OPERATOR_ID));
+    }
+
+    @Test
+    void disablingSharedBindingsStopsBothPlatformsForThisWorkspaceOnly() {
+        // any(Object.class) keeps this bound to update(String, Object...) instead of the
+        // update(String, Object[], int[]) overload the untyped any() would infer.
+        when(jdbc.update(anyString(), any(Object.class), any(Object.class)))
+                .thenReturn(2).thenReturn(1);
+
+        assertEquals(3, linkage.disableSharedBindings(WORKSPACE_ID, OPERATOR_ID));
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc, times(2)).update(sql.capture(), any(Object.class), any(Object.class));
+        String feishu = sql.getAllValues().get(0);
+        String dingtalk = sql.getAllValues().get(1);
+        // Only platform SHARED bots are switched off; a LEGACY binding owns its own credentials
+        // and must stay untouched so an operator can still decide about it explicitly.
+        assertTrue(feishu.contains("UPDATE feishu_robot_binding"));
+        assertTrue(feishu.contains("binding_mode='SHARED'"));
+        assertTrue(feishu.contains("status<>'DISABLED'"));
+        // A logically deleted dingtalk row would otherwise be revived by a later restore.
+        assertTrue(dingtalk.contains("UPDATE dingtalk_robot_binding"));
+        assertTrue(dingtalk.contains("binding_mode='SHARED'"));
+        assertTrue(dingtalk.contains("is_deleted=0"));
+        assertFalse(feishu.contains("dingtalk_robot_binding"));
+    }
+
+    @Test
+    void disablingSharedBindingsScopesEveryStatementToTheDeletedWorkspace() {
+        when(jdbc.update(anyString(), any(Object.class), any(Object.class))).thenReturn(1, 1);
+
+        linkage.disableSharedBindings(WORKSPACE_ID, OPERATOR_ID);
+
+        ArgumentCaptor<Object> params = ArgumentCaptor.forClass(Object.class);
+        verify(jdbc).update(contains("feishu_robot_binding"), params.capture(), params.capture());
+        assertEquals(List.of(OPERATOR_ID, WORKSPACE_ID), params.getAllValues());
+        verify(jdbc).update(contains("dingtalk_robot_binding"), eq(OPERATOR_ID), eq(WORKSPACE_ID));
+    }
+
+    @Test
+    void disablingSharedBindingsReportsZeroWhenNoSharedBotIsEnabled() {
+        when(jdbc.update(anyString(), any(Object.class), any(Object.class))).thenReturn(0);
+
+        assertEquals(0, linkage.disableSharedBindings(WORKSPACE_ID, OPERATOR_ID));
     }
 
     @Test

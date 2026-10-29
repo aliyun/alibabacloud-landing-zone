@@ -7,6 +7,9 @@ import lombok.Setter;
 @Setter
 public class PlatformImChannelConfigVO {
     private String provider;
+    private String purpose;
+    private long routeVersion;
+    private Integer version;
     private boolean enabled;
     private boolean selected;
     private String appKey;

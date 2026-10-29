@@ -25,9 +25,9 @@ class FeishuInboxTest {
         when(api.botOpenId(b)).thenReturn("ou_other_bot");
         var conversations = mock(AgentConversationService.class);
         var inbox = new FeishuInbox(f.jdbc, f.json, f.dao, api, conversations);
-        inbox.dispatch(b, f.event("om_group", "group", BOT_MENTION));
+        inbox.dispatch(b, f.event("om_group", "group", BOT_MENTION), null);
         verifyNoInteractions(conversations);
-        inbox.dispatch(b, f.event("om_private", "p2p", "[]"));
+        inbox.dispatch(b, f.event("om_private", "p2p", "[]"), null);
         verify(conversations).submitTurn(eq(1L), eq(7L), eq("FEISHU"), anyString(), anyString(), eq("FEISHU:" + b.getId() + ":om_private"), anyString());
     }
     @Test void retriesFailuresAndRecoversExpiredProcessingLease() throws Exception {

@@ -162,8 +162,8 @@ public class ProjectBackupService {
         manifest.put("rowCounts", snapshot.counts());
         manifest.put("skillPackages", packages);
         manifest.put("excluded", List.of("workitems", "execution records", "conversations", "reviews", "audit and usage records", "access tokens", "plaintext secrets"));
-        manifest.put("credentials", "Secret setting values and callback tokens are omitted; credential_ref values require the original credential store or manual rebinding. Free-text configuration is preserved as authored.");
-        manifest.put("restoreNotes", "Configuration export only. IDs and references are preserved. User IDs refer to existing accounts. Shared squad templates are included. Repository source code and external URL resources are not copied. Scheduled tasks must be restored disabled.");
+        manifest.put("credentials", "Secret setting values and callback tokens are omitted; credential_ref values require the original credential store or manual rebinding. Shared group-chat bindings export only non-secret association columns: platform GROUP_CHAT credentials are never included. Free-text configuration is preserved as authored.");
+        manifest.put("restoreNotes", "Configuration export only. IDs and references are preserved. User IDs refer to existing accounts. Shared squad templates are included. Repository source code and external URL resources are not copied. Scheduled tasks must be restored disabled. Shared group-chat bindings are not portable across environments: platform_config_id is environment-local and must be re-selected for the target environment's platform group-chat configuration after restore. LEGACY bot bindings keep their standalone exports unchanged.");
         Map<String, String> checksums = new LinkedHashMap<>();
         for (var file : files.entrySet()) checksums.put(file.getKey(), sha256(file.getValue()));
         manifest.put("sha256", checksums);

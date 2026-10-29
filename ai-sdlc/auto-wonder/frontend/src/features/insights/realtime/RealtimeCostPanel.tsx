@@ -1,8 +1,10 @@
 import { useTranslation } from 'react-i18next';
 import { CloseOutlined, DollarOutlined } from '@ant-design/icons';
 import { Alert, Segmented, Select, Spin } from 'antd';
-import { CreditsCostCard } from '../components/CreditsCostCard';
-import type { InsightMetrics, InsightWorker, TimeRange } from '../types';
+import { CostStatsCard } from '../components/CostStatsCard';
+import { InsightsCostComposition } from '../components/InsightsCostComposition';
+import type { CostComposition, CostKpi } from './api';
+import type { InsightWorker, TimeRange } from '../types';
 
 const ALL_WORKERS = 0;
 
@@ -12,7 +14,8 @@ export interface RealtimeCostPanelProps {
   timeRange: TimeRange;
   onTimeRangeChange: (value: TimeRange) => void;
   workers: InsightWorker[];
-  metrics: InsightMetrics | undefined;
+  cost: CostKpi | undefined;
+  composition: CostComposition | null;
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
@@ -20,13 +23,15 @@ export interface RealtimeCostPanelProps {
 
 // 成本区域的取数范围只作用于自身的数字员工/日期筛选，加载与失败都局部化，
 // 不参与实时看板的自动刷新，也不阻塞其余实时模块。
+// 统计块随「员工 × 日期」刷新；来源构成只随日期刷新，切员工时保留原数据并由锁定 chip 明示口径。
 export default function RealtimeCostPanel({
   workerId,
   onWorkerChange,
   timeRange,
   onTimeRangeChange,
   workers,
-  metrics,
+  cost,
+  composition,
   isLoading,
   isError,
   error,
@@ -79,15 +84,9 @@ export default function RealtimeCostPanel({
           />
         </div>
       </div>
-      <p className="insight-panel-note">
-        <span>{t('cost.notePrefix')}</span>
-        <b>{t('cost.noteScope')}</b>
-        <span className="insight-dot-sep" aria-hidden="true" />
-        <span>{t('cost.noteDetail')}</span>
-      </p>
 
       <div className="insight-panel-body">
-        {isLoading && !metrics && (
+        {isLoading && !cost && (
           <div className="insight-panel-state">
             <Spin tip={t('cost.loading')}><div style={{ minHeight: 40 }} /></Spin>
           </div>
@@ -102,7 +101,18 @@ export default function RealtimeCostPanel({
           />
         )}
 
-        {metrics && <CreditsCostCard cost={metrics.cost} />}
+        {cost && (
+          <>
+            <CostStatsCard values={{ total: cost.total, perTask: cost.perTask, perDay: cost.perDay }} />
+            {composition && (
+              <InsightsCostComposition
+                composition={composition}
+                rangeLabel={rangeLabel}
+                locked={workerId !== undefined}
+              />
+            )}
+          </>
+        )}
       </div>
     </section>
   );

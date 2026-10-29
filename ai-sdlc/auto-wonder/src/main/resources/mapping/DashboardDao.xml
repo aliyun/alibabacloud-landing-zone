@@ -8,6 +8,31 @@
     <sql id="workitemDispatchFence" databaseId="autowonder-legacy">
     </sql>
 
+    <!-- 正式交付执行围栏：排除评论交互会话与定时任务来源，pipeline-health 查询统一引用。 -->
+    <sql id="formalDeliveryFence" databaseId="autowonder-source-aware">
+        AND d.source_type = 'WORKITEM'
+        AND COALESCE(d.resume_mode, '') NOT IN ('COMMENT_INTERACTION', 'SIDE_INTERACTION', 'CANONICAL_INTERACTION')
+    </sql>
+    <sql id="formalDeliveryFence" databaseId="autowonder-legacy">
+        AND COALESCE(d.resume_mode, '') NOT IN ('COMMENT_INTERACTION', 'SIDE_INTERACTION', 'CANONICAL_INTERACTION')
+    </sql>
+
+    <!-- 返工事件：评论返工行，或失败重试产生的新 dispatch（三段式幂等键 + attempt>=2）。
+         handoff / 恢复续跑 / 重新指派同样会放大 attempt，但幂等键前缀不同，不能计入返工。 -->
+    <sql id="reworkDispatchCondition">
+        (
+            d.resume_mode = 'COMMENT_REWORK'
+            OR (
+                d.resume_mode IS NULL
+                AND d.attempt &gt;= 2
+                AND (
+                    d.idempotency_key REGEXP '^[0-9]+:[0-9]+:[0-9]+$'
+                    OR d.idempotency_key REGEXP '^WORKITEM:[0-9]+:[0-9]+:[0-9]+$'
+                )
+            )
+        )
+    </sql>
+
     <select id="countRunningDispatches" resultType="int">
         SELECT COUNT(*) FROM dispatch
         WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND status = 'RUNNING'
@@ -83,6 +108,20 @@
     <select id="countOnlineAgents" resultType="int">
         SELECT COUNT(*) FROM agent
         WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND status = 'ONLINE'
+    </select>
+
+    <!-- 工单概况为工单级口径：今日新建含当天已取消与全部工单类型，与「今日完成」共用 CURDATE() 边界。 -->
+    <select id="countTodayCreatedWorkitems" resultType="int">
+        SELECT COUNT(*) FROM workitem
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND gmt_create >= CURDATE()
+    </select>
+
+    <!-- 正在运行按「有运行中执行」的工单去重，仅工单来源 dispatch；定时任务/评论会话不计入。 -->
+    <select id="countRunningWorkitems" resultType="int">
+        SELECT COUNT(DISTINCT d.workitem_id) FROM dispatch d
+        WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0 AND d.status = 'RUNNING'
+          AND d.workitem_id IS NOT NULL
+          <include refid="workitemDispatchFence"/>
     </select>
 
     <select id="countActiveSquads" resultType="int">
@@ -179,6 +218,41 @@
           AND status = 'SUCCEEDED' AND gmt_create >= CURDATE()
     </select>
 
+    <select id="pipelineExecutionStats" resultType="java.util.Map">
+        SELECT
+            COALESCE(SUM(CASE WHEN d.status = 'SUCCEEDED' THEN 1 ELSE 0 END), 0) AS succeeded,
+            COALESCE(SUM(CASE WHEN d.status IN ('SUCCEEDED','FAILED','TIMEOUT') THEN 1 ELSE 0 END), 0) AS total,
+            COALESCE(SUM(CASE WHEN d.status IN ('FAILED','TIMEOUT') THEN 1 ELSE 0 END), 0) AS failedOrTimeout
+        FROM dispatch d
+        WHERE d.tenant_id = #{tenantId}
+          AND d.is_deleted = 0
+          <include refid="formalDeliveryFence"/>
+          AND d.gmt_create &gt;= #{start}
+          AND d.gmt_create &lt; #{end}
+    </select>
+
+    <select id="pipelineReworkStats" resultType="java.util.Map">
+        SELECT
+            COUNT(DISTINCT d.workitem_id) AS executedWorkitems,
+            COUNT(DISTINCT CASE WHEN <include refid="reworkDispatchCondition"/> THEN d.workitem_id END) AS reworkedWorkitems,
+            COALESCE(SUM(CASE WHEN <include refid="reworkDispatchCondition"/> THEN 1 ELSE 0 END), 0) AS retryCount
+        FROM dispatch d
+        WHERE d.tenant_id = #{tenantId}
+          AND d.is_deleted = 0
+          <include refid="formalDeliveryFence"/>
+          AND d.gmt_create &gt;= #{start}
+          AND d.gmt_create &lt; #{end}
+    </select>
+
+    <select id="avgPipelineWorkitemDurationMinutes" resultType="java.lang.Integer">
+        SELECT ROUND(AVG(TIMESTAMPDIFF(MINUTE, successful_workitem.gmt_create, successful_workitem.success_at)))
+        FROM (
+            <include refid="endToEndSuccessfulWorkitems"/>
+        ) successful_workitem
+        WHERE successful_workitem.success_at &gt;= #{start}
+          AND successful_workitem.success_at &lt; #{end}
+    </select>
+
     <select id="listRunningFeed" resultType="com.aliyun.autowonder.dashboard.dto.RunningTaskVO">
         SELECT
             d.id AS dispatchId,
@@ -241,23 +315,32 @@
         ORDER BY successful_workitem.success_at DESC
     </select>
 
-    <select id="listRunningWorkitems" resultType="com.aliyun.autowonder.dashboard.dto.RunningTaskVO">
+    <!-- 明细与卡片同口径：每个工单一行，代表行取该工单最近一条运行中 dispatch。 -->
+    <select id="listRunningWorkitems" resultType="com.aliyun.autowonder.dashboard.dto.RunningWorkitemVO">
         SELECT
-            d.id AS dispatchId,
-            d.agent_id AS agentId,
+            t.workitemId AS workitemId,
+            w.title AS title,
             a.name AS agentName,
-            d.workitem_id AS workitemId,
-            w.title AS workitemTitle,
             st.name AS stepName,
-            TIMESTAMPDIFF(MINUTE, d.gmt_modified, NOW()) AS runningMinutes
-        FROM dispatch d
-        LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
-        LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
-        LEFT JOIN sdlc_step st ON st.id = d.sdlc_step_id
-        WHERE d.tenant_id = #{tenantId}
-          <include refid="workitemDispatchFence"/>
-          AND d.is_deleted = 0 AND d.status = 'RUNNING'
-        ORDER BY d.gmt_modified ASC
+            t.runningMinutes AS runningMinutes,
+            t.runningDispatchCount AS runningDispatchCount
+        FROM (
+            SELECT d.workitem_id AS workitemId,
+                   COUNT(*) AS runningDispatchCount,
+                   MAX(d.id) AS latestDispatchId,
+                   MAX(TIMESTAMPDIFF(MINUTE, d.gmt_modified, NOW())) AS runningMinutes
+            FROM dispatch d
+            WHERE d.tenant_id = #{tenantId}
+              AND d.is_deleted = 0 AND d.status = 'RUNNING'
+              AND d.workitem_id IS NOT NULL
+              <include refid="workitemDispatchFence"/>
+            GROUP BY d.workitem_id
+        ) t
+        LEFT JOIN dispatch d2 ON d2.id = t.latestDispatchId AND d2.tenant_id = #{tenantId}
+        LEFT JOIN agent a ON a.id = d2.agent_id AND a.tenant_id = d2.tenant_id
+        LEFT JOIN sdlc_step st ON st.id = d2.sdlc_step_id
+        LEFT JOIN workitem w ON w.id = t.workitemId AND w.tenant_id = #{tenantId}
+        ORDER BY t.runningMinutes DESC, t.workitemId
     </select>
 
     <select id="listAgentRunning" resultType="com.aliyun.autowonder.dashboard.dto.RunningTaskVO">

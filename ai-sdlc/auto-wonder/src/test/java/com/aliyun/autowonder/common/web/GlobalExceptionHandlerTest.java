@@ -7,8 +7,13 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.im.ImIdentityConflictException;
+import com.aliyun.autowonder.im.ImIdentityConflictReason;
+import com.aliyun.autowonder.im.dto.ImIdentityConflictView;
 import com.aliyun.autowonder.workitem.WorkitemInOtherWorkspaceException;
 import com.aliyun.autowonder.workitem.dto.WorkitemOwningWorkspaceVO;
+import com.aliyun.autowonder.workspace.WorkspaceService;
+import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import javax.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.AfterEach;
@@ -180,6 +185,50 @@ class GlobalExceptionHandlerTest {
         assertFalse(response.getBody().isSuccess());
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), response.getBody().getCode());
         assertEquals("appKey 参数不合法", response.getBody().getMessage());
+    }
+
+    @Test
+    void legacyOccupiedConflictListsOnlyVisibleWorkspacesAndFlagsRestricted() {
+        WorkspaceService workspaceService = mock(WorkspaceService.class);
+        AutoWonderContext.get().setUserId(100L);
+        WorkspaceVO visible = new WorkspaceVO();
+        visible.setId(7L);
+        visible.setName("项目A");
+        when(workspaceService.listByUserWithAccess(100L)).thenReturn(java.util.List.of(visible));
+        GlobalExceptionHandler structured = new GlobalExceptionHandler(workspaceService);
+
+        ResponseEntity<Result<ImIdentityConflictView>> response = structured
+                .handleImIdentityConflict(new ImIdentityConflictException(
+                        ImIdentityConflictReason.LEGACY_BINDING_OCCUPIED,
+                        java.util.List.of(7L, 8L, 7L)));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertFalse(response.getBody().isSuccess());
+        assertEquals(ErrorCode.CONFLICT.getCode(), response.getBody().getCode());
+        ImIdentityConflictView data = response.getBody().getData();
+        assertEquals("LEGACY_BINDING_OCCUPIED", data.getReason());
+        assertEquals(1, data.getWorkspaces().size());
+        assertEquals(7L, data.getWorkspaces().get(0).getWorkspaceId());
+        assertEquals("项目A", data.getWorkspaces().get(0).getWorkspaceName());
+        assertTrue(data.isRestricted());
+    }
+
+    @Test
+    void notifyIdentityConflictCarriesReasonWithoutWorkspaceDetails() {
+        GlobalExceptionHandler structured = new GlobalExceptionHandler(mock(WorkspaceService.class));
+
+        ResponseEntity<Result<ImIdentityConflictView>> response = structured
+                .handleImIdentityConflict(new ImIdentityConflictException(
+                        ImIdentityConflictReason.NOTIFY_GROUP_IDENTITY_CONFLICT,
+                        java.util.List.of(9L)));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertNotNull(response.getBody());
+        ImIdentityConflictView data = response.getBody().getData();
+        assertEquals("NOTIFY_GROUP_IDENTITY_CONFLICT", data.getReason());
+        assertTrue(data.getWorkspaces().isEmpty());
+        assertFalse(data.isRestricted());
     }
 
     private void assertBizResponse(ErrorCode errorCode, HttpStatus expectedStatus) {

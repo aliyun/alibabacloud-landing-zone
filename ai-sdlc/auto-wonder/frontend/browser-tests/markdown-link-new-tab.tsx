@@ -8,7 +8,7 @@ import { WorkitemContent } from '../src/features/workitem/components/WorkitemCon
 import { UnifiedTimeline } from '../src/features/workitem/components/UnifiedTimeline';
 import type { TimelineItem } from '../src/shared/types/workitem';
 
-// MarkdownView 链接渲染浏览器 fixture：真实浏览器验证五类链接的
+// MarkdownView 链接与图片浏览器 fixture：真实浏览器验证五类链接的
 // target=_blank / rel=noopener noreferrer 属性与真实点击新标签行为。
 // 无后端/DB：共享组件 + mock 工单页（评论链路与正文）。
 // 按真人指示（评论 144859）以 mock 工单数据承接 AC2/AC3 自验收：
@@ -35,6 +35,8 @@ const workitemBodyMd = [
   '正文说明：[正文文档](https://example.com/body)',
   '',
   '正文裸 URL：https://example.com/body-bare',
+  '',
+  '<article><p><img src="https://workitems.example.test/v2/api/workitem/adapter/file/url?fileIdentifier=fixture%2Fone.png" alt="Namespace screenshot 1" width="1600" height="800" onerror="window.markdownImageUnsafe=true" /></p><p><img src="https://workitems.example.test/v2/api/workitem/adapter/file/url?fileIdentifier=fixture%2Ftwo.png" alt="Namespace screenshot 2" width="1600" height="800" /></p></article>',
 ].join('\n');
 
 const commentItem: TimelineItem = {
@@ -48,6 +50,8 @@ const commentItem: TimelineItem = {
     '交付完成：[MR !973](https://example.com/mr/973)',
     '',
     '部署说明：https://example.com/comment-bare',
+    '',
+    '![Comment screenshot](https://example.com/comment-image.png)',
   ].join('\n'),
   gmtCreate: new Date().toISOString(),
 };

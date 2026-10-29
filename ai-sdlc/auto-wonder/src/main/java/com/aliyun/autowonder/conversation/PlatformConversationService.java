@@ -137,6 +137,10 @@ public class PlatformConversationService {
         PlatformConversationVO vo = toVO(conv, userId);
         vo.setTurns(turns);
         vo.setPendingElicitations(pendingElicitations(tenantId, conversationId));
+        vo.setQuestionHistory(elicitationService.listQuestionHistory(tenantId, conversationId).stream()
+                    .map(ClarificationElicitationVO::fromDelivery).toList());
+        vo.setAnswerDeliveries(elicitationService.listAnswerDeliveries(tenantId, conversationId).stream()
+                .map(ClarificationElicitationVO::fromDelivery).toList());
         vo.setAvailableCommands(commandsService.snapshot(tenantId, conversationId));
         applyProcessing(vo, tenantId, conversationId);
         if (accessService.isOwner(conv, userId)) {
@@ -269,10 +273,11 @@ public class PlatformConversationService {
         AgentDO agent = requireUsableChief(tenantId, conv.getAgentId());
         Long executorId = executorRouter.selectPlatform(tenantId, conv.getAgentId(),
                 agent.getOnlineVersionId(), conv.getExecutorId());
-        if (executorId == null) {
+        if (executorId == null && !executorRouter.canQueueOnOwner(tenantId, conv.getAgentId(),
+                agent.getOnlineVersionId(), conv.getExecutorId(), true)) {
             throw new IllegalStateException("RUNTIME_OFFLINE");
         }
-        if (!executorId.equals(conv.getExecutorId())) {
+        if (executorId != null && !executorId.equals(conv.getExecutorId())) {
             convDao.updateExecutor(tenantId, conversationId, executorId);
         }
         // uk_external_msg 是 (tenant_id, external_msg_id)，幂等键必须自带会话身份：
@@ -281,13 +286,8 @@ public class PlatformConversationService {
         String externalMsgId = EXTERNAL_MESSAGE_PREFIX + conversationId + ":"
                 + (clientMessageId == null || clientMessageId.isBlank()
                         ? UUID.randomUUID().toString() : clientMessageId);
-        if (sourceContext == null) {
-            conversationService.submitTurn(tenantId, conv.getAgentId(), CHANNEL,
-                    conv.getChannelConversationId(), content, externalMsgId);
-        } else {
-            conversationService.submitTurn(tenantId, conv.getAgentId(), CHANNEL,
-                    conv.getChannelConversationId(), content, externalMsgId, sourceContext);
-        }
+        conversationService.submitTurn(tenantId, conv.getAgentId(), CHANNEL,
+                conv.getChannelConversationId(), content, externalMsgId, sourceContext, userId);
         applyAutoTitle(tenantId, conv, content);
     }
 
@@ -306,7 +306,7 @@ public class PlatformConversationService {
     public void replyElicitation(Long tenantId, Long conversationId, Long userId, String requestId,
             String action, String content) {
         accessService.requireBodyWrite(tenantId, conversationId, userId);
-        elicitationService.reply(tenantId, conversationId, requestId, action, content);
+        elicitationService.reply(tenantId, conversationId, requestId, action, content, userId);
     }
 
     /**

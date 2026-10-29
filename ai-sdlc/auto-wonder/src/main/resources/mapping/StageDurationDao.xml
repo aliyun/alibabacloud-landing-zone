@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.insights.StageDurationDao">
+    <select id="listExecutions" resultType="com.aliyun.autowonder.insights.StageDurationService$Execution">
+        SELECT d.id, d.workitem_id, d.status, d.gmt_create, d.gmt_modified,
+               w.title, a.name AS agent_name, COALESCE(entry.sdlc_id, av.sdlc_id) AS sdlc_id, s.name AS sdlc_name
+        FROM dispatch d
+        JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id AND w.is_deleted = 0
+        LEFT JOIN sdlc_step entry ON entry.id = d.sdlc_step_id AND entry.tenant_id = d.tenant_id
+        LEFT JOIN agent_version av ON av.id = d.agent_version_id AND av.tenant_id = d.tenant_id AND av.agent_id = d.agent_id
+        LEFT JOIN sdlc s ON s.id = COALESCE(entry.sdlc_id, av.sdlc_id) AND s.tenant_id = d.tenant_id
+        LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
+        WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0
+          <include refid="com.aliyun.autowonder.dashboard.DashboardDao.workitemDispatchFence"/>
+          AND d.gmt_create &gt;= #{start} AND d.gmt_create &lt; #{end}
+          <if test="squadId != null">
+              AND EXISTS (SELECT 1 FROM squad_member sm JOIN squad sq ON sq.id = sm.squad_id AND sq.tenant_id = sm.tenant_id
+                          WHERE sm.tenant_id = d.tenant_id AND sm.agent_id = d.agent_id AND sm.squad_id = #{squadId} AND sq.is_deleted = 0)
+          </if>
+          <if test="sdlcId != null">AND COALESCE(entry.sdlc_id, av.sdlc_id) = #{sdlcId}</if>
+        ORDER BY d.gmt_create DESC, d.id DESC
+        LIMIT #{limit}
+    </select>
+    <select id="listEvents" resultType="com.aliyun.autowonder.insights.StageDurationService$Event">
+        SELECT e.id, e.dispatch_id, e.step_id, e.step_key, e.step_order, e.step_name,
+               e.event_type, e.event_time, e.gmt_create, s.name AS fallback_step_name
+        FROM dispatch_runtime_event e
+        LEFT JOIN sdlc_step s ON s.id = e.step_id AND s.tenant_id = e.tenant_id
+        WHERE e.tenant_id = #{tenantId} AND e.dispatch_id IN
+        <choose>
+            <when test="dispatchIds != null and dispatchIds.size() > 0">
+                <foreach collection="dispatchIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+            </when>
+            <otherwise>(NULL)</otherwise>
+        </choose>
+          AND e.event_type IN ('step.started', 'step.completed', 'step.failed', 'step.reused', 'step.skipped', 'step.stale')
+        ORDER BY e.dispatch_id ASC, e.id ASC
+    </select>
+</mapper>

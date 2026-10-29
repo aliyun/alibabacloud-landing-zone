@@ -44,6 +44,15 @@ describe('MetricCards', () => {
     expect(screen.getByText('完成率').closest('.metric-card-kpis')).not.toHaveClass('is-centered');
   });
 
+  it('keeps the shared card variant header and sparkline on the metrics page', () => {
+    const { container } = render(<MetricCards metrics={metrics} />);
+
+    const card = screen.getByText('成本').parentElement?.parentElement;
+    expect(card).not.toBeNull();
+    expect(card!.querySelector('svg[width="96"]')).not.toBeNull();
+    expect(container.querySelectorAll('.cost-card')).toHaveLength(0);
+  });
+
   it('shows no tooltip or token detail when hovering the cost card KPIs', async () => {
     const user = userEvent.setup();
     render(<MetricCards metrics={metrics} />);

@@ -22,6 +22,7 @@ import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemEventDO;
 import com.aliyun.autowonder.workitem.WorkitemEventType;
 import com.aliyun.autowonder.workitem.WorkitemEventDao;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -79,6 +80,18 @@ public class ExternalWorkitemImportService {
             String rawJson = JSON.toJSONString(req);
             ExternalWorkitemLinkDO link = linkDao.findByExternalScope(tenantId, 0L, req.getExternalWorkitemId());
             if (link == null) {
+                ExternalWorkitemLinkDO existingInTenant = linkDao.findFirstByExternal(
+                        tenantId, sourceSystem, req.getExternalWorkitemId());
+                if (existingInTenant != null) {
+                    ExternalWorkitemImportRecordDO record = record(req, tenantId, sourceSystem,
+                            existingInTenant.getWorkitemId(), RECORD_DUPLICATE,
+                            "external workitem already linked by another binding", rawJson);
+                    recordDao.insert(record);
+                    audit(tenantId, userId, "IMPORT_DUPLICATE", existingInTenant.getWorkitemId(),
+                            sourceSystem, req.getExternalWorkitemId());
+                    return result(req, sourceSystem, existingInTenant.getWorkitemId(), record.getId(),
+                            false, false, true);
+                }
                 return createImport(req, tenantId, userId, sourceSystem, workType, rawJson);
             }
             return handleExistingImport(req, tenantId, userId, sourceSystem, rawJson, link);
@@ -121,7 +134,6 @@ public class ExternalWorkitemImportService {
         workitem.setCreatorId(userId);
         workitem.setVersion(0);
         workitemDao.insert(workitem);
-        writeEvent(tenantId, workitem.getId(), WorkitemEventType.EXTERNAL_IMPORT.code(), null, req.getExternalWorkitemId(), userId);
 
         ExternalWorkitemLinkDO newLink = new ExternalWorkitemLinkDO();
         newLink.setTenantId(tenantId);
@@ -133,7 +145,25 @@ public class ExternalWorkitemImportService {
         newLink.setWorkitemId(workitem.getId());
         newLink.setRemoteVersionHash(hash(rawJson));
         newLink.setLastSyncDirection(DIRECTION_INBOUND);
-        linkDao.insert(newLink);
+        try {
+            linkDao.insert(newLink);
+        } catch (DuplicateKeyException duplicate) {
+            // RR 下普通 SELECT 可能看不到并发事务刚提交的赢家，必须使用当前读。
+            ExternalWorkitemLinkDO winner = linkDao.findFirstByExternalForUpdate(
+                    tenantId, sourceSystem, req.getExternalWorkitemId());
+            if (winner == null) {
+                throw duplicate;
+            }
+            workitemDao.softDelete(workitem.getId(), tenantId, workitem.getVersion(), userId);
+            ExternalWorkitemImportRecordDO record = record(req, tenantId, sourceSystem, winner.getWorkitemId(),
+                    RECORD_DUPLICATE, "external workitem already linked by a concurrent import", rawJson);
+            recordDao.insert(record);
+            audit(tenantId, userId, "IMPORT_DUPLICATE", winner.getWorkitemId(), sourceSystem,
+                    req.getExternalWorkitemId());
+            return result(req, sourceSystem, winner.getWorkitemId(), record.getId(), false, false, true);
+        }
+        writeEvent(tenantId, workitem.getId(), WorkitemEventType.EXTERNAL_IMPORT.code(), null,
+                req.getExternalWorkitemId(), userId);
 
         ExternalWorkitemImportRecordDO record = record(req, tenantId, sourceSystem, workitem.getId(),
                 RECORD_CREATED, null, rawJson);

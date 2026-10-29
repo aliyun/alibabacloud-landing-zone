@@ -146,6 +146,25 @@ public class ExecutorSelector {
         return hasRemainingCapacity(executorId, false) ? executorId : null;
     }
 
+    /**
+     * Admission of a durable queued web turn on its current owner only. This is not
+     * dispatch selection: it deliberately ignores occupied slots, but preserves
+     * membership, current-session availability, inventory readiness and protocol checks.
+     * It neither reserves capacity nor changes the selection cursor or owner.
+     */
+    public boolean canQueueOnOwner(long agentId, Long executorId, String requiredFeature) {
+        if (executorId == null) return false;
+        Set<String> members = redisManager.smembers(execsKey(agentId));
+        if (members == null || !members.contains(String.valueOf(executorId))
+                || !isRuntimeAvailable(executorId)) return false;
+        var snapshot = executorRegistry.currentDispatchSnapshot(executorId);
+        if (snapshot.isEmpty() || snapshot.get().capacity() <= 0
+                || (snapshot.get().authoritativeInventory() && (!snapshot.get().inventoryReady()
+                    || snapshot.get().inventoryError() != null))) return false;
+        requireFeature(executorId, requiredFeature);
+        return true;
+    }
+
     private Long select(long agentId, Long preferredExecutorId, boolean interaction,
             String requiredFeature) {
         Set<String> members = redisManager.smembers(execsKey(agentId));
@@ -263,7 +282,7 @@ public class ExecutorSelector {
             occupied.addAll(persisted);
         }
         occupied.addAll(snapshot.runningDispatchIds());
-        return occupied.size() + snapshot.runningConversationTurnIds().size();
+        return occupied.size() + snapshot.capacityConversationTurnIds().size();
     }
 
     private int capacityLimit(int capacity, boolean interaction) {

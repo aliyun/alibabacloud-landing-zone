@@ -37,7 +37,7 @@ class DispatchLiveActivityServiceTest {
         DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
         dispatch.setExecutorId(44L);
         when(dispatchDao.findById(1L)).thenReturn(dispatch);
-        when(eventDao.listByDispatchAfterSeq(100L, 1L, 5L)).thenReturn(List.of());
+        when(eventDao.listByDispatchAfterId(100L, 1L, 5L)).thenReturn(List.of());
         when(executorRegistry.currentDispatchSnapshot(44L)).thenReturn(Optional.of(snapshot(Set.of(1L), Set.of(1L))),
                 Optional.of(snapshot(Set.of(), Set.of(1L))), Optional.empty());
         DispatchLiveActivityVO running = service.get(100L, 1L, 5L, null);
@@ -67,7 +67,7 @@ class DispatchLiveActivityServiceTest {
     void getReturnsActionsForValidDispatch() {
         DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
         when(dispatchDao.findById(1L)).thenReturn(dispatch);
-        when(eventDao.listByDispatch(100L, 1L)).thenReturn(List.of(
+        when(eventDao.listByDispatchInArrivalOrder(100L, 1L)).thenReturn(List.of(
                 buildEvent("step.started", 1L, "开始编码"),
                 buildEvent("bash.completed", 2L, "npm test passed")
         ));
@@ -85,7 +85,7 @@ class DispatchLiveActivityServiceTest {
     void getReturnsAwaitingRuntimeWhenNoEvents() {
         DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
         when(dispatchDao.findById(1L)).thenReturn(dispatch);
-        when(eventDao.listByDispatch(100L, 1L)).thenReturn(List.of());
+        when(eventDao.listByDispatchInArrivalOrder(100L, 1L)).thenReturn(List.of());
 
         DispatchLiveActivityVO result = service.get(100L, 1L);
         assertTrue(result.isAwaitingRuntime());
@@ -96,7 +96,7 @@ class DispatchLiveActivityServiceTest {
     void getFiltersDeniedEventTypes() {
         DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
         when(dispatchDao.findById(1L)).thenReturn(dispatch);
-        when(eventDao.listByDispatch(100L, 1L)).thenReturn(List.of(
+        when(eventDao.listByDispatchInArrivalOrder(100L, 1L)).thenReturn(List.of(
                 buildEvent("agent.message", 1L, "secret model output"),
                 buildEvent("llm.completion", 2L, "raw tokens"),
                 buildEvent("step.started", 3L, "visible action")
@@ -112,7 +112,7 @@ class DispatchLiveActivityServiceTest {
     void getWithAfterSeqReturnsOnlyNewerEvents() {
         DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
         when(dispatchDao.findById(1L)).thenReturn(dispatch);
-        when(eventDao.listByDispatchAfterSeq(100L, 1L, 1L)).thenReturn(List.of(
+        when(eventDao.listByDispatchAfterId(100L, 1L, 1L)).thenReturn(List.of(
                 buildEvent("bash.started", 2L, "new")
         ));
 
@@ -120,14 +120,14 @@ class DispatchLiveActivityServiceTest {
         assertTrue(result.isChanged());
         assertEquals(1, result.getTotalActions());
         verify(metrics).backfill();
-        verify(eventDao, never()).listByDispatch(anyLong(), anyLong());
+        verify(eventDao, never()).listByDispatchInArrivalOrder(anyLong(), anyLong());
     }
 
     @Test
     void getWithAfterSeqReturnsChangedFalseWhenNoNew() {
         DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
         when(dispatchDao.findById(1L)).thenReturn(dispatch);
-        when(eventDao.listByDispatchAfterSeq(100L, 1L, 5L)).thenReturn(List.of());
+        when(eventDao.listByDispatchAfterId(100L, 1L, 5L)).thenReturn(List.of());
 
         DispatchLiveActivityVO result = service.get(100L, 1L, 5L, null);
         assertFalse(result.isChanged());
@@ -142,7 +142,7 @@ class DispatchLiveActivityServiceTest {
         for (int i = 1; i <= 10; i++) {
             events.add(buildEvent("step.progress", (long) i, "event " + i));
         }
-        when(eventDao.listByDispatch(100L, 1L)).thenReturn(events);
+        when(eventDao.listByDispatchInArrivalOrder(100L, 1L)).thenReturn(events);
 
         DispatchLiveActivityVO result = service.get(100L, 1L, null, 3);
         assertTrue(result.isTruncated());
@@ -307,12 +307,47 @@ class DispatchLiveActivityServiceTest {
 
     private DispatchRuntimeEventDO buildEvent(String eventType, long seq, String message) {
         DispatchRuntimeEventDO event = new DispatchRuntimeEventDO();
+        event.setId(seq);
         event.setEventId("evt-" + seq);
         event.setSeq(seq);
         event.setEventType(eventType);
         event.setMessage(message);
         event.setEventTime(new Date());
         event.setStepName("编码实现");
+        return event;
+    }
+
+    @Test
+    void failoverRerunStaysVisibleInArrivalOrderAndDeltaFollowsIdCursor() {
+        // Two executor runs share one dispatch: run 1 numbers seq 500-502, then a failover
+        // re-run on another executor restarts seq at 1. Arrival id stays the display order.
+        DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
+        when(dispatchDao.findById(1L)).thenReturn(dispatch);
+        List<DispatchRuntimeEventDO> events = List.of(
+                buildEventWithIds(11L, 500L, "step.started", "run1"),
+                buildEventWithIds(12L, 501L, "bash.completed", "run1"),
+                buildEventWithIds(13L, 502L, "dispatch.executor_failover", "switching runtime"),
+                buildEventWithIds(14L, 1L, "step.started", "run2"),
+                buildEventWithIds(15L, 2L, "bash.completed", "run2")
+        );
+        when(eventDao.listByDispatchInArrivalOrder(100L, 1L)).thenReturn(events);
+
+        DispatchLiveActivityVO full = service.get(100L, 1L, null, 3);
+        assertEquals(15L, full.getLastSeq());
+        assertEquals(List.of(15L, 14L, 13L),
+                full.getActions().stream().map(DispatchLiveActivityVO.Action::getSeq).toList());
+
+        when(eventDao.listByDispatchAfterId(100L, 1L, 13L)).thenReturn(events.subList(3, 5));
+        DispatchLiveActivityVO delta = service.get(100L, 1L, 13L, null);
+        assertTrue(delta.isChanged());
+        assertEquals(List.of(15L, 14L),
+                delta.getActions().stream().map(DispatchLiveActivityVO.Action::getSeq).toList());
+    }
+
+    private DispatchRuntimeEventDO buildEventWithIds(long id, long seq, String eventType, String message) {
+        DispatchRuntimeEventDO event = buildEvent(eventType, seq, message);
+        event.setId(id);
+        event.setEventId("evt-" + id);
         return event;
     }
 

@@ -13,6 +13,7 @@ import { listSdlcTemplatesPage, createSdlcTemplate, deleteSdlcTemplate, enableSd
 import type { SdlcTemplate } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { SquadTemplateGallery } from './SquadTemplateGallery';
+import { SquadWorkflowPanel } from './workflow/SquadWorkflowPanel';
 import { SDLC_AI_ENABLED } from './featureFlags';
 import { SquadFilterBar, useSquadOptions } from '@/features/squad/SquadFilterBar';
 import { SquadTags } from '@/features/squad/SquadTags';
@@ -300,6 +301,11 @@ export function SdlcListPage() {
           key: 'gallery',
           label: t('list.gallery'),
           children: <SquadTemplateGallery />,
+        },
+        {
+          key: 'workflow',
+          label: t('workflow.tab'),
+          children: <SquadWorkflowPanel />,
         },
       ]}
     />

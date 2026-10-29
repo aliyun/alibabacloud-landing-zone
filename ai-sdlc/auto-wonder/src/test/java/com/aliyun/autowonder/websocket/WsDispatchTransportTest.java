@@ -119,6 +119,7 @@ class WsDispatchTransportTest {
         assertTrue(sent.contains("\"packageRefreshPath\":\"/api/daemon/dispatches/99/package-url\""));
         assertTrue(sent.contains("\"artifactUploadPath\":\"/api/daemon/dispatches/99/artifacts\""));
         assertTrue(sent.contains("\"checkpointUploadPath\":\"/api/daemon/dispatches/99/checkpoint\""));
+        assertTrue(sent.contains("\"checkpointRefreshPath\":\"/api/daemon/dispatches/99/checkpoint-url\""));
 		assertTrue(sent.contains("\"memorySnapshotPath\":\"/api/daemon/dispatches/99/memory/snapshot\""));
 		assertTrue(sent.contains("\"memoryChangesPath\":\"/api/daemon/dispatches/99/memory/changes\""));
         assertTrue(sent.contains("\"memoryMutationPath\":\"/api/daemon/dispatches/99/memory/mutations\""));

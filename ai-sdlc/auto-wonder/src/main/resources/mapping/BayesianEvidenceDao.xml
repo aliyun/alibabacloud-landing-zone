@@ -50,9 +50,11 @@
     </select>
 
 	<select id="listRecentCohortSamples" resultType="com.aliyun.autowonder.evolution.BayesianEvidenceDO">
-		SELECT * FROM evolution_evidence
+		SELECT JSON_OBJECT('rawMetricValue', JSON_EXTRACT(evidence_json, '$.rawMetricValue')) AS evidence_json
+		FROM evolution_evidence
 		WHERE tenant_id = #{tenantId}
 		  AND asset_type = 'SKILL_COHORT'
+		  AND asset_id = 0
 		  AND posterior_type = #{posteriorType}
 		<if test="contextKey != null">
 		  AND context_key = #{contextKey}

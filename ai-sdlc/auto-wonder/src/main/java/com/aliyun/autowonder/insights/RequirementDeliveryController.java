@@ -17,7 +17,11 @@ import java.time.LocalDate;
 /**
  * 需求交付指标（吞吐、时长、周目标完成比例）。处理时长目标复用用户级偏好接口
  * {@code /api/users/me/settings}，本控制器只读。
+ * <p>
+ * 数据洞察「需求交付」tab 已下线（工单 #56970）。接口保留兼容既有调用方，行为不再演进；
+ * 确认无调用方后可连同 Service/Dao/VO 与权限点整体删除。
  */
+@Deprecated
 @RestController
 @RequestMapping("/api/insights/requirement-delivery")
 @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看需求交付指标", actionKey = "access.action.view_requirement_delivery_metrics")

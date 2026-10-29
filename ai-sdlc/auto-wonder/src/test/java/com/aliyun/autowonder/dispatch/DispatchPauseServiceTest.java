@@ -105,7 +105,7 @@ class DispatchPauseServiceTest {
         DispatchDO pausing = dispatch(55L, DispatchStatus.PAUSING, 1);
         pausing.setExecutorId(7L);
         when(dispatchDao.findById(55L)).thenReturn(pausing);
-        when(checkpointService.matchesDurableReceipt(100L, 55L, 42L, "sha256:abc"))
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
                 .thenReturn(true);
         when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
                 isNull(), isNull(), isNull(), isNull(), isNull(), eq(1), eq(0L)))
@@ -117,11 +117,56 @@ class DispatchPauseServiceTest {
     }
 
     @Test
+    void acceptsLateDurablePauseAfterConfirmationTimeoutAndClearsFailure() {
+        DispatchDO failed = dispatch(55L, DispatchStatus.PAUSE_FAILED, 2);
+        failed.setError("PAUSE_CONFIRMATION_MISSING: timeout");
+        when(dispatchDao.findById(55L)).thenReturn(failed);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
+                .thenReturn(true);
+        when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
+                isNull(), isNull(), isNull(), isNull(), eq(""), eq(2), eq(0L)))
+                .thenReturn(1);
+
+        assertTrue(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+        verify(dispatchDao).updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
+                isNull(), isNull(), isNull(), isNull(), eq(""), eq(2), eq(0L));
+    }
+
+    @Test
+    void latePauseStillRequiresReceiptAndCannotReviveCanceledOrTerminalExecution() {
+        for (String status : java.util.List.of(DispatchStatus.PAUSE_FAILED, DispatchStatus.CANCELED,
+                DispatchStatus.SUCCEEDED, DispatchStatus.FAILED, DispatchStatus.TIMEOUT)) {
+            when(dispatchDao.findById(55L)).thenReturn(dispatch(55L, status, 2));
+            assertFalse(service.onPaused(100L, 7L, 55L, 42L, "sha256:missing"), status);
+        }
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        service.setRecovery(recovery);
+        when(dispatchDao.findById(55L)).thenReturn(dispatch(55L, DispatchStatus.PAUSE_FAILED, 2));
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(true);
+        assertFalse(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void rechecksExecutorOwnershipAfterTakingControlLock() {
+        DispatchDO original = dispatch(55L, DispatchStatus.PAUSE_FAILED, 2);
+        DispatchDO reassigned = dispatch(55L, DispatchStatus.PAUSE_FAILED, 3);
+        reassigned.setExecutorId(8L);
+        when(dispatchDao.findById(55L)).thenReturn(original, reassigned);
+
+        assertFalse(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+        verifyNoInteractions(checkpointService);
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
     void executorPauseCompletionRemainsSourceAgnostic() {
         DispatchDO scheduled = dispatch(55L, DispatchStatus.PAUSING, 1);
         scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
         when(dispatchDao.findById(55L)).thenReturn(scheduled);
-        when(checkpointService.matchesDurableReceipt(100L, 55L, 42L, "sha256:abc"))
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
                 .thenReturn(true);
         when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
                 isNull(), isNull(), isNull(), isNull(), isNull(), eq(1), eq(0L)))
@@ -134,7 +179,7 @@ class DispatchPauseServiceTest {
     void successfulCompletionBecomesPauseBoundaryWhenPauseRacesWithResult() {
         DispatchDO pausing = dispatch(55L, DispatchStatus.PAUSING, 1);
         when(dispatchDao.findById(55L)).thenReturn(pausing);
-        when(checkpointService.matchesDurableReceipt(100L, 55L, 42L, "sha256:abc"))
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
                 .thenReturn(true);
         when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
                 isNull(), isNull(), isNull(), isNull(), isNull(), eq(1), eq(0L)))
@@ -194,6 +239,132 @@ class DispatchPauseServiceTest {
         assertFalse(service.expireTimedOutPause(stale, 10_000L));
     }
 
+    @Test
+    void repeatedPauseAcknowledgementConfirmsWhenControlIsNotCancelled() {
+        DispatchDO paused = dispatch(55L, DispatchStatus.PAUSED, 2);
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        service.setRecovery(recovery);
+        when(dispatchDao.findById(55L)).thenReturn(paused);
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(false);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
+                .thenReturn(true);
+
+        assertTrue(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+
+        verify(checkpointService).confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc");
+    }
+
+    @Test
+    void repeatedPauseAcknowledgementRejectsAReassignedExecutor() {
+        DispatchDO paused = dispatch(55L, DispatchStatus.PAUSED, 2);
+        when(dispatchDao.findById(55L)).thenReturn(paused, null);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
+                .thenReturn(true);
+
+        assertFalse(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+
+        verifyNoInteractions(checkpointService);
+    }
+
+    @Test
+    void completionRejectsPauseWhenTheDurableReceiptDoesNotMatch() {
+        DispatchDO pausing = dispatch(55L, DispatchStatus.PAUSING, 1);
+        when(dispatchDao.findById(55L)).thenReturn(pausing);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:stale"))
+                .thenReturn(false);
+
+        assertEquals(DispatchPauseService.CompletionDisposition.REJECTED,
+                service.onCompletedWhilePausing(100L, 7L, 55L, 42L, "sha256:stale"));
+
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void repeatedPauseAcknowledgementConfirmsTheSameBoundaryIdempotently() {
+        DispatchDO paused = dispatch(55L, DispatchStatus.PAUSED, 2);
+        when(dispatchDao.findById(55L)).thenReturn(paused);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
+                .thenReturn(true);
+
+        assertTrue(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+
+        verify(checkpointService).confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc");
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void repeatedPauseAcknowledgementRejectsCancellationRequestedAfterPause() {
+        DispatchDO paused = dispatch(55L, DispatchStatus.PAUSED, 2);
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        service.setRecovery(recovery);
+        when(dispatchDao.findById(55L)).thenReturn(paused);
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(true);
+
+        assertFalse(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+
+        verify(recovery).lockWorkitemControl(paused);
+        verifyNoInteractions(checkpointService);
+    }
+
+    @Test
+    void repeatedPauseAcknowledgementRejectsStateChangedUnderTheControlLock() {
+        DispatchDO paused = dispatch(55L, DispatchStatus.PAUSED, 2);
+        DispatchDO canceled = dispatch(55L, DispatchStatus.CANCELED, 3);
+        when(dispatchDao.findById(55L)).thenReturn(paused, canceled);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
+                .thenReturn(true);
+
+        assertFalse(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+
+        verifyNoInteractions(checkpointService);
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void repeatedPauseAcknowledgementRejectsWhenTheDurableReceiptDoesNotMatch() {
+        DispatchDO paused = dispatch(55L, DispatchStatus.PAUSED, 2);
+        when(dispatchDao.findById(55L)).thenReturn(paused);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:stale"))
+                .thenReturn(false);
+
+        assertFalse(service.onPaused(100L, 7L, 55L, 42L, "sha256:stale"));
+    }
+
+    @Test
+    void pauseTransitionConflictMustRetryInsteadOfAcknowledging() {
+        DispatchDO pausing = dispatch(55L, DispatchStatus.PAUSING, 1);
+        when(dispatchDao.findById(55L)).thenReturn(pausing);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
+                .thenReturn(true);
+        when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
+                isNull(), isNull(), isNull(), isNull(), isNull(), eq(1), eq(0L)))
+                .thenReturn(0);
+
+        IllegalStateException conflict = assertThrows(IllegalStateException.class,
+                () -> service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
+
+        assertTrue(conflict.getMessage().contains("must retry"));
+    }
+
+    @Test
+    void completionPauseTransitionConflictMustRetryInsteadOfAcknowledging() {
+        DispatchDO pausing = dispatch(55L, DispatchStatus.PAUSING, 1);
+        when(dispatchDao.findById(55L)).thenReturn(pausing);
+        when(checkpointService.confirmPauseReceipt(100L, 7L, 55L, 42L, "sha256:abc"))
+                .thenReturn(true);
+        when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
+                isNull(), isNull(), isNull(), isNull(), isNull(), eq(1), eq(0L)))
+                .thenReturn(0);
+
+        IllegalStateException conflict = assertThrows(IllegalStateException.class,
+                () -> service.onCompletedWhilePausing(100L, 7L, 55L, 42L, "sha256:abc"));
+
+        assertTrue(conflict.getMessage().contains("must retry"));
+    }
+
     private DispatchDO dispatch(long id, String status, int version) {
         DispatchDO dispatch = new DispatchDO();
         dispatch.setId(id);
@@ -205,6 +376,160 @@ class DispatchPauseServiceTest {
         dispatch.setStatus(status);
         dispatch.setVersion(version);
         return dispatch;
+    }
+
+    @Test
+    void workitemPauseRejectsHistoricalExecutionUsingSharedPolicy() {
+        DispatchDO historical = dispatch(55L, DispatchStatus.RUNNING, 0);
+        historical.setSourceType(ExecutionSourceType.WORKITEM.name());
+        DispatchDO latest = dispatch(56L, DispatchStatus.RUNNING, 0);
+        latest.setSourceType(ExecutionSourceType.WORKITEM.name());
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        when(dispatchDao.findById(55L)).thenReturn(historical);
+        when(dispatchDao.listByWorkitem(100L, 200L)).thenReturn(java.util.List.of(historical, latest));
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(false);
+        when(recovery.closed(100L, 200L)).thenReturn(false);
+        service.setRecovery(recovery);
+        service.setPresenceManager(mock(com.aliyun.autowonder.websocket.PresenceManager.class));
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.requestPause(100L, 200L, 55L, 9L));
+
+        verify(transport, never()).pause(any());
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void workitemPauseAllowsSameWorkerWaitingReworkBarrier() {
+        DispatchDO active = dispatch(55L, DispatchStatus.RUNNING, 0);
+        active.setSourceType(ExecutionSourceType.WORKITEM.name());
+        DispatchDO rework = dispatch(56L, DispatchStatus.WAITING_FOR_PAUSE, 0);
+        rework.setSourceType(ExecutionSourceType.WORKITEM.name());
+        rework.setResultSummary("waitForDispatchId=55");
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        com.aliyun.autowonder.websocket.PresenceManager presence =
+                mock(com.aliyun.autowonder.websocket.PresenceManager.class);
+        when(dispatchDao.findById(55L)).thenReturn(active);
+        when(dispatchDao.listByWorkitem(100L, 200L)).thenReturn(java.util.List.of(active, rework));
+        when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSING),
+                isNull(), isNull(), isNull(), isNull(), isNull(), eq(0), eq(0L))).thenReturn(1);
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(false);
+        when(recovery.closed(100L, 200L)).thenReturn(false);
+        when(presence.isExecutorOnline(7L)).thenReturn(true);
+        service.setRecovery(recovery);
+        service.setPresenceManager(presence);
+
+        DispatchDO result = service.requestPause(100L, 200L, 55L, 0L);
+
+        assertEquals(DispatchStatus.PAUSING, result.getStatus());
+        verify(transport).pause(result);
+    }
+
+    @Test
+    void workitemPauseStillRejectsAWaitingReworkForAnotherExecution() {
+        DispatchDO active = dispatch(55L, DispatchStatus.RUNNING, 0);
+        active.setSourceType(ExecutionSourceType.WORKITEM.name());
+        DispatchDO rework = dispatch(56L, DispatchStatus.WAITING_FOR_PAUSE, 0);
+        rework.setSourceType(ExecutionSourceType.WORKITEM.name());
+        rework.setResultSummary("waitForDispatchId=99");
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        when(dispatchDao.findById(55L)).thenReturn(active);
+        when(dispatchDao.listByWorkitem(100L, 200L)).thenReturn(java.util.List.of(active, rework));
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(false);
+        when(recovery.closed(100L, 200L)).thenReturn(false);
+        service.setRecovery(recovery);
+        service.setPresenceManager(mock(com.aliyun.autowonder.websocket.PresenceManager.class));
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.requestPause(100L, 200L, 55L, 0L));
+        verify(transport, never()).pause(any());
+    }
+
+    @Test
+    void workitemPauseRejectsLatestRuntimeFailureWithSameRuleAsReadModel() {
+        DispatchDO running = dispatch(55L, DispatchStatus.RUNNING, 0);
+        running.setSourceType(ExecutionSourceType.WORKITEM.name());
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        DispatchRuntimeEventDao events = mock(DispatchRuntimeEventDao.class);
+        when(dispatchDao.findById(55L)).thenReturn(running);
+        when(dispatchDao.listByWorkitem(100L, 200L)).thenReturn(java.util.List.of(running));
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(false);
+        when(recovery.closed(100L, 200L)).thenReturn(false);
+        DispatchRuntimeEventDO failed = new DispatchRuntimeEventDO();
+        failed.setId(1L);
+        failed.setEventType("step.failed");
+        when(events.listByDispatchInArrivalOrder(100L, 55L)).thenReturn(java.util.List.of(failed));
+        com.aliyun.autowonder.websocket.PresenceManager presence =
+                mock(com.aliyun.autowonder.websocket.PresenceManager.class);
+        when(presence.isExecutorOnline(7L)).thenReturn(true);
+        service.setRecovery(recovery);
+        service.setRuntimeEvents(events);
+        service.setPresenceManager(presence);
+
+        com.aliyun.autowonder.common.error.BizException failure =
+                assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                        () -> service.requestPause(100L, 200L, 55L, 9L));
+        assertTrue(failure.getMessage().contains("执行已失败"));
+
+        verify(transport, never()).pause(any());
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+        verify(recovery, never()).recordControlRequest(any(), anyString(), anyString(), anyString(),
+                anyLong(), any(), anyBoolean(), anyBoolean(), any());
+    }
+
+    @Test
+    void workitemPauseAllowsWhenNewerRuntimeEventSupersedesFailure() {
+        DispatchDO running = dispatch(55L, DispatchStatus.RUNNING, 0);
+        running.setSourceType(ExecutionSourceType.WORKITEM.name());
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        DispatchRuntimeEventDao events = mock(DispatchRuntimeEventDao.class);
+        when(dispatchDao.findById(55L)).thenReturn(running);
+        when(dispatchDao.listByWorkitem(100L, 200L)).thenReturn(java.util.List.of(running));
+        when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSING),
+                isNull(), isNull(), isNull(), isNull(), isNull(), eq(0), eq(9L))).thenReturn(1);
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(false);
+        when(recovery.closed(100L, 200L)).thenReturn(false);
+        DispatchRuntimeEventDO failed = new DispatchRuntimeEventDO();
+        failed.setId(1L);
+        failed.setEventType("step.failed");
+        DispatchRuntimeEventDO recovered = new DispatchRuntimeEventDO();
+        recovered.setId(2L);
+        recovered.setEventType("step.started");
+        when(events.listByDispatchInArrivalOrder(100L, 55L)).thenReturn(java.util.List.of(failed, recovered));
+        com.aliyun.autowonder.websocket.PresenceManager presence =
+                mock(com.aliyun.autowonder.websocket.PresenceManager.class);
+        when(presence.isExecutorOnline(7L)).thenReturn(true);
+        service.setRecovery(recovery);
+        service.setRuntimeEvents(events);
+        service.setPresenceManager(presence);
+
+        DispatchDO result = service.requestPause(100L, 200L, 55L, 9L);
+
+        assertEquals(DispatchStatus.PAUSING, result.getStatus());
+        verify(transport).pause(result);
+    }
+
+    @Test
+    void workitemPauseRejectsExplicitlyOfflineExecutor() {
+        DispatchDO running = dispatch(55L, DispatchStatus.RUNNING, 0);
+        running.setSourceType(ExecutionSourceType.WORKITEM.name());
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        com.aliyun.autowonder.websocket.PresenceManager presence =
+                mock(com.aliyun.autowonder.websocket.PresenceManager.class);
+        when(dispatchDao.findById(55L)).thenReturn(running);
+        when(dispatchDao.listByWorkitem(100L, 200L)).thenReturn(java.util.List.of(running));
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(false);
+        when(recovery.closed(100L, 200L)).thenReturn(false);
+        when(presence.isExecutorOnline(7L)).thenReturn(false);
+        service.setRecovery(recovery);
+        service.setPresenceManager(presence);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.requestPause(100L, 200L, 55L, 9L));
+
+        verify(transport, never()).pause(any());
     }
 
     @Test

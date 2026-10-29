@@ -126,11 +126,15 @@ export function LiveActivityPanel({ dispatchId, enabled = true, summaryOnly = fa
 
   if (summaryOnly) {
     const action = currentAction ?? actions[actions.length - 1];
+    const failed = action?.status === 'FAILED';
+    const toolAction = action && ['COMMAND', 'MCP_CALL', 'TOOL', 'SEARCH_READ', 'FILE_EDIT', 'SKILL'].includes(action.actionType);
+    const headline = toolAction ? [ACTION_TYPE_LABELS[action.actionType], action.summaryTarget].filter(Boolean).join(' · ') : action ? liveActivitySummary(action) : null;
     return <div data-testid="live-activity-panel">
       {healthNotice}
       {action && <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
         {enabled && currentAction && <LoadingOutlined aria-hidden="true" style={{ color: 'var(--aw-accent-text)', flexShrink: 0 }} />}
-        <Text data-testid="live-activity-current" style={{ display: 'block', flex: 1, minWidth: 0 }} ellipsis={{ tooltip: liveActivitySummary(action) }}>{liveActivitySummary(action) ?? ACTION_TYPE_LABELS[action.actionType] ?? action.actionType}</Text>
+        <Text data-testid="live-activity-current" style={{ display: 'block', flex: 1, minWidth: 0 }} ellipsis={{ tooltip: liveActivitySummary(action) }}>{headline ?? ACTION_TYPE_LABELS[action.actionType] ?? action.actionType}</Text>
+        {failed && <Tag color="error">{t('delivery.failed')}</Tag>}
       </div>}
       {lastUpdatedAt && <Text type="secondary" data-testid="live-activity-updated" style={{ display: 'block', fontSize: 12 }}>{t('live.updated', { time: formatRelativeTime(lastUpdatedAt) })}</Text>}
     </div>;

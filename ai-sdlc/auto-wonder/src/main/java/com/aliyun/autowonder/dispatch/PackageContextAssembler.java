@@ -680,17 +680,29 @@ public class PackageContextAssembler {
 
     public static List<Map<String, Object>> buildCapabilities(AgentSkillDao bindingDao, SkillDao catalogDao,
                                                        long tenantId, long versionId) {
+        return buildCapabilities(bindingDao, catalogDao, tenantId, versionId, false);
+    }
+
+    /** Chief requires every workspace extension; ordinary task compatibility remains unchanged. */
+    public static List<Map<String, Object>> buildCapabilities(AgentSkillDao bindingDao, SkillDao catalogDao,
+                                                       long tenantId, long versionId, boolean requireAll) {
         List<Map<String, Object>> capabilities = new ArrayList<>();
         List<AgentSkillDO> bindings = bindingDao.listByVersion(versionId);
         if (bindings == null) {
+            if (requireAll) throw new IllegalStateException("Chief workspace capability bindings were not loaded");
             return capabilities;
         }
         for (AgentSkillDO binding : bindings) {
+            if (requireAll && (binding == null || binding.getSkillId() == null
+                    || binding.getTenantId() == null || tenantId != binding.getTenantId())) {
+                throw new IllegalStateException("Chief workspace capability binding is invalid");
+            }
             if (binding == null || binding.getSkillId() == null || tenantId != binding.getTenantId()) {
                 continue;
             }
             SkillDO capability = catalogDao.findById(binding.getSkillId());
             if (capability == null) {
+                if (requireAll) throw new IllegalStateException("Chief required workspace capability is missing: " + binding.getSkillId());
                 log.warn("skip deleted bound capability agentVersionId={} skillId={}",
                         versionId, binding.getSkillId());
                 continue;

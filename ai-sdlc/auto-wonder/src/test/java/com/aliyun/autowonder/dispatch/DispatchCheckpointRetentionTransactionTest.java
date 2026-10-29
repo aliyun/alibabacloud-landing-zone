@@ -20,6 +20,7 @@ class DispatchCheckpointRetentionTransactionTest {
         jdbc.update("INSERT INTO dispatch VALUES(55,100)");jdbc.update("INSERT INTO checkpoint VALUES(1,0)");
         var resultStore=spy(new DispatchResultStore(jdbc,new DataSourceTransactionManager(ds)));
         doNothing().when(resultStore).requireReady();
+        doNothing().when(resultStore).lockSubject(any());
         var dao=mock(DispatchCheckpointDao.class);
         var dispatchDao=mock(DispatchDao.class);
         var storage=mock(ObjectStorage.class);

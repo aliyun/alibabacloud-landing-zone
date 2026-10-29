@@ -14,7 +14,7 @@ import { WorkitemListPage } from './WorkitemListPage';
 import { WorkitemKanban } from './components/WorkitemKanban';
 import { WorkitemMeta } from './components/WorkitemMeta';
 import { AgentWorkitemList } from '@/features/agent/components/AgentWorkitemList';
-import { getPriorityMeta, STATUS_COLUMNS, UNKNOWN_PRIORITY, workTypeMap } from './constants';
+import { CANCELED_STATUS_COLUMN, getPriorityMeta, STATUS_COLUMNS, UNKNOWN_PRIORITY, workTypeMap } from './constants';
 import { groupPendingDecisionsByAssignee } from './decisionGrouping';
 import { useUpdateWorkitemContent } from './hooks';
 
@@ -175,6 +175,7 @@ it('resolves previously cached enum objects and grouping fallbacks in the curren
   expect(getPriorityMeta(999)).toBe(unknown);
   expect(column.title).toBe('New');
   expect(column.key).toBe('NEW');
+  expect(CANCELED_STATUS_COLUMN.title).toBe('Canceled');
   const groups = groupPendingDecisionsByAssignee([
     { ...item, statusCategory: 'PENDING_DECISION', assigneeRef: null, assigneeDisplayName: null, assigneeName: null },
     { ...item, id: 43, statusCategory: 'PENDING_DECISION', assigneeType: 'EXTERNAL' },
@@ -184,6 +185,7 @@ it('resolves previously cached enum objects and grouping fallbacks in the curren
   await i18n.changeLanguage('zh-CN');
   expect(requirement.label).toBe('需求');
   expect(unknown.label).toBe('未知优先级');
+  expect(CANCELED_STATUS_COLUMN.title).toBe('已取消');
 });
 
 function SaveContent() {

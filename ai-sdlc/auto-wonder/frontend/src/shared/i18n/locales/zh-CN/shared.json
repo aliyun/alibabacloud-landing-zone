@@ -22,7 +22,7 @@
       "ENVIRONMENT": "环境变量",
       "EVOLUTION": "自进化（试验功能）",
       "EXECUTOR": "执行器",
-      "INSIGHTS": "数据洞察 · 交付分析与执行审计",
+      "INSIGHTS": "数据洞察 · 交付分析",
       "INTEGRATION": "平台集成",
       "MCP": "MCP",
       "MEMORY": "记忆",
@@ -102,7 +102,9 @@
   "markdown": {
     "completed": "已完成任务",
     "todo": "待办任务",
-    "openArtifact": "打开产物 {{label}}"
+    "openArtifact": "打开产物 {{label}}",
+    "mermaidLoading": "正在渲染 Mermaid 图形…",
+    "mermaidError": "Mermaid 图形渲染失败，已回退为源码"
   },
   "notifications": "通知中心",
   "error": {

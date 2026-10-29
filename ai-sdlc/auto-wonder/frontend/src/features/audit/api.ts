@@ -4,6 +4,7 @@ export interface AuditLog {
   id: number;
   module: string;
   action: string;
+  riskLevel?: 'high' | 'medium' | 'low' | null;
   actorId: number;
   actorType?: string | null;
   actorName?: string | null;
@@ -19,6 +20,7 @@ export interface AuditLogFilters {
   size: number;
   module?: string;
   action?: string;
+  riskLevel?: string;
   actorId?: number;
   actorType?: string;
   targetType?: string;

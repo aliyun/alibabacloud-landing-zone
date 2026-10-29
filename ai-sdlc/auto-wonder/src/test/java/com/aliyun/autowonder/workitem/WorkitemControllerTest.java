@@ -59,6 +59,19 @@ class WorkitemControllerTest {
     }
 
     @Test
+    void tagOptionsReadFromCurrentWorkspace() {
+        WorkitemService service = mock(WorkitemService.class);
+        WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        when(service.listTagOptions(100L)).thenReturn(List.of("发布", "线上"));
+
+        assertEquals(List.of("发布", "线上"), controller.listTagOptions().getData());
+
+        verify(service).listTagOptions(100L);
+    }
+
+    @Test
     void transitionForwardsDragSnapshotToServiceGate() {
         WorkitemService service = mock(WorkitemService.class);
         WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
@@ -137,10 +150,46 @@ class WorkitemControllerTest {
         setContext(WorkspaceAccessLevel.READ_ONLY);
         PageResult<WorkitemVO> page = new PageResult<>(List.of(), 0L, 1, 20);
         when(service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
-                "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", 1, 20)).thenReturn(page);
+                "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", null, null, 1, 20)).thenReturn(page);
 
         assertSame(page, controller.list(null, null, null, null, null, false, null, null, null, null,
-                "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", 1, 20).getData());
+                "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", null, null, 1, 20).getData());
+    }
+
+    @Test
+    void listForwardsCreatorIdsToService() {
+        WorkitemService service = mock(WorkitemService.class);
+        WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        PageResult<WorkitemVO> page = new PageResult<>(List.of(), 0L, 1, 20);
+        List<Long> creatorIds = List.of(12L, 34L);
+        when(service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
+                null, null, creatorIds, null, 1, 20)).thenReturn(page);
+
+        assertSame(page, controller.list(null, null, null, null, null, false, null, null, null, null,
+                null, null, creatorIds, null, 1, 20).getData());
+
+        verify(service).list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
+                null, null, creatorIds, null, 1, 20);
+    }
+
+    @Test
+    void listForwardsTagConditionsToService() {
+        WorkitemService service = mock(WorkitemService.class);
+        WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        PageResult<WorkitemVO> page = new PageResult<>(List.of(), 0L, 1, 20);
+        String tagConditions = "[{\"op\":\"AND\",\"tags\":[\"前端\"]}]";
+        when(service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
+                null, null, null, tagConditions, 1, 20)).thenReturn(page);
+
+        assertSame(page, controller.list(null, null, null, null, null, false, null, null, null, null,
+                null, null, null, tagConditions, 1, 20).getData());
+
+        verify(service).list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
+                null, null, null, tagConditions, 1, 20);
     }
 
     private void setContext(WorkspaceAccessLevel accessLevel) {

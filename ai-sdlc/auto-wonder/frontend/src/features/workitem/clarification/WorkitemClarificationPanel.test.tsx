@@ -19,6 +19,7 @@ import {
 import { CLARIFICATION_THEME } from './theme';
 import { readClarifyView, writeClarifyView } from '../clarifyView';
 import { copyTextToClipboard } from '@/shared/lib/clipboard';
+import type { Artifact } from '@/shared/types/workitem';
 
 type RealtimeCallback = (event: { type: string; payload: unknown }) => void;
 const realtime = vi.hoisted(() => ({ callback: null as RealtimeCallback | null }));
@@ -42,6 +43,7 @@ type ReportedClarifyContext = {
 };
 
 type PanelTestProps = {
+  artifacts?: Artifact[];
   onAgentConfirmed?: () => void;
   fullscreen?: boolean;
   initialAgentId?: number | null;
@@ -429,6 +431,100 @@ describe('WorkitemClarificationPanel', () => {
     expect(screen.getAllByText('Agent-X').length).toBeGreaterThan(0);
     expect(screen.queryByText('你')).not.toBeInTheDocument();
     expect(screen.getByText('好的，请说说你的想法')).toBeInTheDocument();
+  });
+
+  it('opens a reported artifact from a historical clarification reply', async () => {
+    const path = 'docs-100/participation-demo.html';
+    const localPath = `/Users/caihe/autowonder_workspaces/conversations/conv_1/${path}`;
+    const conversation = {
+      ...makeConversation(1, '请生成交互 Demo'),
+      turns: [
+        { id: 10, direction: 'IN', content: '请生成交互 Demo', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:00' },
+        { id: 11, direction: 'OUT', content: `Demo 已生成：\`${path}\`，完整路径为 ${localPath}`, status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:01' },
+      ],
+    };
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [conversation] })),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversation })),
+      http.get('/api/artifacts/71/download', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: 'https://oss.example/demo.html' })),
+    );
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>Demo</html>', { status: 200 })));
+    const createObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+    const revokeObjectURL = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+    Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:demo'), configurable: true });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true });
+    renderPanel({ artifacts: [{
+      id: 71, workitemId: 100, dispatchId: 8, name: path,
+      type: 'DELIVERABLE', size: 128, gmtCreate: '2026-01-01T00:00:02',
+    }] });
+
+    const links = await screen.findAllByTestId('artifact-inline-link');
+    expect(links).toHaveLength(2);
+    fireEvent.click(links[0]);
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(await screen.findByTestId('clarification-artifact-browser')).toBeInTheDocument();
+    expect(document.querySelector('.aw-clarify-artifact-browser')).not.toBeNull();
+    expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'false');
+    expect(document.querySelector('.ant-modal')).toBeNull();
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/artifacts/71/preview', expect.any(Object)));
+    fireEvent.click(screen.getByRole('button', { name: '最大化预览' }));
+    expect(document.querySelector('.aw-clarify-artifact-browser.is-maximized')).not.toBeNull();
+    expect(screen.queryByTestId('resize-handle-horizontal')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '还原预览' }));
+    expect(document.querySelector('.aw-clarify-artifact-browser.is-maximized')).toBeNull();
+    const resizeHandle = screen.getByTestId('resize-handle-horizontal');
+    vi.spyOn(screen.getByTestId('clarification-artifact-browser'), 'getBoundingClientRect')
+      .mockReturnValue({ width: 560 } as DOMRect);
+    resizeHandle.setPointerCapture = vi.fn();
+    firePointer('pointerdown', resizeHandle, { clientX: 500 });
+    firePointer('pointermove', resizeHandle, { clientX: 460 });
+    expect(screen.getByTestId('clarification-artifact-browser')).toHaveStyle({ width: '600px' });
+    firePointer('pointerup', resizeHandle, { clientX: 460 });
+    fireEvent.click(screen.getByRole('button', { name: '关闭预览' }));
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:demo'));
+    vi.unstubAllGlobals();
+    if (createObjectURL) Object.defineProperty(URL, 'createObjectURL', createObjectURL);
+    else Reflect.deleteProperty(URL, 'createObjectURL');
+    if (revokeObjectURL) Object.defineProperty(URL, 'revokeObjectURL', revokeObjectURL);
+    else Reflect.deleteProperty(URL, 'revokeObjectURL');
+  });
+
+  it('refreshes artifact and requirement document lists when polling settles a reply', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [PROCESSING_CONVERSATION] })),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: PROCESSING_CONVERSATION })),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    render(
+      <QueryClientProvider client={client}>
+        <WorkitemClarificationPanel workitemId="100" initialConversationId={1} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('请给方案')).toBeInTheDocument();
+
+    act(() => {
+      client.setQueryData(['workitem', '100', 'clarification-conversation', 1], {
+        ...PROCESSING_CONVERSATION,
+        processingStatus: 'COMPLETED',
+        processingTurnId: null,
+      });
+    });
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['workitem', '100', 'artifacts'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['workitem', '100', 'requirement-documents'] });
+    });
   });
 
   it('distinguishes user and AI messages: bubble for user, flat for AI', async () => {

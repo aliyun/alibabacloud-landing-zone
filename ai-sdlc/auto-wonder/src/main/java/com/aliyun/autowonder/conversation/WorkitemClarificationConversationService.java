@@ -114,9 +114,16 @@ public class WorkitemClarificationConversationService {
         }
         // 仅详情接口查挂起卡片与命令快照：列表页不需要，逐会话查会白跑 N 次（快照还是 Redis 读）。
         // 两者都是辅助信息：失败降级为空并留诊断日志，不阻断已有历史返回（修复要求 3）。
-        return toVO(conv, turnVOs, processing,
+        var vo = toVO(conv, turnVOs, processing,
                 pendingElicitationsQuietly(tenantId, conversationId),
                 commandsSnapshotQuietly(tenantId, conversationId));
+        if (elicitationService != null) {
+            vo.setQuestionHistory(elicitationService.listQuestionHistory(tenantId, conversationId).stream()
+                    .map(ClarificationElicitationVO::fromDelivery).toList());
+            vo.setAnswerDeliveries(elicitationService.listAnswerDeliveries(tenantId, conversationId).stream()
+                    .map(ClarificationElicitationVO::fromDelivery).toList());
+        }
+        return vo;
     }
 
     /** 挂起卡片是辅助信息：失败降级为空列表，已有历史仍正常返回。 */
@@ -158,8 +165,13 @@ public class WorkitemClarificationConversationService {
     /** 提交问答卡片的回答。归属校验先于卡片操作，避免跨工单猜 conversationId。 */
     public void replyElicitation(Long tenantId, Long workitemId, Long conversationId,
             String requestId, String action, String content) {
+        replyElicitation(tenantId, workitemId, conversationId, requestId, action, content, null);
+    }
+
+    public void replyElicitation(Long tenantId, Long workitemId, Long conversationId,
+            String requestId, String action, String content, Long respondingUserId) {
         verifyConversationBelongsToWorkitem(tenantId, workitemId, conversationId);
-        elicitationService.reply(tenantId, conversationId, requestId, action, content);
+        elicitationService.reply(tenantId, conversationId, requestId, action, content, respondingUserId);
     }
 
     @Transactional
@@ -200,6 +212,9 @@ public class WorkitemClarificationConversationService {
     @Transactional
     public void submitTurn(Long tenantId, Long workitemId, Long conversationId, Long userId,
             String content, String clientMessageId, List<Long> attachmentIds) {
+        if (userId == null || userId <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
         AgentConversationDO conv = convDao.findById(tenantId, conversationId);
         if (conv == null) {
             throw new KeyedIllegalArgumentException("conversation.not_found", null, "conversation not found");
@@ -216,10 +231,21 @@ public class WorkitemClarificationConversationService {
         if (hasAttachments && (clientMessageId == null || clientMessageId.isBlank())) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
-        String externalMsgId = "web-clarification:" + clientMessageId;
+        String externalMsgId = "web-clarification:" + conversationId + ":"
+                + (clientMessageId == null || clientMessageId.isBlank()
+                        ? java.util.UUID.randomUUID().toString() : clientMessageId);
         AgentConversationTurnDO existing = turnDao.findByExternalMsgId(tenantId, externalMsgId);
+        if (existing == null && clientMessageId != null && !clientMessageId.isBlank()) {
+            AgentConversationTurnDO legacy = turnDao.findByExternalMsgId(
+                    tenantId, "web-clarification:" + clientMessageId);
+            if (legacy != null && conversationId.equals(legacy.getConversationId())) {
+                existing = legacy;
+            }
+        }
         if (existing != null) {
-            if (!conversationId.equals(existing.getConversationId())) {
+            if (!conversationId.equals(existing.getConversationId())
+                    || !userId.equals(existing.getSubmittedUserId())
+                    || !"IN".equals(existing.getDirection())) {
                 throw new BizException(ErrorCode.CONFLICT);
             }
             List<Long> unbound = attachmentService.verifyReplay(
@@ -231,17 +257,18 @@ public class WorkitemClarificationConversationService {
         AgentDO agent = agentDao.findById(conv.getAgentId());
         Long executorId = executorRouter.select(tenantId, conv.getAgentId(),
                 requireOnlineVersion(agent), conv.getExecutorId());
-        if (executorId == null) {
+        if (executorId == null && !executorRouter.canQueueOnOwner(tenantId, conv.getAgentId(),
+                requireOnlineVersion(agent), conv.getExecutorId(), false)) {
             throw new BizException(ErrorCode.CLARIFICATION_EXECUTOR_OFFLINE);
         }
-        if (!executorId.equals(conv.getExecutorId())) {
+        if (executorId != null && !executorId.equals(conv.getExecutorId())) {
             convDao.updateExecutor(tenantId, conversationId, executorId);
         }
         List<Long> bindableIds = attachmentService.requireBindableIds(
                 tenantId, conversationId, userId, attachmentIds);
         String normalizedContent = content == null || content.isBlank() ? "" : content;
         conversationService.submitTurn(tenantId, conv.getAgentId(), CHANNEL,
-                conv.getChannelConversationId(), normalizedContent, externalMsgId);
+                conv.getChannelConversationId(), normalizedContent, externalMsgId, null, userId);
         AgentConversationTurnDO turn = turnDao.findByExternalMsgId(tenantId, externalMsgId);
         if (turn == null) {
             throw new IllegalStateException("clarification turn was not persisted");

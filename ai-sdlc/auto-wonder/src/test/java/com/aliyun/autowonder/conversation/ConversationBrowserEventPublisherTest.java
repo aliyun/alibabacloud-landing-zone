@@ -44,6 +44,37 @@ class ConversationBrowserEventPublisherTest {
 
     /** 主题与事件名是前端订阅的契约，payload 必须是解析后的对象而不是字符串。 */
     @Test
+    void committedCardPublishesExactlyOnce() {
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            publisher.publish(1L, 10L, 20L, 2, 1L, "acp_elicitation", "{}");
+            org.mockito.Mockito.verifyNoInteractions(realtime);
+            var callbacks = org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations();
+            callbacks.forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+            assertEquals(2, capturePublished().get("dispatchAttempt"));
+            assertEquals(1, org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations().size());
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+    }
+
+    @Test
+    void terminalStatusWaitsForCommitAndRollbackDoesNotBroadcast() {
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            publisher.publishStatusEvent(1L, 10L, 20L, "completed");
+            org.mockito.Mockito.verifyNoInteractions(realtime);
+            var callbacks = org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations();
+            callbacks.forEach(c -> c.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK));
+            org.mockito.Mockito.verifyNoInteractions(realtime);
+        } finally { org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false); }
+    }
+
+    @Test
     void publishesEnvelopeOnConversationTopic() {
         publisher.publish(1L, 10L, 20L, 7L, "text", "{\"type\":\"text\",\"content\":\"你好\"}");
 

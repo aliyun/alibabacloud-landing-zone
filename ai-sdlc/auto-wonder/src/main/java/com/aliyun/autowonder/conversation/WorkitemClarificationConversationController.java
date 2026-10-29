@@ -178,7 +178,7 @@ public class WorkitemClarificationConversationController {
             @RequestBody ElicitationReplyRequest request) {
         long tenantId = currentWorkspaceId();
         service.replyElicitation(tenantId, workitemId, conversationId, requestId,
-                request.getAction(), request.getContent());
+                request.getAction(), request.getContent(), currentUserId());
         return Result.ok(null);
     }
 
@@ -190,10 +190,26 @@ public class WorkitemClarificationConversationController {
     public Result<List<AgentConversationTurnEventDO>> turnEvents(
             @PathVariable Long workitemId,
             @PathVariable Long conversationId,
-            @PathVariable Long turnId) {
+            @PathVariable Long turnId,
+            @RequestParam(required = false) Long afterId) {
         long tenantId = currentWorkspaceId();
         service.verifyConversationBelongsToWorkitem(tenantId, workitemId, conversationId);
-        return Result.ok(turnEventService.listEventsByTurn(tenantId, conversationId, turnId));
+        return Result.ok(afterId == null ? turnEventService.listEventsByTurn(tenantId, conversationId, turnId)
+                : turnEventService.listEventsByTurnPage(tenantId, conversationId, turnId, afterId, 500).rows());
+    }
+
+    public Result<List<AgentConversationTurnEventDO>> turnEvents(Long workitemId, Long conversationId, Long turnId) {
+        return turnEvents(workitemId, conversationId, turnId, null);
+    }
+
+    @GetMapping("/{conversationId}/turns/{turnId}/events/page")
+    public Result<ConversationTurnEventService.EventPage> turnEventPage(
+            @PathVariable Long workitemId, @PathVariable Long conversationId, @PathVariable Long turnId,
+            @RequestParam(defaultValue = "0") long afterId,
+            @RequestParam(defaultValue = "500") int limit) {
+        long tenantId = currentWorkspaceId();
+        service.verifyConversationBelongsToWorkitem(tenantId, workitemId, conversationId);
+        return Result.ok(turnEventService.listEventsByTurnPage(tenantId, conversationId, turnId, afterId, limit));
     }
 
     /** 打开会话时触发命令探针；幂等去重在 service 内。只读取能力、不改会话状态。 */

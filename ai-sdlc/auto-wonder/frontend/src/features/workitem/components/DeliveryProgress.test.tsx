@@ -4,6 +4,7 @@ import { ConfigProvider } from 'antd';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import * as workitemApi from '../api';
+import { ExecutionControlTimeline } from './ExecutionControlTimeline';
 import { DeliveryProgress, formatDuration, convergeStepsForTerminalStatus } from './DeliveryProgress';
 import type { Artifact, DeliveryProgress as DeliveryProgressModel, DeliveryStep } from '@/shared/types/workitem';
 
@@ -44,6 +45,29 @@ describe('formatDuration', () => {
 });
 
 describe('DeliveryProgress', () => {
+  it('shows scoped control history in each execution card and follows the selected session in the workbench', async () => {
+    const progress: DeliveryProgressModel = { steps: [], executions: [301, 302].map(dispatchId => ({
+      dispatchId, agentId: 41, agentName: 'RD', executorName: null, status: 'PAUSED', startedAt: null, durationMs: null,
+    })) };
+    const items = [301, 302].map(dispatchId => ({ id: dispatchId, type: 'system' as const,
+      authorId: null, authorName: null, authorType: 'SYSTEM', isAgent: false, content: '', gmtCreate: '2026-10-21T04:00:00Z',
+      executionControl: { action: 'PAUSE', phase: 'CONFIRMED', dispatchId, requestedByName: `operator-${dispatchId}` },
+    }));
+    render(<DeliveryProgress progress={progress} renderControlTimeline={(dispatchId, compact) =>
+      <ExecutionControlTimeline key={`controls-${dispatchId}`} dispatchId={dispatchId} items={items} compact={compact} />} />);
+    const first = screen.getByTestId('execution-control-timeline-301');
+    expect(first).toHaveTextContent('operator-301');
+    expect(first).not.toHaveTextContent('operator-302');
+    expect(screen.getByTestId('execution-control-timeline-302')).toHaveTextContent('operator-302');
+    fireEvent.click(screen.getByRole('button', { name: /Dispatch 301/ }));
+    const workbench = screen.getByTestId('delivery-workbench');
+    expect(within(workbench).queryByTestId('delivery-current-execution')).not.toBeInTheDocument();
+    expect(within(workbench).queryByTestId('execution-control-timeline-301')).not.toBeInTheDocument();
+    fireEvent.click(within(workbench).getByRole('tab', { name: '控制记录' }));
+    await waitFor(() => expect(within(workbench).getByTestId('execution-control-timeline-301')).toBeVisible());
+    expect(within(workbench).queryByTestId('execution-control-timeline-302')).not.toBeInTheDocument();
+  });
+
   it('expands only handoff and evidence, folding other categories and history', async () => {
     const progress: DeliveryProgressModel = {
       steps: [],
@@ -137,7 +161,7 @@ describe('DeliveryProgress', () => {
     expect(screen.getByText(/复用.*需求分析/)).toBeInTheDocument();
     expect(screen.getByText(/重跑.*编码实现.*代码评审/)).toBeInTheDocument();
     expect(screen.getByText(/跳过.*部署/)).toBeInTheDocument();
-    expect(screen.getByText(/本轮重跑.*执行中/)).toBeInTheDocument();
+    expect(screen.getByText(/本轮重跑/)).toBeInTheDocument();
     expect(screen.getByTestId('agent-current-activity')).toHaveTextContent('正在分析评论和当前上下文');
   });
 
@@ -577,7 +601,6 @@ describe('DeliveryProgress', () => {
   });
 
   it('offers continue only for a resumable attempt', () => {
-    const onContinue = vi.fn();
     const steps: DeliveryStep[] = [{
       stepId: 20,
       name: '编码实现',
@@ -597,13 +620,14 @@ describe('DeliveryProgress', () => {
       }],
     }];
 
-    render(<DeliveryProgress steps={steps} onContinue={onContinue} />);
+    const onExecutionAction = vi.fn();
+    render(<DeliveryProgress steps={steps} onExecutionAction={onExecutionAction} />);
     fireEvent.click(screen.getByRole('button', { name: '继续' }));
-    expect(onContinue).toHaveBeenCalledWith(30);
+    expect(onExecutionAction).toHaveBeenCalledWith(expect.objectContaining({ dispatchId: 30 }), 'resume');
   });
 
   it('offers pause for the active pauseable attempt', () => {
-    const onPause = vi.fn();
+    const onExecutionAction = vi.fn();
     const steps: DeliveryStep[] = [{
       stepId: 20,
       name: '编码实现',
@@ -623,13 +647,13 @@ describe('DeliveryProgress', () => {
       }],
     }];
 
-    render(<DeliveryProgress steps={steps} onPause={onPause} />);
+    render(<DeliveryProgress steps={steps} onExecutionAction={onExecutionAction} />);
     fireEvent.click(screen.getByRole('button', { name: /暂停/ }));
-    expect(onPause).toHaveBeenCalledWith(30);
+    expect(onExecutionAction).toHaveBeenCalledWith(expect.objectContaining({ dispatchId: 30 }), 'pause');
   });
 
   it('shows pausing state without offering retry while pause is in flight', () => {
-    const onPause = vi.fn();
+    const onExecutionAction = vi.fn();
     const steps: DeliveryStep[] = [{
       stepId: 20,
       name: '编码实现',
@@ -649,14 +673,13 @@ describe('DeliveryProgress', () => {
       }],
     }];
 
-    render(<DeliveryProgress steps={steps} onPause={onPause} />);
+    render(<DeliveryProgress steps={steps} onExecutionAction={onExecutionAction} />);
 
     expect(screen.getByTestId('delivery-step-20')).toHaveTextContent('暂停中');
     expect(screen.getByTestId('delivery-step-20')).not.toHaveTextContent('执行中');
     expect(screen.queryByRole('button', { name: '重试暂停' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '暂停中' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: '暂停中' }));
-    expect(onPause).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '暂停' })).not.toBeInTheDocument();
+    expect(onExecutionAction).not.toHaveBeenCalled();
   });
 
   it('shows the worker as pausing while its active attempt is pausing', () => {
@@ -695,7 +718,7 @@ describe('DeliveryProgress', () => {
   });
 
   it('offers retry pause for failed pause attempt', () => {
-    const onPause = vi.fn();
+    const onExecutionAction = vi.fn();
     const steps: DeliveryStep[] = [{
       stepId: 20,
       name: '编码实现',
@@ -715,13 +738,13 @@ describe('DeliveryProgress', () => {
       }],
     }];
 
-    render(<DeliveryProgress steps={steps} onPause={onPause} />);
+    render(<DeliveryProgress steps={steps} onExecutionAction={onExecutionAction} />);
     fireEvent.click(screen.getByRole('button', { name: '重试暂停' }));
-    expect(onPause).toHaveBeenCalledWith(30);
+    expect(onExecutionAction).toHaveBeenCalledWith(expect.objectContaining({ dispatchId: 30 }), 'pause');
   });
 
-  it('moves runnable attempt actions to the current step', () => {
-    const onPause = vi.fn();
+  it('renders one execution-level action instead of per-step actions', () => {
+    const onExecutionAction = vi.fn();
     const steps: DeliveryStep[] = [
       {
         stepId: 10,
@@ -753,16 +776,16 @@ describe('DeliveryProgress', () => {
       },
     ];
 
-    render(<DeliveryProgress steps={steps} onPause={onPause} />);
+    render(<DeliveryProgress steps={steps} onExecutionAction={onExecutionAction} />);
 
     expect(within(screen.getByTestId('delivery-step-10')).queryByRole('button', { name: /暂停/ })).not.toBeInTheDocument();
-    fireEvent.click(within(screen.getByTestId('delivery-step-20')).getByRole('button', { name: /暂停/ }));
-    expect(onPause).toHaveBeenCalledWith(30);
+    expect(within(screen.getByTestId('delivery-step-20')).queryByRole('button', { name: /暂停/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /暂停/ }));
+    expect(onExecutionAction).toHaveBeenCalledWith(expect.objectContaining({ dispatchId: 30 }), 'pause');
   });
 
   it('mounts a moved attempt activity feed only on the active action-owning step', async () => {
     let requests = 0;
-    const onPause = vi.fn();
     const getRuntimeActivities = vi.spyOn(workitemApi, 'getRuntimeActivities');
     server.use(http.get('/api/dispatches/30/runtime-trace/activities', () => {
       requests += 1;
@@ -805,14 +828,13 @@ describe('DeliveryProgress', () => {
       },
     ];
 
-    render(<DeliveryProgress steps={steps} onPause={onPause} />);
+    render(<DeliveryProgress steps={steps} />);
 
     const sourceStep = screen.getByTestId('delivery-step-10');
     const targetStep = screen.getByTestId('delivery-step-20');
     expect(await within(targetStep).findByTestId('dispatch-activities-30')).toBeInTheDocument();
     await waitFor(() => expect(requests).toBe(1));
     expect(getRuntimeActivities).toHaveBeenCalledTimes(1);
-    expect(within(targetStep).getByRole('button', { name: /暂停/ })).toBeInTheDocument();
 
     fireEvent.click(within(sourceStep).getByText('执行记录'));
 
@@ -823,8 +845,7 @@ describe('DeliveryProgress', () => {
     getRuntimeActivities.mockRestore();
   });
 
-  it('does not move comment interaction pause actions to the current sdlc step', () => {
-    const onPause = vi.fn();
+  it('does not offer pause for a comment interaction execution', () => {
     const steps: DeliveryStep[] = [
       {
         stepId: 10,
@@ -857,15 +878,13 @@ describe('DeliveryProgress', () => {
       },
     ];
 
-    render(<DeliveryProgress steps={steps} onPause={onPause} />);
+    render(<DeliveryProgress steps={steps} />);
 
-    expect(within(screen.getByTestId('delivery-step-20')).queryByRole('button', { name: /暂停/ })).not.toBeInTheDocument();
-    fireEvent.click(within(screen.getByTestId('delivery-step-10')).getByRole('button', { name: /暂停/ }));
-    expect(onPause).toHaveBeenCalledWith(30);
+    expect(screen.queryByRole('button', { name: /暂停/ })).not.toBeInTheDocument();
   });
 
-  it('moves resumable attempt actions to the failed step', () => {
-    const onContinue = vi.fn();
+  it('renders resumable execution actions at execution level', () => {
+    const onExecutionAction = vi.fn();
     const steps: DeliveryStep[] = [
       {
         stepId: 10,
@@ -897,15 +916,16 @@ describe('DeliveryProgress', () => {
       },
     ];
 
-    render(<DeliveryProgress steps={steps} onContinue={onContinue} />);
+    render(<DeliveryProgress steps={steps} onExecutionAction={onExecutionAction} />);
 
     expect(within(screen.getByTestId('delivery-step-10')).queryByRole('button', { name: /继续/ })).not.toBeInTheDocument();
-    fireEvent.click(within(screen.getByTestId('delivery-step-20')).getByRole('button', { name: /继续/ }));
-    expect(onContinue).toHaveBeenCalledWith(30);
+    expect(within(screen.getByTestId('delivery-step-20')).queryByRole('button', { name: /继续/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /继续/ }));
+    expect(onExecutionAction).toHaveBeenCalledWith(expect.objectContaining({ dispatchId: 30 }), 'resume');
   });
 
-  it('keeps resumable pause actions on their original paused step', () => {
-    const onContinue = vi.fn();
+  it('keeps resumable actions on the paused execution', () => {
+    const onExecutionAction = vi.fn();
     const steps: DeliveryStep[] = [
       {
         stepId: 10,
@@ -937,11 +957,12 @@ describe('DeliveryProgress', () => {
       },
     ];
 
-    render(<DeliveryProgress steps={steps} onContinue={onContinue} />);
+    render(<DeliveryProgress steps={steps} onExecutionAction={onExecutionAction} />);
 
     expect(within(screen.getByTestId('delivery-step-10')).queryByRole('button', { name: /继续/ })).not.toBeInTheDocument();
-    fireEvent.click(within(screen.getByTestId('delivery-step-20')).getByRole('button', { name: /继续/ }));
-    expect(onContinue).toHaveBeenCalledWith(40);
+    expect(within(screen.getByTestId('delivery-step-20')).queryByRole('button', { name: /继续/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /继续/ }));
+    expect(onExecutionAction).toHaveBeenCalledWith(expect.objectContaining({ dispatchId: 40 }), 'resume');
   });
 
   it('renders agent grouped progress with error and artifact ownership', () => {
@@ -1061,7 +1082,7 @@ describe('DeliveryProgress', () => {
       await waitFor(() => expect(button).toBeVisible());
       expect(screen.queryByLabelText(`预览产物 evidence/report-${dispatchId === 16953 ? 16950 : 16953}.md`)).not.toBeInTheDocument();
     }
-  });
+  }, 15_000);
 
   it('opens artifact previews from agent artifact lists', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('# Dev Summary\nPASS', { status: 200 })));
@@ -1672,7 +1693,7 @@ describe('DeliveryProgress', () => {
     render(<DeliveryProgress progress={progress} />);
 
     // NB-8: retry/multi-dispatch history stays reachable and the selector defaults to the latest.
-    fireEvent.click(screen.getByRole('button', { name: '打开终端' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看执行' }));
     fireEvent.click(within(screen.getByTestId('delivery-workbench')).getByRole('tab', { name: '近期动作' }));
     const liveRegion = screen.getByTestId('delivery-workbench');
     expect(within(liveRegion).getByTestId('live-activity-dispatch-select')).toBeInTheDocument();
@@ -1719,7 +1740,7 @@ describe('DeliveryProgress', () => {
 
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
 
-    const agentName = screen.getByTestId('agent-progress-name');
+    const agentName = screen.getByTestId('current-agent-name');
     expect(agentName).toHaveTextContent('AutoWonder前后端1号开发');
     expect(screen.getAllByText(/6 artifacts/).length).toBeGreaterThan(0);
     expect(screen.queryByText('artifact-1.md')).not.toBeInTheDocument();

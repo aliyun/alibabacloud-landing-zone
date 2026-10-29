@@ -9,9 +9,14 @@ import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.dispatch.ExecutorProtocolCompatibilityException;
 import com.aliyun.autowonder.dispatch.ExecutorProtocolFeatures;
 import com.aliyun.autowonder.dispatch.ExecutorSelector;
+import com.aliyun.autowonder.squad.workflow.SquadWorkflowChannelSink;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.Arguments;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.slf4j.MDC;
@@ -26,6 +31,129 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class AgentConversationServiceTest {
+
+    @ParameterizedTest @ValueSource(strings = {"SUCCESS", "FAILED", "CANCELED"})
+    void exactTerminalReplayIsDebugAndHasNoBusinessEffects(String status) {
+        var conv = existingConversationWithSession();
+        var turn = processingInboundTurn(77L); turn.setStatus(status); turn.setDispatchAttempt(2);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(turn);
+        var usage = mock(com.aliyun.autowonder.aiusage.AgentConversationUsageService.class);
+        var browser = mock(ConversationBrowserEventPublisher.class);
+        svc.setConversationUsageService(usage); svc.setBrowserEventPublisher(browser);
+        try (var logs = new AckLogs()) {
+            svc.acknowledgeTurn(1L, 9L, 77L, 55L, status, "ignored error", "ignored reply", "ignored session", null, 2);
+            commitTransactionSynchronizations();
+            assertTrue(logs.events.stream().anyMatch(e -> e.getLevel() == org.apache.logging.log4j.Level.DEBUG
+                    && e.getMessage().getFormattedMessage().startsWith("conversation ack ignored: already terminal inbound turn")));
+            assertFalse(logs.events.stream().anyMatch(e -> e.getLevel().isMoreSpecificThan(org.apache.logging.log4j.Level.WARN)));
+            assertFalse(logs.events.stream().anyMatch(e -> e.getMessage().getFormattedMessage().contains("ignored reply")
+                    || e.getMessage().getFormattedMessage().contains("ignored error") || e.getMessage().getFormattedMessage().contains("ignored session")));
+        }
+        verify(turnDao).findByConversationTurn(1L, 77L, 55L);
+        verify(convDao).findById(1L, 77L);
+        verifyNoMoreInteractions(turnDao, convDao);
+        verifyNoInteractions(usage, browser, transport, sinkRegistry, executorRouter, executorSelector);
+    }
+
+    static java.util.stream.Stream<Arguments> unprovenTerminalAcks() {
+        return java.util.stream.Stream.of(
+                Arguments.of("missingTurn", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("wrongTenant", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("wrongConversation", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("wrongTurn", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("wrongConvTenant", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("wrongConvId", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("nullTenant", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("nullConversation", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("nullTurn", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("out", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("wrongOwner", "SUCCESS", "SUCCESS", 2, "owner"),
+                Arguments.of("nullOwner", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("nullExecutor", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("bothNullOwners", "SUCCESS", "SUCCESS", 2, "invalid"),
+                Arguments.of("same", "SUCCESS", "SUCCESS", null, "invalid"),
+                Arguments.of("same", "SUCCESS", "SUCCESS", 0, "invalid"),
+                Arguments.of("same", "SUCCESS", "SUCCESS", -1, "invalid"),
+                Arguments.of("same", "SUCCESS", "SUCCESS", 3, "silent"),
+                Arguments.of("nullStoredAttempt", "SUCCESS", "SUCCESS", 2, "silent"),
+                Arguments.of("missingConv", "SUCCESS", "SUCCESS", 2, "silent"),
+                Arguments.of("same", "QUEUED", "QUEUED", 2, "invalid"),
+                Arguments.of("same", "UNKNOWN", "UNKNOWN", 2, "invalid"),
+                Arguments.of("same", null, null, 2, "invalid"),
+                Arguments.of("same", "SUCCESS", "FAILED", 2, "invalid"),
+                Arguments.of("same", "SUCCESS", "CANCELED", 2, "invalid"),
+                Arguments.of("same", "FAILED", "SUCCESS", 2, "invalid"),
+                Arguments.of("same", "FAILED", "CANCELED", 2, "invalid"),
+                Arguments.of("same", "CANCELED", "SUCCESS", 2, "invalid"),
+                Arguments.of("same", "CANCELED", "FAILED", 2, "invalid"),
+                Arguments.of("same", "SUCCESS", "success", 2, "invalid"),
+                Arguments.of("same", "SUCCESS", " SUCCESS ", 2, "invalid"),
+                Arguments.of("same", "SUCCESS", null, 2, "invalid"));
+    }
+
+    @ParameterizedTest @MethodSource("unprovenTerminalAcks")
+    void unprovenOrConflictingTerminalAckKeepsOriginalDiagnostic(String variant, String stored,
+            String incoming, Integer attempt, String diagnostic) {
+        var conv = existingConversationWithSession();
+        var turn = processingInboundTurn(77L); turn.setStatus(stored); turn.setDispatchAttempt(2);
+        Long tenant = 1L, cid = 77L, tid = 55L, executor = 9L;
+        switch (variant) {
+            case "wrongTenant" -> turn.setTenantId(2L);
+            case "wrongConversation" -> turn.setConversationId(88L);
+            case "wrongTurn" -> turn.setId(56L);
+            case "wrongConvTenant" -> conv.setTenantId(2L);
+            case "wrongConvId" -> conv.setId(88L);
+            case "nullTenant" -> tenant = null;
+            case "nullConversation" -> cid = null;
+            case "nullTurn" -> tid = null;
+            case "out" -> turn.setDirection("OUT");
+            case "wrongOwner" -> executor = 8L;
+            case "nullOwner" -> conv.setExecutorId(null);
+            case "nullExecutor" -> executor = null;
+            case "bothNullOwners" -> { executor = null; conv.setExecutorId(null); }
+            case "nullStoredAttempt" -> turn.setDispatchAttempt(null);
+        }
+        when(convDao.findById(nullable(Long.class), nullable(Long.class)))
+                .thenReturn("missingConv".equals(variant) ? null : conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L))
+                .thenReturn("missingTurn".equals(variant) ? null : turn);
+        try (var logs = new AckLogs()) {
+            svc.acknowledgeTurn(tenant, executor, cid, tid, incoming, null, "ignored reply", "ignored session", null, attempt);
+            commitTransactionSynchronizations();
+            var warnings = logs.events.stream().filter(e -> e.getLevel().isMoreSpecificThan(org.apache.logging.log4j.Level.WARN)).toList();
+            if ("silent".equals(diagnostic)) assertTrue(warnings.isEmpty());
+            else {
+                assertEquals(1, warnings.size());
+                assertTrue(warnings.get(0).getMessage().getFormattedMessage().startsWith("owner".equals(diagnostic)
+                        ? "conversation ack rejected: executor" : "conversation ack ignored: invalid inbound turn"));
+            }
+            assertFalse(logs.events.stream().anyMatch(e -> e.getMessage().getFormattedMessage()
+                    .startsWith("conversation ack ignored: already terminal inbound turn")));
+        }
+        // Only tenant-scoped reads are permitted; neither legacy warning nor silent paths finalize anything.
+        var methods = java.util.stream.Stream.concat(mockingDetails(turnDao).getInvocations().stream(),
+                mockingDetails(convDao).getInvocations().stream()).map(i -> i.getMethod().getName()).toList();
+        assertTrue(methods.stream().allMatch(m -> m.equals("findByConversationTurn") || m.equals("findById")), methods.toString());
+        verifyNoInteractions(transport, sinkRegistry, executorRouter, executorSelector);
+    }
+
+    private static final class AckLogs implements AutoCloseable {
+        private final org.apache.logging.log4j.core.Logger logger = (org.apache.logging.log4j.core.Logger)
+                org.apache.logging.log4j.LogManager.getLogger(AgentConversationService.class);
+        private final org.apache.logging.log4j.Level previous = logger.getLevel();
+        private final java.util.List<org.apache.logging.log4j.core.LogEvent> events = new java.util.ArrayList<>();
+        private final org.apache.logging.log4j.core.appender.AbstractAppender appender =
+                new org.apache.logging.log4j.core.appender.AbstractAppender("terminal-ack-test", null,
+                        org.apache.logging.log4j.core.layout.PatternLayout.createDefaultLayout(), false,
+                        org.apache.logging.log4j.core.config.Property.EMPTY_ARRAY) {
+                    @Override public void append(org.apache.logging.log4j.core.LogEvent event) {
+                        events.add(event.toImmutable());
+                    }
+                };
+        AckLogs() { appender.start(); logger.setLevel(org.apache.logging.log4j.Level.DEBUG); logger.addAppender(appender); }
+        public void close() { logger.removeAppender(appender); logger.setLevel(previous); appender.stop(); }
+    }
 
     private final AgentConversationDao convDao = mock(AgentConversationDao.class);
     private final AgentConversationTurnDao turnDao = mock(AgentConversationTurnDao.class);
@@ -42,6 +170,8 @@ class AgentConversationServiceTest {
 
     @BeforeEach
     void setUp() {
+        // svc 是类级单例，逐一清掉用例注入的可选协作者，避免跨用例串味。
+        svc.setConversationUsageService(null);
         TransactionSynchronizationManager.initSynchronization();
         TransactionSynchronizationManager.setActualTransactionActive(true);
         when(turnDao.acquireConversationLock(anyString(), anyInt())).thenReturn(1);
@@ -73,6 +203,110 @@ class AgentConversationServiceTest {
     }
 
     @Test
+    void authenticatedSenderIsStoredForNewAndIdleConversations() {
+        when(executorSelector.select(eq(3L), nullable(Long.class))).thenReturn(9L);
+        when(convDao.insert(any())).thenAnswer(inv -> {
+            AgentConversationDO conv = inv.getArgument(0);
+            conv.setId(77L);
+            return 1;
+        });
+        when(turnDao.insert(any())).thenAnswer(inv -> {
+            AgentConversationTurnDO turn = inv.getArgument(0);
+            turn.setId(88L);
+            return 1;
+        });
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "first", "first", null, 41L);
+        when(convDao.findByKey(1L, "DINGTALK", "conv-x", 3L))
+                .thenReturn(existingConversationWithSession());
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "next", "next", null, 42L);
+        verify(turnDao).insert(argThat(t -> "first".equals(t.getContent())
+                && Long.valueOf(41L).equals(t.getSubmittedUserId()) && "PROCESSING".equals(t.getStatus())));
+        verify(turnDao).insert(argThat(t -> "next".equals(t.getContent())
+                && Long.valueOf(42L).equals(t.getSubmittedUserId()) && "PROCESSING".equals(t.getStatus())));
+    }
+
+    @Test
+    void authenticatedQueuedTurnsKeepTheirOwnActors() {
+        var conv = existingConversationWithSession();
+        when(convDao.findByKey(1L, "DINGTALK", "conv-x", 3L)).thenReturn(conv);
+        when(turnDao.findProcessingInbound(1L, 77L)).thenReturn(processingInboundTurn(77L));
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "A", "a", null, 41L);
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "B", "b", null, 42L);
+        verify(turnDao).insert(argThat(t -> "A".equals(t.getContent()) && Long.valueOf(41).equals(t.getSubmittedUserId())));
+        verify(turnDao).insert(argThat(t -> "B".equals(t.getContent()) && Long.valueOf(42).equals(t.getSubmittedUserId())));
+    }
+
+    @Test
+    void authenticatedRetryRequiresSameActorAndConversation() {
+        var conv = existingConversationWithSession();
+        var turn = processingInboundTurn(77L);
+        turn.setSubmittedUserId(41L);
+        when(convDao.findByKey(1L, "DINGTALK", "conv-x", 3L)).thenReturn(conv);
+        when(turnDao.findByExternalMsgId(1L, "same")).thenReturn(turn);
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "A", "same", null, 41L);
+        assertThrows(BizException.class, () -> svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "B", "same", null, 42L));
+        assertThrows(BizException.class, () -> svc.submitTurn(1L, 4L, "DINGTALK", "conv-x", "A", "same", null, 41L));
+        verify(turnDao, never()).insert(any());
+    }
+
+    @Test
+    void explicitActorMustBePositiveButLegacySubmissionRemainsCompatible() {
+        assertThrows(BizException.class, () -> svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "A", "a", null, null));
+        assertThrows(BizException.class, () -> svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "A", "a", null, 0L));
+        when(turnDao.findByExternalMsgId(1L, "old")).thenReturn(processingInboundTurn(77L));
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "A", "old");
+        verify(turnDao, never()).insert(any());
+    }
+
+    @Test
+    void globalRecoveryAdvancesPastAFullSkippedBatch() {
+        var rows = java.util.stream.LongStream.rangeClosed(1, 100).mapToObj(id -> {
+            var turn = new AgentConversationTurnDO(); turn.setId(id); return turn;
+        }).toList();
+        when(turnDao.listStaleProcessingInboundAfter(any(), eq(0L), eq(100))).thenReturn(rows);
+        when(turnDao.listStaleProcessingInboundAfter(any(), eq(100L), eq(100))).thenReturn(java.util.List.of());
+        svc.recoverStaleTurns(); svc.recoverStaleTurns();
+        verify(turnDao).listStaleProcessingInboundAfter(any(), eq(100L), eq(100));
+    }
+
+    @Test
+    void queueRecoveryDispatchesOldHeadWhenCapacityReturns() {
+        var conv = existingConversationWithSession();
+        var queued = processingInboundTurn(77L); queued.setStatus("QUEUED"); queued.setContent("waiting");
+        when(turnDao.listQueuedInboundAfter(0L, 100)).thenReturn(java.util.List.of(queued));
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(queued);
+        when(executorSelector.select(3L, 9L)).thenReturn(9L);
+        when(turnDao.updateStatusIfCurrent(1L, 55L, "QUEUED", "PROCESSING", null)).thenReturn(1);
+        svc.recoverQueuedTurns();
+        commitTransactionSynchronizations();
+        verify(transport).send(eq(conv), eq(55L), eq("waiting"), any(), eq(1));
+    }
+
+    @Test
+    void newSubmissionDoesNotOvertakeAnExistingQueue() {
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findByKey(1L, "DINGTALK", "conv-x", 3L)).thenReturn(conv);
+        AgentConversationTurnDO queued = processingInboundTurn(77L);
+        queued.setId(44L); queued.setStatus("QUEUED"); queued.setContent("older");
+        when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(queued);
+        when(executorSelector.select(3L, 9L)).thenReturn(null);
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "newer", "new-msg");
+        verify(turnDao).insert(argThat(t -> "newer".equals(t.getContent()) && "QUEUED".equals(t.getStatus())));
+        verify(turnDao, never()).recordDispatchAttemptIfProcessing(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void oldAttemptCompletionCannotFinalizeCurrentAttempt() {
+        var turn = processingInboundTurn(77L); turn.setDispatchAttempt(2);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(turn);
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "old", "old-session", null, 1);
+        verify(turnDao, never()).updateInboundStatusIfProcessing(anyLong(), anyLong(), anyLong(), anyString(), any());
+        verify(turnDao, never()).insert(any());
+        verifyNoInteractions(transport);
+    }
+
+    @Test
     void currentPageContextIsInjectedForTheRuntimeWithoutRewritingSavedUserContent() {
         var conversation=existingConversationWithSession();
         conversation.setChannel(PlatformConversationChannel.CHANNEL);
@@ -98,6 +332,50 @@ class AgentConversationServiceTest {
         assertFalse(stored.getValue().getSourceContext().contains("https://oss.example"));
         assertTrue(runtime.getValue().contains(context));
         assertTrue(runtime.getValue().contains("Inspect this workitem"));
+    }
+
+    @Test
+    void chiefWithEmptyLegacyIdentityReachesOfficialCapabilityPreparation() {
+        var chief = new AgentDO();
+        chief.setId(3L);
+        chief.setKind(com.aliyun.autowonder.agent.PlatformAgentSeeder.PLATFORM_KIND);
+        chief.setOnlineVersionId(50L);
+        when(agentDao.findById(3L)).thenReturn(chief);
+        when(agentVersionDao.findById(50L)).thenReturn(new AgentVersionDO());
+        when(executorRouter.selectPlatform(1L, 3L, 50L, null)).thenReturn(9L);
+        when(convDao.insert(any())).thenAnswer(invocation -> {
+            AgentConversationDO row = invocation.getArgument(0); row.setId(77L); return 1;
+        });
+        when(turnDao.insert(any())).thenAnswer(invocation -> {
+            AgentConversationTurnDO row = invocation.getArgument(0); row.setId(88L); return 1;
+        });
+        svc.submitTurn(1L, 3L, PlatformConversationChannel.CHANNEL, "chief-empty", "hi", "empty-one");
+        commitTransactionSynchronizations();
+        // The transport must replace this with the same official snapshot as its capability package.
+        verify(transport).send(any(), eq(88L), anyString(), eq(""), any());
+    }
+
+    @Test
+    void restrictedChiefWithEmptyIdentityDoesNotUseGeneralOfficialCapabilities() {
+        var chief = new AgentDO();
+        chief.setId(3L);
+        chief.setKind(com.aliyun.autowonder.agent.PlatformAgentSeeder.PLATFORM_KIND);
+        chief.setOnlineVersionId(50L);
+        when(agentDao.findById(3L)).thenReturn(chief);
+        when(agentVersionDao.findById(50L)).thenReturn(new AgentVersionDO());
+        when(executorRouter.selectPlatform(1L, 3L, 50L, null)).thenReturn(9L);
+        assertThrows(IllegalStateException.class,
+                () -> svc.submitTurn(1L, 3L, SquadWorkflowChannelSink.CHANNEL, "empty", "hi", "empty-three"));
+        verifyNoInteractions(transport);
+    }
+
+    @Test
+    void ordinaryAgentWithEmptyIdentityStillFailsBeforeDispatch() {
+        when(agentVersionDao.findById(50L)).thenReturn(new AgentVersionDO());
+        when(executorSelector.select(eq(3L), isNull())).thenReturn(9L);
+        assertThrows(IllegalStateException.class,
+                () -> svc.submitTurn(1L, 3L, "DINGTALK", "empty", "hi", "empty-two"));
+        verifyNoInteractions(transport);
     }
 
     @Test
@@ -335,7 +613,7 @@ class AgentConversationServiceTest {
         queued.setDirection("IN");
         queued.setStatus("QUEUED");
         queued.setContent("next");
-        when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(queued);
+        when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(null, queued);
         when(turnDao.updateStatusIfCurrent(1L, 91L, "QUEUED", "PROCESSING", null))
                 .thenReturn(1);
         ConversationChannelSink sink = mock(ConversationChannelSink.class);
@@ -483,7 +761,6 @@ class AgentConversationServiceTest {
 
         svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", "sess-123");
 
-        verify(sinkRegistry, never()).find(anyString());
         verify(sink, never()).deliverReply(any(), anyString(), anyString());
         commitTransactionSynchronizations();
 
@@ -493,6 +770,98 @@ class AgentConversationServiceTest {
         InOrder afterCommitOrder = inOrder(turnDao, sinkRegistry);
         afterCommitOrder.verify(turnDao).releaseConversationLock("agent-conversation:1:77");
         afterCommitOrder.verify(sinkRegistry).find("DINGTALK");
+    }
+
+    @Test
+    void acknowledgeTurnNotifiesTheWorkflowSinkOnlyAfterCommit() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(77L);
+        conv.setTenantId(1L);
+        conv.setChannel(SquadWorkflowChannelSink.CHANNEL);
+        conv.setExecutorId(9L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+        ConversationChannelSink sink = mock(ConversationChannelSink.class);
+        when(sinkRegistry.find(SquadWorkflowChannelSink.CHANNEL)).thenReturn(sink);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", null);
+
+        verify(sink, never()).turnTerminal(any(), anyString(), any(), any());
+        verify(sink, never()).deliverReply(any(), anyString(), anyString());
+
+        commitTransactionSynchronizations();
+
+        verify(sink).turnTerminal(conv, "SUCCESS", "reply-md", null);
+        verify(sink, never()).deliverReply(any(), anyString(), anyString());
+    }
+
+    @Test
+    void acknowledgeTurnReportsAFailedWorkflowTurnWithoutAReply() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(77L);
+        conv.setTenantId(1L);
+        conv.setChannel(SquadWorkflowChannelSink.CHANNEL);
+        conv.setExecutorId(9L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "FAILED", "boom"))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+        ConversationChannelSink sink = mock(ConversationChannelSink.class);
+        when(sinkRegistry.find(SquadWorkflowChannelSink.CHANNEL)).thenReturn(sink);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "FAILED", "boom", null, null);
+        commitTransactionSynchronizations();
+
+        verify(sink).turnTerminal(conv, "FAILED", null, "boom");
+    }
+
+    @Test
+    void aFailingWorkflowTerminalNoticeDoesNotBreakTheCommittedAck() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(77L);
+        conv.setTenantId(1L);
+        conv.setChannel(SquadWorkflowChannelSink.CHANNEL);
+        conv.setExecutorId(9L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+        ConversationChannelSink sink = mock(ConversationChannelSink.class);
+        doThrow(new IllegalStateException("snapshot locked")).when(sink)
+                .turnTerminal(eq(conv), eq("SUCCESS"), eq("reply-md"), isNull());
+        when(sinkRegistry.find(SquadWorkflowChannelSink.CHANNEL)).thenReturn(sink);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", null);
+
+        assertDoesNotThrow(this::commitTransactionSynchronizations);
+        verify(sink).turnTerminal(conv, "SUCCESS", "reply-md", null);
+    }
+
+    @Test
+    void legacyChannelsNeverReceiveTurnTerminalNotifications() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(77L);
+        conv.setTenantId(1L);
+        conv.setChannel("DINGTALK");
+        conv.setExecutorId(9L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+        ConversationChannelSink sink = mock(ConversationChannelSink.class);
+        when(sinkRegistry.find("DINGTALK")).thenReturn(sink);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", null);
+        commitTransactionSynchronizations();
+
+        verify(sink).deliverReply(conv, "reply-md", null);
+        verify(sink, never()).turnTerminal(any(), anyString(), any(), any());
     }
 
     /** E2E 回归：澄清会话等无回推渠道没有 sink，回复投递应静默跳过而不是抛错/WARN。 */
@@ -576,7 +945,6 @@ class AgentConversationServiceTest {
         svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", "sess-123");
         rollbackTransactionSynchronizations();
 
-        verify(sinkRegistry, never()).find(anyString());
         verify(transport, never()).send(any(), any(), any(), any(), any());
         verify(turnDao).releaseConversationLock("agent-conversation:1:77");
     }
@@ -638,6 +1006,25 @@ class AgentConversationServiceTest {
                 && "回复失败：boom".equals(t.getContent())
                 && "FAILED".equals(t.getStatus())
                 && "boom".equals(t.getError())));
+    }
+
+    @Test
+    void failedAckPreservesFullDiagnosticEvenWhenRuntimeProvidesAReply() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(77L); conv.setTenantId(1L); conv.setChannel("WORKITEM_CLARIFICATION");
+        conv.setExecutorId(9L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        String error = "provider: " + "错误😀".repeat(600);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "FAILED", error)).thenReturn(1);
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "FAILED", error, "partial reply", null);
+        var captured = ArgumentCaptor.forClass(AgentConversationTurnDO.class);
+        verify(turnDao).insert(captured.capture());
+        var out = captured.getValue();
+        assertEquals("FAILED", out.getStatus());
+        assertEquals("partial reply", out.getContent());
+        assertNotNull(out.getSourceContext());
+        assertEquals(error, com.aliyun.autowonder.json.JSON.parseObject(out.getSourceContext()).getString("fullError"));
     }
 
     @Test
@@ -867,8 +1254,12 @@ class AgentConversationServiceTest {
         when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
                 .thenReturn(0);
 
-        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", "sess-123");
-        commitTransactionSynchronizations();
+        try (var logs = new AckLogs()) {
+            svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", "sess-123");
+            commitTransactionSynchronizations();
+            assertTrue(logs.events.stream().anyMatch(e -> e.getLevel() == org.apache.logging.log4j.Level.WARN
+                    && e.getMessage().getFormattedMessage().startsWith("conversation ack ignored: turn not active IN PROCESSING")));
+        }
 
         verify(turnDao).updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null);
         verify(turnDao, never()).insert(any());
@@ -1362,6 +1753,7 @@ class AgentConversationServiceTest {
         when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
 
         presenceSvc.requestTurnCancel(1L, 77L, 55L);
+        commitTransactionSynchronizations();
 
         verify(transport).sendCancel(conv, 55L);
         verify(turnDao, never()).updateInboundStatusIfProcessing(anyLong(), anyLong(), anyLong(),
@@ -1521,6 +1913,70 @@ class AgentConversationServiceTest {
     }
 
     @Test
+    void acknowledgeTurnRecordsUsageOnlyAfterTheTurnIsFinalized() {
+        com.aliyun.autowonder.aiusage.AgentConversationUsageService usageService =
+                mock(com.aliyun.autowonder.aiusage.AgentConversationUsageService.class);
+        svc.setConversationUsageService(usageService);
+        AgentConversationDO conv = existingConversationWithSession();
+        conv.setChannel("WORKITEM_CLARIFICATION");
+        conv.setBizRefType("WORKITEM");
+        conv.setBizRefId(100L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+        com.aliyun.autowonder.aiusage.dto.ConversationTurnUsage usage =
+                new com.aliyun.autowonder.aiusage.dto.ConversationTurnUsage();
+        usage.setInputTokens(10L);
+        usage.setCredits(new java.math.BigDecimal("0.5"));
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply", "sess", usage);
+
+        verify(usageService).recordTurnUsage(1L, conv, 55L, usage);
+    }
+
+    @Test
+    void acknowledgeTurnDoesNotRecordUsageForReplayedOrRejectedAcks() {
+        com.aliyun.autowonder.aiusage.AgentConversationUsageService usageService =
+                mock(com.aliyun.autowonder.aiusage.AgentConversationUsageService.class);
+        svc.setConversationUsageService(usageService);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        // 重放：轮次已终结，updateInboundStatusIfProcessing 返回 0。
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(0);
+        com.aliyun.autowonder.aiusage.dto.ConversationTurnUsage usage =
+                new com.aliyun.autowonder.aiusage.dto.ConversationTurnUsage();
+        usage.setInputTokens(10L);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply", "sess", usage);
+
+        verify(usageService, never()).recordTurnUsage(anyLong(), any(), anyLong(), any());
+
+        // 错路由 executor 的 ACK 同样不入库。
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        svc.acknowledgeTurn(1L, 8L, 77L, 55L, "SUCCESS", null, "reply", "sess", usage);
+        verify(usageService, never()).recordTurnUsage(anyLong(), any(), anyLong(), any());
+    }
+
+    @Test
+    void acknowledgeTurnWithoutUsageServiceStillFinalizes() {
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply", "sess",
+                new com.aliyun.autowonder.aiusage.dto.ConversationTurnUsage());
+
+        verify(turnDao).updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null);
+    }
+
+    @Test
     void cancelAckTimeoutFinalizesStillProcessingTurnWithFallbackContent() {
         ConversationBrowserEventPublisher eventService = mock(ConversationBrowserEventPublisher.class);
         ConversationRuntimePresence presence = mock(ConversationRuntimePresence.class);
@@ -1602,6 +2058,7 @@ class AgentConversationServiceTest {
         when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
 
         presenceSvc.requestTurnCancel(1L, 77L, 55L);
+        commitTransactionSynchronizations();
 
         InOrder order = inOrder(elicitationService, transport);
         order.verify(elicitationService).settlePendingForTurn(1L, 77L, 55L);
@@ -1656,6 +2113,7 @@ class AgentConversationServiceTest {
                 .settlePendingForTurn(anyLong(), anyLong(), anyLong());
 
         presenceSvc.requestTurnCancel(1L, 77L, 55L);
+        commitTransactionSynchronizations();
 
         verify(transport).sendCancel(conv, 55L);
     }
@@ -1703,6 +2161,48 @@ class AgentConversationServiceTest {
         ArgumentCaptor<String> sysCap = ArgumentCaptor.forClass(String.class);
         verify(transport).send(any(), eq(88L), eq("hi"), sysCap.capture(), any());
         return sysCap.getValue();
+    }
+
+    @Test
+    void workflowBecomingTerminalAfterPreparationIsNotSentAfterCommit() {
+        var workflowDao = mock(com.aliyun.autowonder.squad.workflow.SquadWorkflowDao.class);
+        svc.setWorkflowDao(workflowDao);
+        var conv = existingConversationWithSession();
+        conv.setChannel(SquadWorkflowChannelSink.CHANNEL); conv.setBizRefId(42L);
+        when(convDao.findByKey(1L, SquadWorkflowChannelSink.CHANNEL, "conv-x", 3L)).thenReturn(conv);
+        when(executorRouter.selectPlatform(1L,3L,50L,9L)).thenReturn(9L);
+        when(turnDao.insert(any())).thenAnswer(call -> { ((AgentConversationTurnDO)call.getArgument(0)).setId(55L); return 1; });
+        var row = new com.aliyun.autowonder.squad.workflow.SquadWorkflowDO();
+        row.setConversationId(77L); row.setStatus("GENERATING");
+        row.setDeadlineAt(new Date(System.currentTimeMillis()+1200000));
+        when(workflowDao.findById(1L,42L)).thenReturn(row);
+        when(workflowDao.lockById(1L,42L)).thenReturn(row);
+        svc.submitTurn(1L,3L,SquadWorkflowChannelSink.CHANNEL,"conv-x","input","workflow:42:attempt");
+        row.setStatus("FAILED");
+        commitTransactionSynchronizations();
+        verify(transport,never()).send(any(),anyLong(),any(),any(),anyInt());
+    }
+
+    @Test
+    void closedWorkflowIsNeverRedeliveredEvenWhenRuntimeIsInactive() {
+        var workflowDao = mock(com.aliyun.autowonder.squad.workflow.SquadWorkflowDao.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "workflowDao", workflowDao);
+        var conv = existingConversationWithSession();
+        conv.setChannel(SquadWorkflowChannelSink.CHANNEL);
+        conv.setBizRefId(42L);
+        var turn = processingInboundTurn(77L);
+        Date cutoff = new Date();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(turn);
+        when(turnDao.listStaleProcessingInboundByExecutor(1L, 9L, cutoff, 100))
+                .thenReturn(java.util.List.of(turn));
+        var closed = new com.aliyun.autowonder.squad.workflow.SquadWorkflowDO();
+        closed.setStatus("FAILED"); closed.setConversationId(77L);
+        when(workflowDao.findById(1L, 42L)).thenReturn(closed);
+        svc.recoverStaleTurnsForExecutor(1L, 9L, java.util.Set.of(), true, cutoff, 100);
+        commitTransactionSynchronizations();
+        verify(transport, never()).send(any(), anyLong(), any(), any(), anyInt());
+        verify(turnDao, never()).claimStaleDispatchAttemptIfProcessing(anyLong(), anyLong(), anyLong(), any());
     }
 
     private AgentConversationService serviceWithPresence(ConversationRuntimePresence presence) {
@@ -2008,6 +2508,7 @@ class AgentConversationServiceTest {
         when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
         when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "CANCELED", null)).thenReturn(1);
         target.requestTurnCancel(1L, 77L, 55L);
+        commitTransactionSynchronizations();
         target.handleCancelAckTimeout(conv, 55L);
         ArgumentCaptor<AgentConversationTurnDO> inserted = ArgumentCaptor.forClass(AgentConversationTurnDO.class);
         verify(turnDao).insert(inserted.capture());
@@ -2039,12 +2540,19 @@ class AgentConversationServiceTest {
         org.springframework.test.util.ReflectionTestUtils.setField(svc,
                 "clarificationAttachmentService", attachments);
 
+        AgentConversationTurnDO persistedActor = processingInboundTurn(77L);
+        persistedActor.setSubmittedUserId(701L);
+        persistedActor.setDispatchAttempt(1);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(persistedActor);
         svc.submitTurn(1L, 3L, WorkitemClarificationConversationService.CHANNEL, "conv-x",
-                "look", "att-msg-1");
+                "look", "att-msg-1", null, 701L);
         commitTransactionSynchronizations();
 
         ArgumentCaptor<String> runtime = ArgumentCaptor.forClass(String.class);
         verify(transport).send(any(), eq(55L), runtime.capture(), any(), any());
+        assertTrue(runtime.getValue().contains("userId=701"));
+        assertTrue(runtime.getValue().contains("turnId=55"));
+        assertTrue(runtime.getValue().contains("dispatchAttempt=1"));
         assertTrue(runtime.getValue().contains("https://oss.example/signed"));
         assertTrue(runtime.getValue().contains("User message:\nlook"));
         // 只取当前轮次：历史轮次附件不能顺带投递。

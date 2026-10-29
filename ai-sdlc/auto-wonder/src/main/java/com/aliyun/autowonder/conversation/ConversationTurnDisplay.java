@@ -41,7 +41,7 @@ public record ConversationTurnDisplay(Entry content, Entry error) {
     private static Entry entry(Object value, boolean content) {
         if (!(value instanceof Map<?, ?> entry) || !(entry.get("code") instanceof String code)
                 || !(entry.get("args") instanceof Map<?, ?> args)) return null;
-        if (content && Set.of("CANCELED", "EMPTY_OUTPUT").contains(code)) {
+        if ("QUESTION_EXPIRED".equals(code) || content && Set.of("CANCELED", "EMPTY_OUTPUT").contains(code)) {
             return args.isEmpty() ? new Entry(code, Map.of()) : null;
         }
         boolean detail = content ? Set.of("REPLY_FAILED", "DISPATCH_REPLY_FAILED").contains(code)

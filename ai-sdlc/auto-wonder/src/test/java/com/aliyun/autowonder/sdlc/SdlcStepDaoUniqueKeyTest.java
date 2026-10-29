@@ -94,7 +94,7 @@ class SdlcStepDaoUniqueKeyTest {
         insertActiveStep(2);
         SdlcStepDO tail = insertActiveStep(3);
 
-        assertEquals(1, dao.softDelete(tail.getId(), TENANT, USER));
+        assertEquals(1, dao.softDelete(tail.getId(), TENANT, SDLC_ID, -1, USER));
         // 软删除行必须释放正数序号（置为负数），不再占用 uk_sdlc_order
         assertTrue(rawStepOrder(tail.getId()) < 0);
 
@@ -113,11 +113,11 @@ class SdlcStepDaoUniqueKeyTest {
         SdlcStepDO middle = insertActiveStep(2);
         SdlcStepDO last = insertActiveStep(3);
 
-        assertEquals(1, dao.softDelete(middle.getId(), TENANT, USER));
+        assertEquals(1, dao.softDelete(middle.getId(), TENANT, SDLC_ID, -1, USER));
         assertTrue(rawStepOrder(middle.getId()) < 0);
 
         // 服务端重排：把剩余步骤规整为连续序号，不应触发唯一键冲突
-        assertEquals(1, dao.updateOrder(last.getId(), TENANT, 2, USER));
+        assertEquals(1, dao.updateOrder(last.getId(), TENANT, SDLC_ID, 2, USER));
 
         List<SdlcStepDO> active = dao.listBySdlc(SDLC_ID);
         assertEquals(List.of(1, 2),
@@ -130,10 +130,10 @@ class SdlcStepDaoUniqueKeyTest {
         SdlcStepDO second = insertActiveStep(2);
 
         // 与服务端 reorderSteps 一致的两段式：先进负数临时区，再赋目标序号
-        assertEquals(1, dao.updateOrder(second.getId(), TENANT, Integer.MIN_VALUE, USER));
-        assertEquals(1, dao.updateOrder(first.getId(), TENANT, Integer.MIN_VALUE + 1, USER));
-        assertEquals(1, dao.updateOrder(second.getId(), TENANT, 1, USER));
-        assertEquals(1, dao.updateOrder(first.getId(), TENANT, 2, USER));
+        assertEquals(1, dao.updateOrder(second.getId(), TENANT, SDLC_ID, Integer.MIN_VALUE, USER));
+        assertEquals(1, dao.updateOrder(first.getId(), TENANT, SDLC_ID, Integer.MIN_VALUE + 1, USER));
+        assertEquals(1, dao.updateOrder(second.getId(), TENANT, SDLC_ID, 1, USER));
+        assertEquals(1, dao.updateOrder(first.getId(), TENANT, SDLC_ID, 2, USER));
 
         List<SdlcStepDO> active = dao.listBySdlc(SDLC_ID);
         assertEquals(List.of(second.getId(), first.getId()),

@@ -826,6 +826,18 @@ public class TaskPackager {
             String localHead = revision.get("headCommit");
             String checkoutCommit = Boolean.parseBoolean(revision.get(CHECKPOINT_FALLBACK))
                     ? localHead : revision.get("remoteHeadCommit");
+            // An inconclusive producer-side probe can be resolved by the existing
+            // consumer materializer. Pin the original HEAD and prohibit baseline
+            // fallback: QA must never start against a substitute revision.
+            boolean verifyExactCheckout = isQaRoleCode(ctx.getRoleCode())
+                    && !Boolean.parseBoolean(revision.get(CHECKPOINT_FALLBACK))
+                    && "required".equals(revision.get("checkoutVerification"));
+            if (verifyExactCheckout) {
+                checkoutCommit = localHead;
+                repo.put("pinnedBaseCommit", localHead);
+                repo.put("mode", "eager");
+                repo.remove("sourceRevisionFallbackRefs");
+            }
             if (!validCommit(checkoutCommit)) {
                 checkoutCommit = revision.get("baseCommit");
             }
@@ -937,6 +949,13 @@ public class TaskPackager {
                             values.put("remoteHeadCommit", revision.getString("headCommit"));
                         } else if (validCommit(revision.getString("remoteHeadCommit"))) {
                             values.put("remoteHeadCommit", revision.getString("remoteHeadCommit"));
+                        }
+                        // Keep the verification instruction attached to the same
+                        // selected HEAD; never borrow it from an older artifact.
+                        if (revision.containsKey("remoteHeadCommit")
+                                && "".equals(revision.getString("remoteHeadCommit"))
+                                && "required".equals(revision.getString("checkoutVerification"))) {
+                            values.put("checkoutVerification", "required");
                         }
                         values.put(CHECKPOINT_FALLBACK, Boolean.toString(checkpointFallback));
                     }

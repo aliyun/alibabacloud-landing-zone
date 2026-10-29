@@ -1,51 +1,56 @@
 import { useTranslation } from 'react-i18next';
-import type { Kpi } from './api';
+import type { OverviewKpi } from './api';
+import FlashValue from './FlashValue';
 import './KpiRow.css';
-import { formatMinutesCompact } from '@/shared/lib/duration';
 
-export type KpiKey = 'runningDispatches' | 'todayCompletedTasks' | 'weekCompletedTasks';
+export type KpiKey = 'runningWorkitems' | 'todayCompletedTasks' | 'weekCompletedTasks';
 
 interface Props {
-  kpi: Kpi;
+  kpi: OverviewKpi;
   onKpiClick?: (key: KpiKey) => void;
 }
 
 interface Cell {
+  id: string;
   label: string;
-  value: string | number;
-  clickable?: boolean;
-  key?: KpiKey;
+  hint: string;
+  value: number;
+  detailKey?: KpiKey;
 }
 
 export default function KpiRow({ kpi, onKpiClick }: Props) {
   const { t } = useTranslation('insights');
   const cells: Cell[] = [
-    { label: t('kpi.runningDispatches'), value: kpi.runningDispatches, clickable: true, key: 'runningDispatches' },
-    { label: t('kpi.todayCompletedTasks'), value: kpi.todayCompletedTasks, clickable: true, key: 'todayCompletedTasks' },
-    { label: t('kpi.weekCompletedTasks'), value: kpi.weekCompletedTasks, clickable: true, key: 'weekCompletedTasks' },
-    { label: t('kpi.averageDuration'), value: formatMinutesCompact(kpi.avgTaskDurationMinutes) },
-    { label: t('kpi.inProgressWorkitems'), value: kpi.inProgressWorkitems },
-    { label: t('kpi.queuedDispatches'), value: kpi.queuedDispatches },
-    { label: t('kpi.activeSquads'), value: kpi.activeSquads },
-    { label: t('kpi.onlineAgents'), value: kpi.onlineAgents },
-    { label: t('kpi.averageLoad'), value: kpi.avgLoad.toFixed(1) },
+    { id: 'todayCreatedWorkitems', label: t('kpi.todayCreatedWorkitems'), hint: t('overview.kpiHint.todayCreatedWorkitems'), value: kpi.todayCreatedWorkitems },
+    { id: 'runningWorkitems', label: t('kpi.runningWorkitems'), hint: t('overview.kpiHint.runningWorkitems'), value: kpi.runningWorkitems, detailKey: 'runningWorkitems' },
+    { id: 'todayCompletedTasks', label: t('kpi.todayCompletedTasks'), hint: t('overview.kpiHint.todayCompletedTasks'), value: kpi.todayCompletedTasks, detailKey: 'todayCompletedTasks' },
+    { id: 'weekCompletedTasks', label: t('kpi.weekCompletedTasks'), hint: t('overview.kpiHint.weekCompletedTasks'), value: kpi.weekCompletedTasks, detailKey: 'weekCompletedTasks' },
   ];
   return (
     <div className="insight-kpi-container"><div className="insight-kpi-grid">
-      {cells.map((c, index) => (
-        <div
-          key={index}
-          className="insight-kpi"
-          role={c.clickable ? 'button' : undefined}
-          tabIndex={c.clickable ? 0 : undefined}
-          onClick={c.clickable && c.key && onKpiClick ? () => onKpiClick(c.key!) : undefined}
-          onKeyDown={c.clickable && c.key && onKpiClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onKpiClick(c.key!); } } : undefined}
-          style={{ cursor: c.clickable ? 'pointer' : 'default' }}
-        >
-          <div className="insight-kpi-label">{c.label}</div>
-          <div className="insight-kpi-value">{c.value}</div>
-        </div>
-      ))}
+      {cells.map((cell) => {
+        const clickable = cell.detailKey != null && onKpiClick != null;
+        return (
+          <div
+            key={cell.id}
+            className="insight-kpi"
+            role={clickable ? 'button' : undefined}
+            tabIndex={clickable ? 0 : undefined}
+            onClick={clickable ? () => onKpiClick(cell.detailKey!) : undefined}
+            onKeyDown={clickable ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onKpiClick(cell.detailKey!);
+              }
+            } : undefined}
+            style={{ cursor: clickable ? 'pointer' : 'default' }}
+          >
+            <div className="insight-kpi-label">{cell.label}</div>
+            <div className="insight-kpi-value"><FlashValue value={cell.value} /></div>
+            <div className="insight-kpi-hint">{cell.hint}</div>
+          </div>
+        );
+      })}
     </div></div>
   );
 }

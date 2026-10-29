@@ -15,6 +15,9 @@ public enum WorkitemEventType {
     DELETE("工单已删除"),
     RESTORE("工单已从回收站恢复"),
     COMMENT("新增评论"),
+    TAG_CHANGE("工单标签已更新"),
+    EXECUTION_CONTROL("执行控制"),
+    DELIVERY_CONTROL("交付控制"),
 
     AONE_IMPORT("已从 Aone 工单导入"),
     AONE_UPDATE("已从 Aone 工单同步更新"),

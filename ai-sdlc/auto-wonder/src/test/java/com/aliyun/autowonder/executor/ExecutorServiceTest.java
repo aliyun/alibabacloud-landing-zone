@@ -2,6 +2,7 @@ package com.aliyun.autowonder.executor;
 
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.executor.dto.*;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.squad.SquadAttributionService;
 import com.aliyun.autowonder.websocket.ExecutorSession;
@@ -15,6 +16,8 @@ import javax.websocket.Session;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -23,7 +26,6 @@ import static org.mockito.Mockito.*;
 class ExecutorServiceTest {
 
     ExecutorDao executorDao;
-    ExecutorRegistry registry;
     TokenService tokenService;
     RedisManager redisManager;
     PresenceManager presenceManager;
@@ -34,16 +36,31 @@ class ExecutorServiceTest {
     @BeforeEach
     void setUp() {
         executorDao = mock(ExecutorDao.class);
-        registry = mock(ExecutorRegistry.class);
         tokenService = mock(TokenService.class);
         redisManager = mock(RedisManager.class);
         presenceManager = mock(PresenceManager.class);
         sessionRegistry = mock(SessionRegistry.class);
+        // 列表路径默认「无在线状态、无上报版本/模型」，用例按需覆盖批量结果
+        when(presenceManager.presenceState(anyLong())).thenReturn(PresenceManager.ExecutorPresence.ABSENT);
+        when(presenceManager.presenceStates(anyCollection())).thenReturn(Map.of());
         // read() 未打桩 → 返回 null → options.models() 回退到 FALLBACK_MODELS（含 auto / qmodel_38max）
         launchConfigService = new ExecutorLaunchConfigService(executorDao,
                 new ExecutorLaunchOptionsService(mock(ProviderModelCatalogService.class)));
-        service = new ExecutorService(executorDao, registry, tokenService,
+        service = new ExecutorService(executorDao, tokenService,
                 redisManager, presenceManager, sessionRegistry, launchConfigService);
+    }
+
+    private void presence(long id, boolean online, Set<String> features, String version, String model) {
+        when(presenceManager.presenceState(id))
+                .thenReturn(new PresenceManager.ExecutorPresence(online, features, version, model));
+    }
+
+    private void presenceBatch(Map<Long, PresenceManager.ExecutorPresence> presences) {
+        when(presenceManager.presenceStates(anyCollection())).thenReturn(presences);
+    }
+
+    private static PresenceManager.ExecutorPresence online(String version, String model, String... features) {
+        return new PresenceManager.ExecutorPresence(true, Set.of(features), version, model);
     }
 
     @Test
@@ -229,8 +246,9 @@ class ExecutorServiceTest {
         ExecutorDO e2 = exec(2L, 5L);
         e1.setAgentName("Alpha");
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e1, e2));
-        when(registry.isOnline(1L)).thenReturn(true);
-        when(registry.isOnline(2L)).thenReturn(false);
+        presenceBatch(Map.of(
+                1L, new PresenceManager.ExecutorPresence(true, Set.of(), null, null),
+                2L, PresenceManager.ExecutorPresence.ABSENT));
 
         List<ExecutorVO> vos = service.listByAgent(5L, 100L);
 
@@ -244,7 +262,7 @@ class ExecutorServiceTest {
         ExecutorDO e1 = exec(1L, 5L);
         e1.setAgentName("Alpha");
         when(executorDao.listAll(100L, null)).thenReturn(List.of(e1));
-        when(registry.isOnline(1L)).thenReturn(true);
+        presenceBatch(Map.of(1L, new PresenceManager.ExecutorPresence(true, Set.of(), null, null)));
 
         List<ExecutorVO> vos = service.listAll(100L, null);
 
@@ -551,7 +569,7 @@ class ExecutorServiceTest {
     void list_maps_reported_runtime_version_from_presence() {
         ExecutorDO e = exec(1L, 5L);
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
-        when(presenceManager.currentVersion(1L)).thenReturn("0.2.152");
+        presenceBatch(Map.of(1L, online("0.2.152", null)));
 
         List<ExecutorVO> vos = service.listByAgent(5L, 100L);
 
@@ -562,7 +580,7 @@ class ExecutorServiceTest {
     void listAll_maps_reported_runtime_version_from_presence() {
         ExecutorDO e = exec(1L, 5L);
         when(executorDao.listAll(100L, null)).thenReturn(List.of(e));
-        when(presenceManager.currentVersion(1L)).thenReturn("0.2.153");
+        presenceBatch(Map.of(1L, online("0.2.153", null)));
 
         List<ExecutorVO> vos = service.listAll(100L, null);
 
@@ -587,7 +605,7 @@ class ExecutorServiceTest {
         e.setLastConnectIp("203.0.113.50");
         e.setLastHeartbeat(new Date());
         when(executorDao.findById(9L)).thenReturn(e);
-        when(registry.isOnline(9L)).thenReturn(true);
+        presence(9L, true, Set.of(), null, null);
 
         ExecutorVO vo = service.getDetail(9L, 100L);
 
@@ -603,7 +621,7 @@ class ExecutorServiceTest {
     @Test
     void getDetail_offline_when_not_registered() {
         when(executorDao.findById(9L)).thenReturn(exec(9L, 5L));
-        when(registry.isOnline(9L)).thenReturn(false);
+        presence(9L, false, Set.of(), null, null);
 
         assertEquals("OFFLINE", service.getDetail(9L, 100L).getStatus());
     }
@@ -648,29 +666,29 @@ class ExecutorServiceTest {
     void getDetail_separates_an_unreadable_version_from_an_up_to_date_one() {
         ExecutorUpdateService updateService = mock(ExecutorUpdateService.class);
         when(updateService.targetVersion()).thenReturn("0.2.160");
-        when(updateService.supportsUpgrade(9L)).thenReturn(true);
+        when(updateService.supportsUpgrade(Set.of("EXECUTOR_UPDATE_V1"))).thenReturn(true);
         service.setUpdateService(updateService);
         when(executorDao.findById(9L)).thenReturn(exec(9L, 5L));
 
-        when(presenceManager.currentVersion(9L)).thenReturn("0.2.155");
+        presence(9L, true, Set.of("EXECUTOR_UPDATE_V1"), "0.2.155", null);
         ExecutorVO behind = service.getDetail(9L, 100L);
         assertEquals("0.2.160", behind.getTargetVersion());
         assertTrue(behind.isUpgradeSupported());
         assertTrue(behind.isVersionComparable());
         assertTrue(behind.isUpgradeAvailable());
 
-        when(presenceManager.currentVersion(9L)).thenReturn("0.2.160");
+        presence(9L, true, Set.of("EXECUTOR_UPDATE_V1"), "0.2.160", null);
         ExecutorVO current = service.getDetail(9L, 100L);
         assertTrue(current.isVersionComparable());
         assertFalse(current.isUpgradeAvailable(), "already at the target, so there is nothing to do");
 
-        when(presenceManager.currentVersion(9L)).thenReturn("0.2.161");
+        presence(9L, true, Set.of("EXECUTOR_UPDATE_V1"), "0.2.161", null);
         ExecutorVO ahead = service.getDetail(9L, 100L);
         assertTrue(ahead.isVersionComparable());
         assertFalse(ahead.isUpgradeAvailable(), "newer than the target");
 
         for (String reported : new String[]{"0.2.155-beta.1", "dev", null}) {
-            when(presenceManager.currentVersion(9L)).thenReturn(reported);
+            presence(9L, true, Set.of("EXECUTOR_UPDATE_V1"), reported, null);
             ExecutorVO unknown = service.getDetail(9L, 100L);
             assertFalse(unknown.isVersionComparable(), String.valueOf(reported) + " cannot be compared");
             assertFalse(unknown.isUpgradeAvailable(),
@@ -681,7 +699,7 @@ class ExecutorServiceTest {
     @Test
     void listAll_leaves_the_upgrade_flags_alone_without_an_update_service() {
         when(executorDao.listAll(100L, null)).thenReturn(List.of(exec(1L, 5L)));
-        when(presenceManager.currentVersion(1L)).thenReturn("0.2.155");
+        presenceBatch(Map.of(1L, online("0.2.155", null)));
 
         ExecutorVO vo = service.listAll(100L, null).get(0);
 
@@ -694,7 +712,7 @@ class ExecutorServiceTest {
     void list_maps_reported_model_from_presence() {
         ExecutorDO e = exec(1L, 5L);
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
-        when(presenceManager.currentModel(1L)).thenReturn("qoder3-coder-plus");
+        presenceBatch(Map.of(1L, online(null, "qoder3-coder-plus")));
 
         List<ExecutorVO> vos = service.listByAgent(5L, 100L);
 
@@ -718,7 +736,7 @@ class ExecutorServiceTest {
         ExecutorDO e = exec(1L, 5L);
         e.setClientKind("QODER_CLI");
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
-        when(presenceManager.currentModel(1L)).thenReturn("qoder3-coder-plus");
+        presenceBatch(Map.of(1L, online(null, "qoder3-coder-plus")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
         when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
@@ -735,7 +753,7 @@ class ExecutorServiceTest {
         ExecutorDO e = exec(1L, 5L);
         e.setClientKind("QODER_CN_CLI");
         when(executorDao.listAll(100L, null)).thenReturn(List.of(e));
-        when(presenceManager.currentModel(1L)).thenReturn("unknown-model");
+        presenceBatch(Map.of(1L, online(null, "unknown-model")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
         when(catalog.read("qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
                 List.of(new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
@@ -752,7 +770,7 @@ class ExecutorServiceTest {
         ExecutorDO e = exec(1L, 5L);
         e.setClientKind("CLAUDE_CODE");
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
-        when(presenceManager.currentModel(1L)).thenReturn("claude-sonnet-4");
+        presenceBatch(Map.of(1L, online(null, "claude-sonnet-4")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
         service.setProviderModelCatalogService(catalog);
 
@@ -768,7 +786,7 @@ class ExecutorServiceTest {
         ExecutorDO e = exec(1L, 5L);
         e.setClientKind("QODER_CLI");
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
-        when(presenceManager.currentModel(1L)).thenReturn("qoder3-coder-plus");
+        presenceBatch(Map.of(1L, online(null, "qoder3-coder-plus")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
         when(catalog.read("qoder")).thenThrow(new RuntimeException("redis down"));
         service.setProviderModelCatalogService(catalog);
@@ -788,8 +806,9 @@ class ExecutorServiceTest {
         ExecutorDO reported = exec(3L, 5L);
         reported.setClientKind("QODER_CLI");
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(neverReported, blankModel, reported));
-        when(presenceManager.currentModel(2L)).thenReturn("   ");
-        when(presenceManager.currentModel(3L)).thenReturn("qoder3-coder-plus");
+        presenceBatch(Map.of(
+                2L, online(null, "   "),
+                3L, online(null, "qoder3-coder-plus")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
         when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
@@ -814,8 +833,9 @@ class ExecutorServiceTest {
         ExecutorDO incomplete = exec(2L, 5L);
         incomplete.setClientKind("QODER_CLI");
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(resolved, incomplete));
-        when(presenceManager.currentModel(1L)).thenReturn("qoder3-coder-plus");
-        when(presenceManager.currentModel(2L)).thenReturn("no-name");
+        presenceBatch(Map.of(
+                1L, online(null, "qoder3-coder-plus"),
+                2L, online(null, "no-name")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
         when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO(null, "Missing Id"),
@@ -836,7 +856,7 @@ class ExecutorServiceTest {
         ExecutorDO e = exec(9L, 5L);
         e.setClientKind("QODER_CLI");
         when(executorDao.findById(9L)).thenReturn(e);
-        when(presenceManager.currentModel(9L)).thenReturn("qoder3-coder-plus");
+        presence(9L, true, Set.of(), null, "qoder3-coder-plus");
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
         when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
@@ -846,6 +866,86 @@ class ExecutorServiceTest {
 
         assertEquals("qoder3-coder-plus", vo.getModel());
         assertEquals("Qoder3 Coder Plus", vo.getModelName());
+    }
+
+    @Test
+    void list_resolves_presence_and_restart_state_with_one_read_each() {
+        ExecutorDO online = exec(1L, 5L);
+        ExecutorDO offline = exec(2L, 5L);
+        when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(online, offline));
+        Set<String> features = Set.of("EXECUTOR_RESTART_V1", "EXECUTOR_UPDATE_V1",
+                "EXECUTOR_UPDATE_RESTART_V1");
+        presenceBatch(Map.of(
+                1L, new PresenceManager.ExecutorPresence(true, features, "0.2.155", "qoder3-coder-plus"),
+                2L, PresenceManager.ExecutorPresence.ABSENT));
+        JSONObject restart = new JSONObject(true);
+        restart.put("status", "REQUESTED");
+        ExecutorRestartService restartService = mock(ExecutorRestartService.class);
+        when(restartService.statuses(List.of(1L, 2L))).thenReturn(Map.of(1L, restart));
+        service.setRestartService(restartService);
+        ExecutorUpdateService updateService = mock(ExecutorUpdateService.class);
+        when(updateService.targetVersion()).thenReturn("0.2.160");
+        when(updateService.supportsUpgrade(features)).thenReturn(true);
+        service.setUpdateService(updateService);
+
+        List<ExecutorVO> vos = service.listByAgent(5L, 100L);
+
+        // 整页各一次批量读取，而不是每行一次
+        verify(presenceManager, times(1)).presenceStates(List.of(1L, 2L));
+        verify(restartService, times(1)).statuses(List.of(1L, 2L));
+
+        assertEquals("ONLINE", vos.get(0).getStatus());
+        assertEquals("0.2.155", vos.get(0).getVersion());
+        assertEquals("qoder3-coder-plus", vos.get(0).getModel());
+        assertTrue(vos.get(0).isRestartSupported());
+        assertTrue(vos.get(0).isUpdateRestartSupported());
+        assertFalse(vos.get(0).isRestartPolicySupported());
+        assertFalse(vos.get(0).isLaunchCommandSupported());
+        assertTrue(vos.get(0).isUpgradeSupported());
+        assertSame(restart, vos.get(0).getRestart());
+
+        assertEquals("OFFLINE", vos.get(1).getStatus());
+        assertNull(vos.get(1).getRestart());
+        assertFalse(vos.get(1).isRestartSupported());
+        assertNull(vos.get(1).getVersion());
+    }
+
+    @Test
+    void list_treats_executors_missing_from_the_presence_batch_as_offline() {
+        when(executorDao.listAll(100L, null)).thenReturn(List.of(exec(1L, 5L)));
+
+        ExecutorVO vo = service.listAll(100L, null).get(0);
+
+        assertEquals("OFFLINE", vo.getStatus());
+        assertNull(vo.getVersion());
+        assertNull(vo.getModel());
+        assertFalse(vo.isRestartSupported());
+    }
+
+    @Test
+    void list_skips_the_restart_batch_without_a_restart_service() {
+        when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(exec(1L, 5L)));
+
+        assertNull(service.listByAgent(5L, 100L).get(0).getRestart());
+    }
+
+    @Test
+    void getDetail_maps_the_restart_state_and_capabilities_from_one_presence_read() {
+        when(executorDao.findById(9L)).thenReturn(exec(9L, 5L));
+        presence(9L, true, Set.of("EXECUTOR_RESTART_POLICY_V1", "EXECUTOR_LAUNCH_COMMAND_V1"), null, null);
+        JSONObject restart = new JSONObject(true);
+        restart.put("status", "COMPLETED");
+        ExecutorRestartService restartService = mock(ExecutorRestartService.class);
+        when(restartService.status(9L)).thenReturn(restart);
+        service.setRestartService(restartService);
+
+        ExecutorVO vo = service.getDetail(9L, 100L);
+
+        verify(presenceManager, times(1)).presenceState(9L);
+        assertSame(restart, vo.getRestart());
+        assertTrue(vo.isRestartPolicySupported());
+        assertTrue(vo.isLaunchCommandSupported());
+        assertFalse(vo.isRestartSupported());
     }
 
     private ExecutorDO exec(long id, long agentId) {

@@ -7,6 +7,11 @@ import java.util.List;
 
 @Mapper
 public interface DispatchCheckpointDao {
+    int hasPauseDecision(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId, @Param("executorId") Long executorId);
+    DispatchCheckpointDO findPauseCheckpoint(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId, @Param("executorId") Long executorId);
+    int restoreGarbage(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId, @Param("id") long id);
+    int restoreReferencedGarbage(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId,
+                                 @Param("id") long id);
     int releaseResolvedPins(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId);
     int markGarbage(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId, @Param("id") long id);
     DispatchCheckpointDO findGarbageById(@Param("id") long id);

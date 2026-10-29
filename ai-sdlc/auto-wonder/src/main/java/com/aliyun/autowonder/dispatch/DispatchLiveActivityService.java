@@ -87,14 +87,16 @@ public class DispatchLiveActivityService {
         long lastSeq;
         if (afterSeq != null) {
             metrics.backfill();
-            sources = safeList(eventDao.listByDispatchAfterSeq(tenantId, dispatchId, afterSeq));
+            sources = safeList(eventDao.listByDispatchAfterId(tenantId, dispatchId, afterSeq));
             // An empty delta means no row is newer than the cursor, so lastSeq falls back to afterSeq
             // and the changed=false early return below still fires exactly as the full scan did.
-            lastSeq = sources.stream().map(DispatchRuntimeEventDO::getSeq)
+            lastSeq = sources.stream().map(DispatchRuntimeEventDO::getId)
                     .filter(Objects::nonNull).mapToLong(Long::longValue).max().orElse(afterSeq);
         } else {
-            sources = safeList(eventDao.listByDispatch(tenantId, dispatchId));
-            lastSeq = sources.stream().map(DispatchRuntimeEventDO::getSeq)
+            // seq is numbered by each executor runtime: after a failover re-run the second runtime
+            // restarts the count, so ordering and the polling cursor must use the arrival id.
+            sources = safeList(eventDao.listByDispatchInArrivalOrder(tenantId, dispatchId));
+            lastSeq = sources.stream().map(DispatchRuntimeEventDO::getId)
                     .filter(Objects::nonNull).mapToLong(Long::longValue).max().orElse(0L);
         }
 
@@ -114,7 +116,7 @@ public class DispatchLiveActivityService {
 
         List<DispatchLiveActivityVO.Action> displayable = new ArrayList<>();
         for (DispatchRuntimeEventDO source : sources) {
-            if (afterSeq != null && source.getSeq() != null && source.getSeq() <= afterSeq) {
+            if (afterSeq != null && source.getId() != null && source.getId() <= afterSeq) {
                 continue;
             }
             DispatchLiveActivityVO.Action action = toAction(dispatch, source);
@@ -184,7 +186,7 @@ public class DispatchLiveActivityService {
         }
         DispatchLiveActivityVO.Action action = new DispatchLiveActivityVO.Action();
         action.setEventId(event.getEventId());
-        action.setSeq(event.getSeq());
+        action.setSeq(event.getId());
         action.setEventTime(instantOf(event.getEventTime()));
         action.setEventType(eventType);
         action.setActionType(actionType);

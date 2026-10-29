@@ -1,4 +1,7 @@
 import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom';
+import { Suspense } from 'react';
+import { Spin } from 'antd';
+import { lazyWithChunkReload } from '@/shared/lib/chunkLoadRecovery';
 import { AuthLayout } from './AuthLayout';
 import { AppLayout } from './AppLayout';
 import { RouteGuard } from './RouteGuard';
@@ -12,7 +15,6 @@ import { DeliveryOverviewPage } from '@/features/overview/DeliveryOverviewPage';
 import { WorkitemListPage } from '@/features/workitem/WorkitemListPage';
 import { WorkitemRecycleBinPage } from '@/features/workitem/WorkitemRecycleBinPage';
 import { WorkitemCreatePage } from '@/features/workitem/WorkitemCreatePage';
-import { WorkitemDetailPage } from '@/features/workitem/WorkitemDetailPage';
 import { AgentCreatePage } from '@/features/agent/AgentCreatePage';
 import { AgentDetailPage } from '@/features/agent/AgentDetailPage';
 import { AgentEditPage } from '@/features/agent/AgentEditPage';
@@ -22,7 +24,6 @@ import { ExecutionListPage } from '@/features/execution/ExecutionListPage';
 import { SdlcListPage } from '@/features/sdlc/SdlcListPage';
 import { SdlcGeneratePage } from '@/features/sdlc/SdlcGeneratePage';
 import { SdlcDetailPage } from '@/features/sdlc/SdlcDetailPage';
-import { ReposHubPage } from '@/features/repo/ReposHubPage';
 import { RepoDetailPage } from '@/features/repo/RepoDetailPage';
 import { MemoryListPage } from '@/features/memory/MemoryListPage';
 import { NotificationCenterPage } from '@/features/notification/NotificationCenterPage';
@@ -48,6 +49,11 @@ import { EnvironmentVariablesPage } from '@/features/environmentVariables/Enviro
 import { HelpCenterPage } from '@/features/help/HelpCenterPage';
 import { SharedArtifactPage } from '@/features/workitem/SharedArtifactPage';
 
+const WorkitemDetailPage = lazyWithChunkReload<Record<string, never>>(() => import('@/features/workitem/WorkitemDetailPage')
+  .then(module => ({ default: module.WorkitemDetailPage })));
+const ReposHubPage = lazyWithChunkReload<Record<string, never>>(() => import('@/features/repo/ReposHubPage')
+  .then(module => ({ default: module.ReposHubPage })));
+
 export function createAppRoutes(): RouteObject[] {
   return [
     { path: '/api/share/workitems/:token/:kind/:id', element: <SharedArtifactPage /> },
@@ -65,6 +71,11 @@ export function createAppRoutes(): RouteObject[] {
     },
     {
       path: '/workspaces',
+      element: <RouteGuard requireWorkspace={false}><WorkspaceSelectPage /></RouteGuard>,
+    },
+    {
+      // 空间级看板的深链入口：复用同一页面，由路径决定激活第三个 Tab。
+      path: '/workspaces/dashboard',
       element: <RouteGuard requireWorkspace={false}><WorkspaceSelectPage /></RouteGuard>,
     },
     {
@@ -99,7 +110,7 @@ export function createAppRoutes(): RouteObject[] {
         { path: '/workitems', element: <WorkitemListPage /> },
         { path: '/workitems/new', element: <WorkitemCreatePage /> },
         { path: '/workitems/recycled', element: <WorkitemRecycleBinPage /> },
-        { path: '/workitems/:id', element: <WorkitemDetailPage /> },
+        { path: '/workitems/:id', element: <Suspense fallback={<Spin />}><WorkitemDetailPage /></Suspense> },
         { path: '/agents', element: <AgentsHubPage /> },
         { path: '/agents/reviews', element: <RedirectWithQuery to="/agents" tab="reviews" /> },
         { path: '/agents/new', element: <AgentCreatePage /> },
@@ -109,7 +120,7 @@ export function createAppRoutes(): RouteObject[] {
         { path: '/sdlcs', element: <SdlcListPage /> },
         { path: '/sdlcs/generate', element: <SdlcGeneratePage /> },
         { path: '/sdlcs/:id', element: <SdlcDetailPage /> },
-        { path: '/repos', element: <ReposHubPage /> },
+        { path: '/repos', element: <Suspense fallback={<Spin />}><ReposHubPage /></Suspense> },
         { path: '/repos/map', element: <RedirectWithQuery to="/repos" tab="map" /> },
         { path: '/repos/:id', element: <RepoDetailPage /> },
         { path: '/memories', element: <MemoryListPage /> },

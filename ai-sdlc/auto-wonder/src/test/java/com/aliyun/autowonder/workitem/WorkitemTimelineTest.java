@@ -20,6 +20,8 @@ class WorkitemTimelineTest {
     StatusTemplateDao templateDao;
     StatusNodeDao nodeDao;
     StatusTransitionDao transitionDao;
+    com.aliyun.autowonder.user.UserDao userDao;
+    com.aliyun.autowonder.agent.AgentDao agentDao;
     WorkitemService service;
 
     @BeforeEach
@@ -30,16 +32,18 @@ class WorkitemTimelineTest {
         templateDao = mock(StatusTemplateDao.class);
         nodeDao = mock(StatusNodeDao.class);
         transitionDao = mock(StatusTransitionDao.class);
+        userDao = mock(com.aliyun.autowonder.user.UserDao.class);
+        agentDao = mock(com.aliyun.autowonder.agent.AgentDao.class);
         service = new WorkitemService(workitemDao, commentDao, eventDao,
                 templateDao, nodeDao, transitionDao,
                 mock(com.aliyun.autowonder.sdlc.SdlcDao.class), mock(com.aliyun.autowonder.sdlc.SdlcStepDao.class),
                 mock(com.aliyun.autowonder.dispatch.DispatchDao.class),
                 mock(com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao.class),
-                mock(com.aliyun.autowonder.agent.AgentDao.class),
+                agentDao,
                 mock(com.aliyun.autowonder.dispatch.AgentSdlcResolver.class),
                 mock(com.aliyun.autowonder.squad.SquadMemberDao.class),
                 mock(com.aliyun.autowonder.executor.ExecutorDao.class),
-                mock(com.aliyun.autowonder.user.UserDao.class),
+                userDao,
                 mock(com.aliyun.autowonder.guidance.GuidanceDao.class),
                 mock(com.aliyun.autowonder.websocket.PresenceManager.class),
                 mock(com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDao.class),
@@ -74,6 +78,75 @@ class WorkitemTimelineTest {
     }
 
     @Test
+    void tagChangeUsesDetailJsonForAddedRemovedAndOverflow() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of());
+        WorkitemEventDO both = tagEvent(1L, "{\"added\":[\"新标签\"],\"removed\":[\"旧标签\"]}");
+        WorkitemEventDO added = tagEvent(2L, "{\"added\":[\"t0\",\"t1\",\"t2\",\"t3\",\"t4\",\"t5\",\"t6\"],\"removed\":[]}");
+        WorkitemEventDO removed = tagEvent(3L, "{\"added\":[],\"removed\":[\"旧标签\"]}");
+        WorkitemEventDO broken = tagEvent(4L, "not-json");
+        when(eventDao.listByWorkitem(5L)).thenReturn(List.of(both, added, removed, broken));
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            var rows = service.getUnifiedTimeline(5L);
+            assertEquals("工单标签已更新: 添加 新标签；移除 旧标签", contentOf(rows, 1L));
+            assertEquals("工单标签已更新: 添加 t0、t1、t2、t3、t4 等 2 个", contentOf(rows, 2L));
+            assertEquals("工单标签已更新: 移除 旧标签", contentOf(rows, 3L));
+            assertEquals("工单标签已更新", contentOf(rows, 4L));
+        } finally {
+            org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous);
+        }
+    }
+
+    private static String contentOf(List<com.aliyun.autowonder.workitem.dto.TimelineItemVO> rows, Long id) {
+        return rows.stream().filter(row -> id.equals(row.getId())).findFirst().orElseThrow().getContent();
+    }
+
+    @Test
+    void tagChangeTimelineRendersHumanAndAgentOperatorsForEveryDirection() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of());
+        var human = new com.aliyun.autowonder.user.UserDO();
+        human.setId(7L); human.setUsername("caihe"); human.setNickname("蔡何");
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(human);
+        var agent = new com.aliyun.autowonder.agent.AgentDO();
+        agent.setId(12L); agent.setName("AW全栈开发");
+        when(agentDao.findById(12L)).thenReturn(agent);
+        WorkitemEventDO both = tagEvent(1L, "{\"added\":[\"新标签\"],\"removed\":[\"旧标签\"]}");
+        both.setActorType("HUMAN"); both.setActorRef(7L);
+        WorkitemEventDO added = tagEvent(2L, "{\"added\":[\"新标签\"],\"removed\":[]}");
+        added.setActorType("AGENT"); added.setActorRef(12L);
+        WorkitemEventDO removed = tagEvent(3L, "{\"added\":[],\"removed\":[\"旧标签\"]}");
+        removed.setActorType("HUMAN"); removed.setActorRef(7L);
+        when(eventDao.listByWorkitem(5L)).thenReturn(List.of(both, added, removed));
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            var rows = service.getUnifiedTimeline(5L);
+            assertEquals("工单标签已更新: 添加 新标签；移除 旧标签 （操作人：蔡何(7)）", contentOf(rows, 1L));
+            assertEquals("工单标签已更新: 添加 新标签 （操作人：AW全栈开发(12)）", contentOf(rows, 2L));
+            assertEquals("工单标签已更新: 移除 旧标签 （操作人：蔡何(7)）", contentOf(rows, 3L));
+            assertEquals("蔡何(7)", rows.stream().filter(row -> Long.valueOf(1L).equals(row.getId())).findFirst().orElseThrow().getOperatorDisplayName());
+            assertEquals("AW全栈开发(12)", rows.stream().filter(row -> Long.valueOf(2L).equals(row.getId())).findFirst().orElseThrow().getOperatorDisplayName());
+        } finally {
+            org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous);
+        }
+    }
+
+    private static WorkitemEventDO tagEvent(long id, String detailJson) {
+        WorkitemEventDO event = new WorkitemEventDO();
+        event.setId(id);
+        event.setEventType("TAG_CHANGE");
+        event.setActorType("SYSTEM");
+        event.setActorRef(0L);
+        event.setDetailJson(detailJson);
+        return event;
+    }
+
+    @Test
     void freshSystemTimelineTranslatesFiniteEventAndKeepsHistoryAndUnknownDataRaw() {
         WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
         when(workitemDao.findById(5L)).thenReturn(owner);
@@ -89,6 +162,72 @@ class WorkitemTimelineTest {
             assertEquals("RAW_EVENT: 工单已创建", rows.stream().filter(r -> r.getId().equals(2L)).findFirst().orElseThrow().getContent());
             assertEquals("工单已创建 <b>raw</b>", event.getToVal()); assertEquals("CREATE", event.getEventType());
         } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+
+    @Test
+    void assignmentCreationControlRendersBothLanguagesAndKeepsRawNamesAndHistory() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
+        WorkitemEventDO event = new WorkitemEventDO();
+        event.setId(1L); event.setEventType("EXECUTION_CONTROL");
+        event.setActorType("HUMAN"); event.setActorRef(7L);
+        String detail = "{\"action\":\"START\",\"phase\":\"CONFIRMED\",\"origin\":\"ASSIGNMENT\","
+                + "\"dispatchId\":14001,\"requestedById\":7,\"requestedByName\":\"操作者 <b>raw</b>\","
+                + "\"agentId\":12,\"agentName\":\"员工原名\"}";
+        event.setDetailJson(detail);
+        when(eventDao.listByWorkitem(5L)).thenReturn(List.of(event));
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            for (var locale : List.of(java.util.Locale.US, java.util.Locale.SIMPLIFIED_CHINESE)) {
+                org.springframework.context.i18n.LocaleContextHolder.setLocale(locale);
+                var row = service.getUnifiedTimeline(5L).get(0);
+                assertEquals(locale.equals(java.util.Locale.US)
+                        ? "Assigned and created execution: Dispatch #14001" : "已指派并创建执行：Dispatch #14001", row.getContent());
+                assertEquals(14001L, row.getExecutionControl().getDispatchId());
+                assertEquals("操作者 <b>raw</b>", row.getExecutionControl().getRequestedByName());
+                assertEquals("员工原名", row.getExecutionControl().getAgentName());
+                assertEquals(detail, event.getDetailJson());
+            }
+        } finally {
+            org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous);
+        }
+    }
+
+    @Test
+    void systemTimelineExposesStructuredExecutionControlAndOperator() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of());
+        WorkitemEventDO event = new WorkitemEventDO();
+        event.setId(1L);
+        event.setTenantId(100L);
+        event.setWorkitemId(5L);
+        event.setEventType("EXECUTION_CONTROL");
+        event.setActorType("HUMAN");
+        event.setActorRef(7L);
+        event.setDetailJson("{\"action\":\"CANCEL\",\"phase\":\"REQUESTED\",\"origin\":\"USER\","
+                + "\"dispatchId\":12674,\"agentId\":12,\"agentName\":\"Terraform RD\","
+                + "\"requestedById\":7,\"requestedByName\":\"过载\",\"stopPending\":true,"
+                + "\"supersedesRequestEventId\":9001}");
+        when(eventDao.listByWorkitem(5L)).thenReturn(List.of(event));
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            var row = service.getUnifiedTimeline(5L).get(0);
+            assertNotNull(row.getExecutionControl());
+            assertEquals("CANCEL", row.getExecutionControl().getAction());
+            assertEquals("REQUESTED", row.getExecutionControl().getPhase());
+            assertEquals(12674L, row.getExecutionControl().getDispatchId());
+            assertEquals(7L, row.getExecutionControl().getRequestedById());
+            assertEquals("过载", row.getExecutionControl().getRequestedByName());
+            assertEquals("Terraform RD", row.getExecutionControl().getAgentName());
+            assertEquals(9001L, row.getExecutionControl().getSupersedesRequestEventId());
+            assertTrue(row.getExecutionControl().getStopPending());
+            assertTrue(row.getContent().contains("Execution end requested"));
+            assertEquals("EXECUTION_CONTROL", event.getEventType());
+        } finally {
+            org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous);
+        }
     }
 
     @Test

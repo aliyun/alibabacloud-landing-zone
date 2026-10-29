@@ -4,9 +4,12 @@ import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.dispatch.AgentSdlcResolver;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.dispatch.DispatchFailureReason;
 import com.aliyun.autowonder.dispatch.DispatchPauseService;
+import com.aliyun.autowonder.dispatch.DispatchRecoveryService;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
@@ -27,6 +30,7 @@ import java.util.Set;
 @Service
 public class InteractionWorkflowService {
     private static final Logger log = LoggerFactory.getLogger(InteractionWorkflowService.class);
+    private static final int RELEASE_BATCH = 200;
     private static final Set<String> PAUSEABLE = Set.of(
             DispatchStatus.PENDING, DispatchStatus.PACKAGING,
             DispatchStatus.DISPATCHED, DispatchStatus.ACKED, DispatchStatus.RUNNING,
@@ -40,6 +44,12 @@ public class InteractionWorkflowService {
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
     private final WorkitemDao workitemDao;
+    private DispatchRecoveryService recovery;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRecovery(DispatchRecoveryService value) {
+        this.recovery = value;
+    }
 
     public InteractionWorkflowService(DispatchDao dispatchDao, DispatchService dispatchService,
             DispatchPauseService pauseService, AgentSdlcResolver sdlcResolver,
@@ -142,15 +152,14 @@ public class InteractionWorkflowService {
             DispatchDO rework = dispatchService.enqueueInteractionRework(tenantId, side.getWorkitemId(),
                     targetAgentId, targetStep.getId(), targetSource.getId(),
                     sideDispatchId, waitFor, 0L);
-            if (waitFor != null) {
-                // Only the latest comment may own the pause barrier. Supersede older
-                // waiters immediately instead of leaving multiple UI steps fenced.
-                for (DispatchDO row : rows) {
-                    if (row != null && !java.util.Objects.equals(row.getId(), rework.getId())
-                            && DispatchStatus.WAITING_FOR_PAUSE.equals(row.getStatus())
-                            && ("waitForDispatchId=" + waitFor).equals(row.getResultSummary())) {
-                        dispatchService.cancelWaitingInteractionRework(tenantId, row.getId());
-                    }
+            // Only the newest comment may own delivery. Supersede every older fence,
+            // including one waiting for a different predecessor, so a later release of
+            // an obsolete barrier cannot start a stale rework after a newer request.
+            for (DispatchDO row : rows) {
+                if (row != null && row.getId() != null && rework.getId() != null
+                        && row.getId() < rework.getId()
+                        && DispatchStatus.WAITING_FOR_PAUSE.equals(row.getStatus())) {
+                    dispatchService.cancelWaitingInteractionRework(tenantId, row.getId());
                 }
             }
             if (waitFor == null && DispatchStatus.WAITING_FOR_PAUSE.equals(rework.getStatus())) {
@@ -190,23 +199,50 @@ public class InteractionWorkflowService {
 
     public void onPaused(long tenantId, long pausedDispatchId) {
         DispatchDO paused = dispatchDao.findById(pausedDispatchId);
-        if (paused != null && paused.getTenantId() == tenantId) {
+        if (paused != null && paused.getTenantId() == tenantId && paused.getWorkitemId() != null) {
             activateLatestWaitingRework(tenantId, paused.getWorkitemId(), pausedDispatchId);
         }
     }
 
-    public void reconcileReleasedWaiters(long tenantId, long executorId) {
-        for (DispatchDO predecessor : safe(dispatchDao.listReleasedPausePredecessors(executorId, 200))) {
-            if (predecessor.getTenantId() == tenantId) {
-                activateLatestWaitingRework(tenantId, predecessor.getWorkitemId(), predecessor.getId());
-            }
+    /**
+     * Callback and compensation entry point for a predecessor that may have released
+     * its pause barrier. The durable facts are re-read inside the activation lock.
+     */
+    public void reconcileWaitersForPredecessor(long tenantId, long predecessorId) {
+        DispatchDO predecessor = dispatchDao.findById(predecessorId);
+        if (predecessor != null && predecessor.getTenantId() == tenantId
+                && predecessor.getWorkitemId() != null && waitersReleasable(predecessor)) {
+            activateLatestWaitingRework(tenantId, predecessor.getWorkitemId(), predecessor.getId());
         }
     }
 
+    public void reconcileReleasedWaiters(long tenantId, long executorId) {
+        reconcileReleasedWaiterBatches(executorId, tenantId);
+    }
+
     public void reconcileReleasedWaiters() {
-        for (DispatchDO predecessor : safe(dispatchDao.listReleasedPausePredecessors(null, 200))) {
-            activateLatestWaitingRework(predecessor.getTenantId(), predecessor.getWorkitemId(),
-                    predecessor.getId());
+        reconcileReleasedWaiterBatches(null, null);
+    }
+
+    private void reconcileReleasedWaiterBatches(Long executorId, Long tenantId) {
+        long afterId = 0;
+        while (true) {
+            List<DispatchDO> batch = safe(dispatchDao.listReleasedPausePredecessors(
+                    executorId, afterId, RELEASE_BATCH));
+            if (batch.isEmpty()) return;
+            for (DispatchDO predecessor : batch) {
+                if (predecessor != null
+                        && (tenantId == null || Objects.equals(predecessor.getTenantId(), tenantId))
+                        && predecessor.getWorkitemId() != null
+                        && waitersReleasable(predecessor)) {
+                    activateLatestWaitingRework(predecessor.getTenantId(),
+                            predecessor.getWorkitemId(), predecessor.getId());
+                }
+            }
+            Long lastId = batch.get(batch.size() - 1) == null
+                    ? null : batch.get(batch.size() - 1).getId();
+            if (batch.size() < RELEASE_BATCH || lastId == null || lastId <= afterId) return;
+            afterId = lastId;
         }
     }
 
@@ -214,34 +250,132 @@ public class InteractionWorkflowService {
         return rows == null ? List.of() : rows;
     }
 
-    private void activateLatestWaitingRework(long tenantId, long workitemId, long pausedDispatchId) {
+    private boolean waitersReleasable(DispatchDO predecessor) {
+        if (predecessor == null) {
+            return false;
+        }
+        if (recovery != null) {
+            return recovery.canReleasePauseWaiter(predecessor);
+        }
+        if (DispatchStatus.PAUSED.equals(predecessor.getStatus())) {
+            return true;
+        }
+        return DispatchStatus.CANCELED.equals(predecessor.getStatus())
+                && predecessor.getError() != null
+                && predecessor.getError().startsWith(DispatchFailureReason.PAUSE_CONFIRMATION_MISSING + ":");
+    }
+
+    private void activateLatestWaitingRework(long tenantId, long workitemId, long releasedDispatchId) {
         transactionTemplate.executeWithoutResult(status -> {
             if (lockWorkitemIfPresent(tenantId, workitemId) == null) {
-                log.info("waiting interaction rework ignored because workitem is missing workitemId={} pausedDispatchId={}",
-                        workitemId, pausedDispatchId);
+                log.info("waiting interaction rework ignored because workitem is missing workitemId={} releasedDispatchId={}",
+                        workitemId, releasedDispatchId);
                 return;
             }
-            List<DispatchDO> candidates = dispatchDao.listByWorkitem(tenantId, workitemId).stream()
-                    .filter(candidate -> DispatchStatus.WAITING_FOR_PAUSE.equals(candidate.getStatus()))
-                    .filter(candidate -> Objects.equals(candidate.getResultSummary(),
-                            "waitForDispatchId=" + pausedDispatchId))
-                    .sorted(Comparator.comparingLong(
-                            (DispatchDO row) -> row.getId() == null ? 0L : row.getId()).reversed())
-                    .toList();
-            if (!candidates.isEmpty()) {
-                for (int i = 1; i < candidates.size(); i++) {
-                    dispatchService.cancelWaitingInteractionRework(tenantId, candidates.get(i).getId());
-                }
-                activateReworkInTransaction(tenantId, candidates.get(0));
+            lockControlRow(tenantId, workitemId);
+            DispatchDO released = dispatchDao.findById(releasedDispatchId);
+            if (released == null || released.getTenantId() != tenantId
+                    || !Objects.equals(released.getWorkitemId(), workitemId)
+                    || !waitersReleasable(released)) {
+                return;
             }
+            List<DispatchDO> rows = safe(dispatchDao.listByWorkitem(tenantId, workitemId));
+            List<DispatchDO> waiters = rows.stream()
+                    .filter(Objects::nonNull)
+                    .filter(waiter -> waiter.getId() != null
+                            && DispatchStatus.WAITING_FOR_PAUSE.equals(waiter.getStatus()))
+                    .sorted(Comparator.comparingLong(DispatchDO::getId).reversed())
+                    .toList();
+            if (waiters.isEmpty()) {
+                return;
+            }
+            DispatchDO latest = waiters.get(0);
+            String barrier = "waitForDispatchId=" + releasedDispatchId;
+            if (!Objects.equals(latest.getResultSummary(), barrier)) {
+                // A newer waiter owns another barrier. Waiters for the released
+                // predecessor are stale and must not start after the newer request.
+                for (DispatchDO waiter : waiters) {
+                    if (Objects.equals(waiter.getResultSummary(), barrier)) {
+                        cancelWaiter(tenantId, waiter);
+                    }
+                }
+                return;
+            }
+            if (deliveryNoLongerAllowsActivation(tenantId, workitemId, latest, rows)) {
+                for (DispatchDO waiter : waiters) {
+                    cancelWaiter(tenantId, waiter);
+                }
+                return;
+            }
+            for (int i = 1; i < waiters.size(); i++) {
+                cancelWaiter(tenantId, waiters.get(i));
+            }
+            activateReworkInTransaction(tenantId, latest);
         });
+    }
+
+    private boolean deliveryNoLongerAllowsActivation(long tenantId, long workitemId,
+            DispatchDO latest, List<DispatchDO> rows) {
+        if (recovery != null) {
+            if (recovery.closed(tenantId, workitemId)) {
+                log.info("waiting interaction rework canceled because delivery is closed workitemId={} reworkId={}",
+                        workitemId, latest.getId());
+                return true;
+            }
+            if (recovery.cancelRequested(tenantId, latest.getId())) {
+                log.info("waiting interaction rework canceled because it was fenced workitemId={} reworkId={}",
+                        workitemId, latest.getId());
+                return true;
+            }
+            if (recovery.restartAfter(tenantId, workitemId, latest.getGmtCreate())) {
+                log.info("waiting interaction rework canceled because a newer restart was allocated workitemId={} reworkId={}",
+                        workitemId, latest.getId());
+                return true;
+            }
+        }
+        boolean newerFormal = rows.stream()
+                .filter(Objects::nonNull)
+                .filter(row -> row.getId() != null && row.getId() > latest.getId())
+                .filter(row -> !dispatchService.isInteractionDispatch(row))
+                .anyMatch(row -> row.executionSourceType() == ExecutionSourceType.WORKITEM);
+        if (newerFormal) {
+            log.info("waiting interaction rework canceled because a newer formal execution exists workitemId={} reworkId={}",
+                    workitemId, latest.getId());
+        }
+        return newerFormal;
+    }
+
+    private void cancelWaiter(long tenantId, DispatchDO waiter) {
+        if (!dispatchService.cancelWaitingInteractionRework(tenantId, waiter.getId())) {
+            log.info("waiting interaction rework was already superseded reworkId={}", waiter.getId());
+        }
+    }
+
+    private void lockControlRow(long tenantId, long workitemId) {
+        if (recovery == null) {
+            return;
+        }
+        DispatchDO subject = new DispatchDO();
+        subject.setTenantId(tenantId);
+        subject.setWorkitemId(workitemId);
+        subject.setSourceType(ExecutionSourceType.WORKITEM.name());
+        recovery.lockWorkitemControl(subject);
     }
 
     private void activateReworkInTransaction(long tenantId, DispatchDO rework) {
         Long targetSdlcId = sdlcResolver.resolveSdlcId(tenantId, rework.getAgentId());
-        if (targetSdlcId == null || rework.getSdlcStepId() == null
-                || sdlcResolver.resolveStep(tenantId, targetSdlcId,
-                String.valueOf(rework.getSdlcStepId()), null) == null) {
+        SdlcStepDO targetStep = targetSdlcId == null || rework.getSdlcStepId() == null ? null
+                : sdlcResolver.resolveStep(tenantId, targetSdlcId, String.valueOf(rework.getSdlcStepId()), null);
+        if (targetSdlcId != null && rework.getSdlcStepId() != null && targetStep == null) {
+            // A queued step can outlive a change to the agent default. Preserve only a still-valid bound flow.
+            WorkitemDO bound = lockWorkitemIfPresent(tenantId, rework.getWorkitemId());
+            if (bound != null && bound.getSdlcId() != null) {
+                targetStep = sdlcResolver.resolveStep(tenantId, bound.getSdlcId(),
+                        String.valueOf(rework.getSdlcStepId()), null);
+                if (targetStep != null) targetSdlcId = bound.getSdlcId();
+            }
+        }
+        if (targetStep == null) {
             throw new IllegalStateException("comment rework target is no longer valid");
         }
         workitemService.rebindForInteractionRework(tenantId, rework.getWorkitemId(),

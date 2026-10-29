@@ -7,7 +7,6 @@ import com.aliyun.autowonder.context.AutoWonderContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -15,6 +14,7 @@ import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -36,21 +36,19 @@ class EnvironmentVariableControllerTest {
         assertEquals(WorkspaceAccessLevel.READ_ONLY, classAccess.value());
 
         assertNull(method("list").getAnnotation(RequireWorkspaceAccess.class));
-        assertNull(method("reveal", Long.class).getAnnotation(RequireWorkspaceAccess.class));
         assertAdmin(method("create", CreateEnvironmentVariableRequest.class));
         assertAdmin(method("update", Long.class, UpdateEnvironmentVariableRequest.class));
         assertAdmin(method("delete", Long.class));
     }
 
     @Test
-    void revealSetsNoStoreAndForwardsTenantScope() {
+    void valueRevealEndpointIsNotExposed() throws Exception {
         context(41L, 7L);
-        when(service.reveal(41L, 7L, 9L)).thenReturn(new EnvironmentVariableValueVO("secret"));
 
-        ResponseEntity<?> response = controller.reveal(9L);
+        mvc().perform(get("/api/environment-variables/9/value"))
+                .andExpect(status().isNotFound());
 
-        assertEquals("no-store", response.getHeaders().getCacheControl());
-        verify(service).reveal(41L, 7L, 9L);
+        verifyNoInteractions(service);
     }
 
     @Test

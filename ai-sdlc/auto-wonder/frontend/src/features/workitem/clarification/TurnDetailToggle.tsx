@@ -3,6 +3,7 @@ import { Fragment, useState } from 'react';
 import { Button, Spin, Typography } from 'antd';
 import { useTurnEvents } from './hooks';
 import { renderTimelineNode } from './eventRegistry';
+import { questionIdentity } from './answerHistory';
 import type { TimelineNode } from './timeline';
 
 interface TurnDetailToggleProps {
@@ -12,6 +13,7 @@ interface TurnDetailToggleProps {
   turnId: number;
   /** 事件按 IN 轮次落库，按需加载必须用配对的 IN 轮次 id 去查。 */
   eventTurnId: number;
+  coveredQuestionIds?: ReadonlySet<string>;
 }
 
 /**
@@ -25,11 +27,11 @@ export function processNodesOf(timeline: readonly TimelineNode[]): TimelineNode[
 }
 
 export function TurnDetailToggle({
-  workitemId, conversationId, turnId, eventTurnId,
+  workitemId, conversationId, turnId, eventTurnId, coveredQuestionIds,
 }: TurnDetailToggleProps) {
   const { t } = useTranslation('workitem');
   const [open, setOpen] = useState(false);
-  const { timeline, isLoading, isError } = useTurnEvents(
+  const { timeline, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useTurnEvents(
     workitemId, conversationId, eventTurnId, open,
   );
 
@@ -44,7 +46,8 @@ export function TurnDetailToggle({
       >
         {open ? t('clarification.hideDetails') : t('clarification.showDetails')}
       </Button>
-      {open ? <TurnDetailBody turnId={turnId} loading={isLoading} error={isError} timeline={timeline} /> : null}
+      {open && hasNextPage ? <Button loading={isFetchingNextPage} onClick={() => void fetchNextPage()}>{t('clarification.loadMoreDetails')}</Button> : null}
+      {open ? <TurnDetailBody turnId={turnId} loading={isLoading} error={isError} timeline={timeline.filter(node => !node.elicitation || !coveredQuestionIds?.has(questionIdentity(node.turnId, node.elicitation.requestId)))} /> : null}
     </div>
   );
 }

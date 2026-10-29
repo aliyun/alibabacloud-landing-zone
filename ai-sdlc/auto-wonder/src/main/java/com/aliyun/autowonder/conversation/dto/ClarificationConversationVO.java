@@ -26,6 +26,10 @@ public class ClarificationConversationVO {
     private List<ClarificationTurnVO> turns;
     /** 仅详情接口填充：刷新页面后据此恢复未解决的问答卡片。 */
     private List<ClarificationElicitationVO> pendingElicitations;
+    private List<ClarificationElicitationVO> answerDeliveries;
+    /** Bounded settled questions, including expired and legacy answers; detail only. */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private List<ClarificationElicitationVO> questionHistory;
     /** 仅详情接口填充：上次探针缓存的斜杠命令快照，前端打开即秒显（可能为空）。 */
     private List<ClarificationSlashCommandVO> availableCommands;
 }

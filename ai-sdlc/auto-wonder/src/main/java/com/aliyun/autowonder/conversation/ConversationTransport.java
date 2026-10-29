@@ -25,6 +25,14 @@ public interface ConversationTransport {
     void sendElicitationReply(AgentConversationDO conv, long turnId, String requestId,
             String action, String answerJson);
 
+    default void sendCancelWithAttempt(AgentConversationDO conv, long turnId, int dispatchAttempt) {
+        throw new UnsupportedOperationException("fenced cancellation not supported");
+    }
+
+    default void sendReliableElicitationReply(AgentConversationDO conv, AgentConversationElicitationDO row, long remainingTtlMs) {
+        throw new UnsupportedOperationException("reliable elicitation delivery not supported");
+    }
+
     /** 带外命令探针：要求执行器独立抓取该会话的可用斜杠命令，与轮次无关。 */
     void sendCommandsProbe(AgentConversationDO conv);
 }

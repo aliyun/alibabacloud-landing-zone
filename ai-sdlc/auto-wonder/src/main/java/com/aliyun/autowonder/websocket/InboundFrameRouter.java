@@ -49,6 +49,11 @@ public class InboundFrameRouter {
     private final ExecutorService executorService;
     private ScheduledTaskCapabilityGuard capabilityGuard;
     private ConversationTurnEventService conversationTurnEventService;
+    private com.aliyun.autowonder.conversation.ConversationAnswerDeliveryService answerDeliveryService;
+    @Autowired(required = false)
+    public void setAnswerDeliveryService(com.aliyun.autowonder.conversation.ConversationAnswerDeliveryService service) {
+        this.answerDeliveryService=service;
+    }
     private ProviderModelCatalogService providerModelCatalogService;
     private ConversationCommandsService conversationCommandsService;
     private DebugLogService debugLogService;
@@ -264,7 +269,8 @@ public class InboundFrameRouter {
                             ? java.util.Set.of() : new java.util.LinkedHashSet<>(legacyRunning);
                     dispatchSnapshot = new ExecutorDispatchSnapshot(es.getSession().getId(),
                             es.getMaxConcurrentDispatches(), false, false, running, running,
-                            activeConversationTurnIds, java.util.Set.of(), null, System.currentTimeMillis());
+                            activeConversationTurnIds, protocolFeatures == null ? java.util.Set.of() : java.util.Set.copyOf(protocolFeatures),
+                            null, System.currentTimeMillis(), computingConversationTurnIds(json, activeConversationTurnIds));
                 }
                 PresenceManager.SessionMutationResult heartbeatResult =
                         presenceManager.publishHeartbeat(es.getExecutorId(), es.getAgentId(),
@@ -356,7 +362,16 @@ public class InboundFrameRouter {
                         interactionWorkflowService.onPaused(es.getTenantId(), json.getLongValue("dispatchId"));
                     }
                 }
-                sendResultAck(es, json.getLongValue("dispatchId"), paused);
+                JSONObject pauseAck = new JSONObject();
+                pauseAck.put("type", "TASK_RESULT_ACK");
+                pauseAck.put("dispatchId", json.getLongValue("dispatchId"));
+                pauseAck.put("accepted", paused);
+                if (paused) {
+                    pauseAck.put("pauseCheckpointConfirmed", true);
+                    pauseAck.put("checkpointSeq", json.getLongValue("checkpointSeq"));
+                    pauseAck.put("checkpointSha256", json.getString("checkpointSha256"));
+                }
+                sendFrame(es, pauseAck, "pause ack", json.getLongValue("dispatchId"));
                 break;
             case "TASK_PAUSE_FAILED":
                 log.info("inbound TASK_PAUSE_FAILED dispatchId={} executorId={}",
@@ -396,16 +411,53 @@ public class InboundFrameRouter {
                 guidanceService.acknowledge(es.getTenantId(), es.getExecutorId(), json.getLongValue("guidanceId"),
                         json.getString("status"), json.getString("error"), json.getString("replyMarkdown"));
                 break;
+            case "CONVERSATION_ELICITATION_REPLY_ACK":
+                if (answerDeliveryService != null && json.getIntValue("answerProtocolVersion") == 1) {
+                    answerDeliveryService.receive(es.getTenantId(),es.getExecutorId(),json.getLongValue("conversationId"),
+                            json.getLongValue("turnId"),json.getIntValue("dispatchAttempt"),
+                            json.getString("requestId"),json.getString("answerId"),json.getString("status"));
+                }
+                break;
             case "CONVERSATION_TURN_ACK":
+                if (answerDeliveryService != null) answerDeliveryService.turnTerminated(es.getTenantId(),es.getExecutorId(),
+                        json.getLongValue("conversationId"),json.getLongValue("turnId"),json.getIntValue("dispatchAttempt"),json.getString("status"));
                 if (agentConversationService != null) {
+                    if (json.getIntValue("dispatchAttempt") > 0) {
                     agentConversationService.acknowledgeTurn(es.getTenantId(), es.getExecutorId(),
                             json.getLongValue("conversationId"), json.getLong("turnId"),
                             json.getString("status"), json.getString("error"),
-                            json.getString("replyMarkdown"), json.getString("sessionId"));
+                            json.getString("replyMarkdown"), json.getString("sessionId"),
+                            com.aliyun.autowonder.aiusage.dto.ConversationTurnUsage
+                                    .fromJson(json.getJSONObject("usage")), json.getInteger("dispatchAttempt"));
+                    } else {
+                    agentConversationService.acknowledgeTurn(es.getTenantId(), es.getExecutorId(),
+                            json.getLongValue("conversationId"), json.getLong("turnId"),
+                            json.getString("status"), json.getString("error"),
+                            json.getString("replyMarkdown"), json.getString("sessionId"),
+                            com.aliyun.autowonder.aiusage.dto.ConversationTurnUsage
+                                    .fromJson(json.getJSONObject("usage")));
+                    }
+                    confirmConversationDelivery(es, json);
+
                 }
                 break;
             case "CONVERSATION_TURN_EVENT":
                 if (conversationTurnEventService != null) {
+                    if (json.getIntValue("conversationDeliveryProtocolVersion") == 1
+                            || (json.getIntValue("dispatchAttempt") > 0
+                            && ("status".equals(json.getString("eventType"))
+                            || (json.getString("eventType") != null && json.getString("eventType").startsWith("acp_elicitation"))))) {
+                    conversationTurnEventService.persistReliableEvent(es.getTenantId(), es.getExecutorId(),
+                            json.getLongValue("conversationId"),
+                            json.getLongValue("turnId"),
+                            json.getIntValue("dispatchAttempt"),
+                            json.getLongValue("eventSeq"),
+                            json.getIntValue("chunkIndex"),
+                            json.getIntValue("chunkCount"),
+                            json.getString("eventType"),
+                            json.getString("payloadFragment"));
+                        confirmConversationDelivery(es, json);
+                    } else {
                     conversationTurnEventService.persistEvent(es.getTenantId(), es.getExecutorId(),
                             json.getLongValue("conversationId"),
                             json.getLongValue("turnId"),
@@ -415,6 +467,7 @@ public class InboundFrameRouter {
                             json.getIntValue("chunkCount"),
                             json.getString("eventType"),
                             json.getString("payloadFragment"));
+                    }
                 }
                 break;
             case "CONVERSATION_COMMANDS_RESULT":
@@ -542,8 +595,24 @@ public class InboundFrameRouter {
             }
         }
         return new ExecutorDispatchSnapshot(es.getSession().getId(), capacityNumber.intValue(), true, ready,
-                running, owned, conversations, java.util.Set.of(), inventoryError,
-                System.currentTimeMillis());
+                running, owned, conversations, java.util.Set.copyOf(protocolFeatures(json)), inventoryError,
+                System.currentTimeMillis(), computingConversationTurnIds(json, conversations));
+    }
+
+    private java.util.Set<Long> computingConversationTurnIds(JSONObject json, java.util.Set<Long> owners) {
+        var features = protocolFeatures(json);
+        if (features == null || !features.contains(ExecutorDispatchSnapshot.COMPUTE_INVENTORY_FEATURE)) return null;
+        try {
+            var computing = requiredLongSet(json, "computingConversationTurnIds", 50);
+            // Integer IDs only: do not truncate floating-point input into a valid identity.
+            var raw = json.getJSONArray("computingConversationTurnIds");
+            for (Object id : raw) {
+                if (!(id instanceof Integer || id instanceof Long)) return null;
+            }
+            return owners != null && owners.containsAll(computing) ? computing : null;
+        } catch (IllegalArgumentException invalidOptionalInventory) {
+            return null;
+        }
     }
 
     private java.util.Set<Long> requiredLongSet(JSONObject json, String field, int maxSize) {
@@ -624,7 +693,7 @@ public class InboundFrameRouter {
             return null;
         }
         java.util.List<String> features = new java.util.ArrayList<>();
-        for (int i = 0; i < raw.size() && features.size() < 20; i++) {
+        for (int i = 0; i < raw.size() && i < 64; i++) {
             String feature = raw.getString(i);
             if (feature != null && !feature.isEmpty()) {
                 features.add(feature);
@@ -693,6 +762,26 @@ public class InboundFrameRouter {
         reply.put("reasonCode", result.reasonCode());
         reply.put("message", result.message());
         sendFrame(es, reply, "handoff result", dispatchId);
+    }
+
+    private void confirmConversationDelivery(ExecutorSession es, JSONObject source) {
+        if (source.getIntValue("conversationDeliveryProtocolVersion") != 1) return;
+        JSONObject receipt = new JSONObject(true);
+        receipt.put("type", "CONVERSATION_DELIVERY_ACK");
+        receipt.put("conversationDeliveryProtocolVersion", 1);
+        receipt.put("frameType", source.getString("type"));
+        receipt.put("conversationId", source.getLongValue("conversationId"));
+        receipt.put("turnId", source.getLongValue("turnId"));
+        receipt.put("dispatchAttempt", source.getIntValue("dispatchAttempt"));
+        receipt.put("eventSeq", source.getLongValue("eventSeq"));
+        receipt.put("chunkIndex", source.getIntValue("chunkIndex"));
+        Runnable send = () -> sendFrame(es, receipt, "conversation delivery receipt", source.getLongValue("turnId"));
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() { send.run(); }
+                    });
+        } else send.run();
     }
 
     private void sendFrame(ExecutorSession es, JSONObject frame, String frameName, long dispatchId) {

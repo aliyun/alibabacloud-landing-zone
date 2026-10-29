@@ -11,6 +11,8 @@ class WorkitemEventTypeTest {
     void keepsPersistedCodesAndPresentationLabelsCentralized() {
         assertEquals("EXTERNAL_BUSINESS_OWNER_CHANGE", WorkitemEventType.EXTERNAL_BUSINESS_OWNER_CHANGE.code());
         assertEquals("外部业务负责人已变更", WorkitemEventType.EXTERNAL_BUSINESS_OWNER_CHANGE.actionLabel());
+        assertEquals("TAG_CHANGE", WorkitemEventType.TAG_CHANGE.code());
+        assertEquals("工单标签已更新", WorkitemEventType.TAG_CHANGE.actionLabel());
         assertTrue(WorkitemEventType.fromCode("AONE_UPDATE").isPresent());
     }
 }

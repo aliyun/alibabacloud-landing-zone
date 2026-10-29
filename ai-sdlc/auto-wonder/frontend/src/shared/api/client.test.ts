@@ -136,6 +136,16 @@ describe('apiClient', () => {
     expect(result.data.small).toBe(42);
   });
 
+  it('preserves exact raw wire IDs and embedded JSON through the real response transform', async () => {
+    const content = '中文 {"id":17900000000000001} \\ "quoted"';
+    server.use(http.get('/api/raw-long-id', () => new HttpResponse(
+      `{"success":true,"data":{"id":17900000000000001,"content":${JSON.stringify(content)}}}`,
+      { headers: { 'Content-Type': 'application/json' } },
+    )));
+    const result = await apiClient.get('/api/raw-long-id');
+    expect(result.data).toEqual({ id: '17900000000000001', content });
+  });
+
   it('injects Authorization header when token present', async () => {
     let capturedAuth = '';
     server.use(

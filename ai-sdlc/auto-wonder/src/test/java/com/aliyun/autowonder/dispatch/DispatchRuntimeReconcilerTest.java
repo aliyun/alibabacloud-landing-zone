@@ -142,6 +142,32 @@ class DispatchRuntimeReconcilerTest {
                 f.workflowService, f.drainScheduler);
     }
 
+    @Test
+    void retriesOwnedStoppedPauseFailureOnlyWhenAWorkitemWaiterNeedsItsReceipt() {
+        for (String scenario : List.of("waiting", "running", "no waiter", "still pausing", "scheduled run")) {
+            boolean running = scenario.equals("running");
+            Fixture f = new Fixture(new ExecutorDispatchSnapshot("s1", 10, true, true,
+                    running ? Set.of(2L) : Set.of(), Set.of(2L), Set.of(), Set.of(), null, 1L));
+            DispatchDO owned = row(2L, scenario.equals("still pausing")
+                    ? DispatchStatus.PAUSING : DispatchStatus.PAUSE_FAILED);
+            owned.setWorkitemId(200L);
+            if (scenario.equals("scheduled run")) {
+                owned.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+            }
+            when(f.dispatchDao.listByExecutorAndStatuses(10L,
+                    List.of(DispatchStatus.PAUSING, DispatchStatus.PAUSE_FAILED), 200))
+                    .thenReturn(List.of(owned));
+            when(f.dispatchDao.existsWaitingForPredecessor(100L, 2L))
+                    .thenReturn(!scenario.equals("no waiter"));
+
+            f.reconciler.reconcileNow(100L, 10L, 20L, "s1");
+
+            verify(f.pauseService, times(scenario.equals("waiting") ? 1 : 0))
+                    .requestPause(100L, 200L, 2L, 0L);
+            verify(f.dispatchService, never()).cancelPauseFailedIfExecutorReleased(100L, 2L);
+        }
+    }
+
     private static ExecutorDispatchSnapshot snapshot(String session, boolean ready, Set<Long> owned) {
         return new ExecutorDispatchSnapshot(session, 10, true, ready, Set.of(), owned,
                 Set.of(), Set.of(), null, 1L);

@@ -137,8 +137,12 @@ export async function run(base, state) {
     await exercise({}, 'empty', evidence.initialAgentVersionId);
     const environment = await call('POST', '/api/environment-variables', { name: 'JSON_REGRESSION_VALUE', value: INJECTED_VALUE, description: 'Synthetic regression value' });
     evidence.environmentVariableId = environment.id;
-    requireCheck((await call('GET', `/api/environment-variables/${environment.id}/value`)).value === INJECTED_VALUE, 'HTTP_ENVIRONMENT_ROUNDTRIP_MISMATCH');
-    evidence.checks.push('http_environment_roundtrip');
+    requireCheck(environment.value === '**', 'HTTP_ENVIRONMENT_CREATE_NOT_MASKED');
+    const listed = await call('GET', '/api/environment-variables');
+    requireCheck(Array.isArray(listed) && listed.some(row => row.id === environment.id
+      && row.name === 'JSON_REGRESSION_VALUE' && row.value === '**'),
+      'HTTP_ENVIRONMENT_LIST_NOT_MASKED');
+    evidence.checks.push('http_environment_masked');
     await call('POST', `${agentPath}/environment-variables/${environment.id}`, {});
     evidence.populatedAgentVersionId = await publish();
     requireCheck(evidence.populatedAgentVersionId !== evidence.initialAgentVersionId, 'AGENT_VERSION_NOT_ADVANCED');

@@ -893,6 +893,64 @@ class AuthFilterTest {
         verifyNoInteractions(workspaceMemberDao);
     }
 
+    @Test
+    void space_dashboard_overview_skips_the_current_workspace_checks() throws Exception {
+        JwtService jwtService = newJwtService();
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
+        when(workspaceDao.countUsable(anyLong())).thenReturn(0L);
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                workspaceMemberDao, workspaceDao, activeUserDao());
+        String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-space-dashboard"));
+
+        for (String path : new String[]{"/api/space-dashboard/overview", "/api/space-dashboard/overview/"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", path);
+            req.addHeader("Authorization", "Bearer " + token);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(req, resp, chain);
+
+            assertEquals(200, resp.getStatus(), path);
+            assertNotNull(chain.getRequest(), path);
+        }
+        // The dashboard resolves its own scope from the caller's roles; the token's workspace must
+        // not be consulted, otherwise a disabled current workspace would black out the dashboard.
+        verifyNoInteractions(workspaceDao);
+        verifyNoInteractions(workspaceMemberDao);
+    }
+
+    @Test
+    void the_space_dashboard_exemption_is_limited_to_authorized_gets() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), usableWorkspaceDao(), activeUserDao());
+
+        MockHttpServletRequest anonymous = new MockHttpServletRequest("GET", "/api/space-dashboard/overview");
+        MockHttpServletResponse anonymousResp = new MockHttpServletResponse();
+        MockFilterChain anonymousChain = new MockFilterChain();
+        filter.doFilter(anonymous, anonymousResp, anonymousChain);
+
+        assertEquals(401, anonymousResp.getStatus());
+        assertNull(anonymousChain.getRequest());
+
+        // A non-GET on the same path is not exempt: with the token workspace gone it still fails
+        // the workspace check before reaching the controller.
+        WorkspaceDao unusable = mock(WorkspaceDao.class);
+        when(unusable.countUsable(anyLong())).thenReturn(0L);
+        AuthFilter strictFilter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), unusable, activeUserDao());
+        String token = newJwtService().signAccess(new TokenPayload(42L, 100L, "jti-space-dashboard-post"));
+        MockHttpServletRequest post = new MockHttpServletRequest("POST", "/api/space-dashboard/overview");
+        post.addHeader("Authorization", "Bearer " + token);
+        MockHttpServletResponse postResp = new MockHttpServletResponse();
+        MockFilterChain postChain = new MockFilterChain();
+
+        strictFilter.doFilter(post, postResp, postChain);
+
+        assertEquals(403, postResp.getStatus());
+        assertNull(postChain.getRequest());
+    }
+
     @ParameterizedTest
     @MethodSource("neighbouringWorkspaceRoutes")
     void neighbouring_workspace_routes_still_go_through_the_unusable_workspace_check(

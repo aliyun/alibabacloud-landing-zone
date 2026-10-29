@@ -1,0 +1,298 @@
+[
+  {
+    "sourceCommit": "7954d8829aef4eabba9a163d6ffd5aa7fc8e88a1",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-workitem-operator",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_workitem",
+        "autowonder.list_workitems",
+        "autowonder.get_workitem",
+        "autowonder.add_workitem_comment",
+        "autowonder.list_workitem_comments",
+        "autowonder.update_workitem",
+        "autowonder.update_workitem_tags",
+        "autowonder.delete_workitem",
+        "autowonder.assign_workitem",
+        "autowonder.transition_workitem",
+        "autowonder.pause_workitem",
+        "autowonder.resume_workitem",
+        "autowonder.workitem_cli_upload_token",
+        "autowonder.workitem_cli_download_token"
+      ],
+      "instructions": "Create, inspect, update, assign, comment, pause, resume and transition AutoWonder workitems through MCP tools."
+    }
+  },
+  {
+    "sourceCommit": "7954d8829aef4eabba9a163d6ffd5aa7fc8e88a1",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-sdlc-manager",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_sdlc",
+        "autowonder.list_sdlcs",
+        "autowonder.get_sdlc",
+        "autowonder.update_sdlc",
+        "autowonder.delete_sdlc",
+        "autowonder.add_sdlc_step",
+        "autowonder.update_sdlc_step",
+        "autowonder.delete_sdlc_step",
+        "autowonder.reorder_sdlc_steps",
+        "autowonder.enable_sdlc",
+        "autowonder.disable_sdlc",
+        "autowonder.list_status_templates",
+        "autowonder.get_status_template"
+      ],
+      "instructions": "Manage AutoWonder SDLC flows, steps, enablement and workitem status templates."
+    }
+  },
+  {
+    "sourceCommit": "7954d8829aef4eabba9a163d6ffd5aa7fc8e88a1",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-agent-manager",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_agent",
+        "autowonder.update_agent",
+        "autowonder.list_agents",
+        "autowonder.get_agent"
+      ],
+      "instructions": "Create, update, list and inspect AutoWonder digital workers from MCP clients."
+    }
+  },
+  {
+    "sourceCommit": "7954d8829aef4eabba9a163d6ffd5aa7fc8e88a1",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-project-navigator",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.list_projects"
+      ],
+      "instructions": "List AutoWonder projects available to the token owner before selecting an MCP workspace."
+    }
+  },
+  {
+    "sourceCommit": "7954d8829aef4eabba9a163d6ffd5aa7fc8e88a1",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-skill-manager",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.list_platform_skills",
+        "autowonder.install_platform_skill",
+        "autowonder.create_skill",
+        "autowonder.list_skills",
+        "autowonder.get_skill",
+        "autowonder.update_skill",
+        "autowonder.delete_skill",
+        "autowonder.inspect_skill_package",
+        "autowonder.upload_skill_package",
+        "autowonder.create_skill_from_package",
+        "autowonder.update_skill_package",
+        "autowonder.list_categories",
+        "autowonder.get_category",
+        "autowonder.create_category",
+        "autowonder.update_category",
+        "autowonder.delete_category",
+        "autowonder.set_skill_category",
+        "autowonder.batch_set_skill_category"
+      ],
+      "instructions": "Manage skills, MCP server records and plugin records, upload Skill packages, install reusable AutoWonder platform skills, and organize skills with project-level categories."
+    }
+  },
+  {
+    "sourceCommit": "7954d8829aef4eabba9a163d6ffd5aa7fc8e88a1",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-scheduled-task-operator",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_scheduled_task",
+        "autowonder.list_scheduled_tasks",
+        "autowonder.get_scheduled_task",
+        "autowonder.update_scheduled_task",
+        "autowonder.transition_scheduled_task",
+        "autowonder.delete_scheduled_task",
+        "autowonder.get_scheduled_task_run",
+        "autowonder.list_scheduled_task_runs",
+        "autowonder.add_scheduled_task_run_comment"
+      ],
+      "instructions": "Create, inspect, update, delete and transition 7x24 scheduled tasks and their runs through MCP tools."
+    }
+  },
+  {
+    "sourceCommit": "4811a45fc523ec46e1a7b6dd6a4b3376e75e5f69",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-workitem-operator",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_workitem",
+        "autowonder.list_workitems",
+        "autowonder.get_workitem",
+        "autowonder.add_workitem_comment",
+        "autowonder.list_workitem_comments",
+        "autowonder.update_workitem",
+        "autowonder.delete_workitem",
+        "autowonder.assign_workitem",
+        "autowonder.transition_workitem",
+        "autowonder.pause_workitem",
+        "autowonder.resume_workitem",
+        "autowonder.workitem_cli_upload_token",
+        "autowonder.workitem_cli_download_token"
+      ],
+      "instructions": "Create, inspect, update, assign, comment, pause, resume and transition AutoWonder workitems through MCP tools."
+    }
+  },
+  {
+    "sourceCommit": "32df12f7a557f9bb05823cd7c8e2bd5ad528d538",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-skill-manager",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.list_platform_skills",
+        "autowonder.install_platform_skill",
+        "autowonder.create_skill",
+        "autowonder.list_skills",
+        "autowonder.get_skill",
+        "autowonder.update_skill",
+        "autowonder.delete_skill",
+        "autowonder.inspect_skill_package",
+        "autowonder.upload_skill_package",
+        "autowonder.create_skill_from_package",
+        "autowonder.update_skill_package"
+      ],
+      "instructions": "Manage skills, MCP server records and plugin records, upload Skill packages, and install reusable AutoWonder platform skills."
+    }
+  },
+  {
+    "sourceCommit": "0fecbb16593ff65182781235bf2ed147a3f02867",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-scheduled-task-operator",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_scheduled_task",
+        "autowonder.list_scheduled_tasks",
+        "autowonder.get_scheduled_task",
+        "autowonder.update_scheduled_task",
+        "autowonder.transition_scheduled_task",
+        "autowonder.get_scheduled_task_run",
+        "autowonder.add_scheduled_task_run_comment"
+      ],
+      "instructions": "Create, inspect, update and transition 7x24 scheduled tasks and their runs through MCP tools."
+    }
+  },
+  {
+    "sourceCommit": "40f2f4415cd55127f49160cf6e40660891f56e9c",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-workitem-operator",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_workitem",
+        "autowonder.list_workitems",
+        "autowonder.get_workitem",
+        "autowonder.add_workitem_comment",
+        "autowonder.list_workitem_comments",
+        "autowonder.update_workitem",
+        "autowonder.delete_workitem",
+        "autowonder.assign_workitem",
+        "autowonder.transition_workitem",
+        "autowonder.pause_workitem",
+        "autowonder.resume_workitem",
+        "autowonder.workitem_cli_upload_token"
+      ],
+      "instructions": "Create, inspect, update, assign, comment, pause, resume and transition AutoWonder workitems through MCP tools."
+    }
+  },
+  {
+    "sourceCommit": "be7f9075717afc2fb45ed1d12aa315b147847764",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-workitem-operator",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_workitem",
+        "autowonder.list_workitems",
+        "autowonder.get_workitem",
+        "autowonder.add_workitem_comment",
+        "autowonder.list_workitem_comments",
+        "autowonder.update_workitem",
+        "autowonder.delete_workitem",
+        "autowonder.assign_workitem",
+        "autowonder.transition_workitem",
+        "autowonder.pause_workitem",
+        "autowonder.resume_workitem"
+      ],
+      "instructions": "Create, inspect, update, assign, comment, pause, resume and transition AutoWonder workitems through MCP tools."
+    }
+  },
+  {
+    "sourceCommit": "22b54c6b3f1c930e9da3a13b5a855c8709c216ff",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-agent-manager",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_agent",
+        "autowonder.list_agents",
+        "autowonder.get_agent"
+      ],
+      "instructions": "Create, list and inspect AutoWonder digital workers from MCP clients."
+    }
+  },
+  {
+    "sourceCommit": "d3741cee9678eaaaf0d208311e77fa1122e56c93",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-skill-manager",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.list_platform_skills",
+        "autowonder.install_platform_skill",
+        "autowonder.create_skill",
+        "autowonder.list_skills",
+        "autowonder.get_skill",
+        "autowonder.update_skill",
+        "autowonder.delete_skill"
+      ],
+      "instructions": "Manage skills, MCP server records and plugin records, and install reusable AutoWonder platform skills."
+    }
+  },
+  {
+    "sourceCommit": "077b5f197d7c9c1559698ea447d8c49cbac19977",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-workitem-operator",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.create_workitem",
+        "autowonder.list_workitems",
+        "autowonder.get_workitem",
+        "autowonder.add_workitem_comment",
+        "autowonder.transition_workitem"
+      ],
+      "instructions": "Create, inspect, comment and transition AutoWonder workitems through MCP tools."
+    }
+  },
+  {
+    "sourceCommit": "077b5f197d7c9c1559698ea447d8c49cbac19977",
+    "config": {
+      "kind": "codex-skill",
+      "id": "autowonder-skill-manager",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.list_platform_skills",
+        "autowonder.install_platform_skill",
+        "autowonder.list_skills"
+      ],
+      "instructions": "List available platform skills and install reusable AutoWonder skills for agents."
+    }
+  }
+]

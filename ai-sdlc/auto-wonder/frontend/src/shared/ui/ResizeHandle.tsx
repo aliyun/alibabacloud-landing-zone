@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 
 export type ResizeDirection = 'horizontal' | 'vertical';
 
@@ -62,11 +62,26 @@ export function ResizeHandle({ direction, value, measureValue, measureMax, min, 
     document.body.style.userSelect = '';
   };
 
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const increase = horizontal ? event.key === 'ArrowLeft' : event.key === 'ArrowUp';
+    const decrease = horizontal ? event.key === 'ArrowRight' : event.key === 'ArrowDown';
+    if (!increase && !decrease) return;
+    event.preventDefault();
+    const limit = measureMax ? measureMax() : max;
+    onChange(clamp(value + (increase ? 10 : -10), min, limit));
+  };
+
   return (
     <div
       role="separator"
+      tabIndex={0}
       aria-label={rest['aria-label'] ?? (horizontal ? t('resize.width') : t('resize.height'))}
+      aria-orientation={horizontal ? 'vertical' : 'horizontal'}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={Math.round(value)}
       data-testid={horizontal ? 'resize-handle-horizontal' : 'resize-handle-vertical'}
+      onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={endDrag}

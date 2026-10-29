@@ -27,7 +27,21 @@ export function useInsightPreference<T>(name: string, fallback: T | (() => T), v
   return [current.value, setValue] as const;
 }
 
-export function useInsightDateRange(name: string, fallback: () => [Dayjs, Dayjs], maxDays: number, latest: Dayjs) {
+export const INSIGHT_WORK_TYPES = ['ALL', 'REQ', 'BUG', 'TASK'] as const;
+export type InsightWorkType = (typeof INSIGHT_WORK_TYPES)[number];
+
+export function useInsightWorkType() {
+  return useInsightPreference<InsightWorkType>('participation.workType', 'ALL',
+    value => typeof value === 'string' && (INSIGHT_WORK_TYPES as readonly string[]).includes(value));
+}
+
+// 工单交付统计区的类型筛选与人机协作的全局筛选刻意使用不同偏好键，互不读写。
+export function useInsightDeliveryWorkType() {
+  return useInsightPreference<InsightWorkType>('delivery.workType', 'ALL',
+    value => typeof value === 'string' && (INSIGHT_WORK_TYPES as readonly string[]).includes(value));
+}
+
+export function useInsightDateRange(name: string, fallback: () => [Dayjs, Dayjs], maxDays: number, latest: Dayjs, earliest?: Dayjs) {
   const [dates, setDates] = useInsightPreference<[string, string]>(name,
     () => fallback().map(date => date.format('YYYY-MM-DD')) as [string, string],
     value => Array.isArray(value) && value.length === 2
@@ -35,7 +49,7 @@ export function useInsightDateRange(name: string, fallback: () => [Dayjs, Dayjs]
         && dayjs(date).isValid() && dayjs(date).format('YYYY-MM-DD') === date)
       && value[0] <= value[1] && !dayjs(value[1]).isAfter(latest, 'day')
       && dayjs(value[1]).diff(dayjs(value[0]), 'day') < maxDays
-      && (name !== 'participation.dates' || !dayjs(value[0]).isBefore(latest.subtract(180, 'day'), 'day')));
+      && (!earliest || !dayjs(value[0]).isBefore(earliest, 'day')));
   return [dates.map(date => dayjs(date)) as [Dayjs, Dayjs],
     (value: [Dayjs, Dayjs]) => setDates(value.map(date => date.format('YYYY-MM-DD')) as [string, string])] as const;
 }

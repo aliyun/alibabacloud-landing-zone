@@ -6,6 +6,7 @@ import com.aliyun.autowonder.storage.ObjectStorage;
 import com.aliyun.autowonder.storage.OssProperties;
 import com.aliyun.autowonder.storage.StoredObject;
 import com.aliyun.autowonder.taskpackage.TaskArtifactRef;
+import com.aliyun.autowonder.util.SignedUrlRedactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
@@ -73,6 +75,7 @@ public class DispatchCheckpointService {
         }
         resultStore.requireReady();
         return resultStore.transaction(() -> {
+            resultStore.lockSubject(dispatch);
             resultStore.lockDispatch(dispatch.getTenantId(), dispatch.getId());
             return storeLocked(dispatch, checkpointSeq, provider, providerSessionId, runtimeId, activeStepId, archive, resultId);
         });
@@ -100,6 +103,10 @@ public class DispatchCheckpointService {
             ensureRepoRevisionSidecar(existing, archive);
             pruneBestEffort(dispatch);
             return existing;
+        }
+        if (DispatchStatus.PAUSED.equals(dispatch.getStatus())
+                && checkpointDao.findPauseCheckpoint(dispatch.getTenantId(), dispatch.getId(), dispatch.getExecutorId()) != null) {
+            throw new CheckpointConflictException(); // The confirmed pause boundary is immutable.
         }
         String sha256 = sha256(archive);
         String key = "t/" + dispatch.getTenantId() + "/workitem/" + dispatch.getWorkitemId()
@@ -138,6 +145,34 @@ public class DispatchCheckpointService {
         }
     }
 
+    /** Called under the pause/control transaction before acknowledging the exact boundary. */
+    @org.springframework.transaction.annotation.Transactional
+    public boolean confirmPauseReceipt(long tenantId, long executorId, long dispatchId, long seq, String hash) {
+        String identity = "pause:" + tenantId + ":" + executorId + ":" + dispatchId + ":" + seq + ":" + hash;
+        String resultId = java.util.UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString();
+        String payloadHash = sha256(identity.getBytes(StandardCharsets.UTF_8));
+        if (resultStore == null) throw new IllegalStateException("RESULT_SCHEMA_NOT_READY");
+        resultStore.requireReady();
+        resultStore.lockDispatch(tenantId, dispatchId);
+        DispatchResultStore.Decision previous = resultStore.find(tenantId, dispatchId, resultId);
+        if (previous != null) return previous.executorId() == executorId && payloadHash.equals(previous.hash())
+                && "PAUSE_CONFIRMED".equals(previous.ack().getString("reasonCode"));
+        DispatchCheckpointDO pin = checkpointDao.findPauseCheckpoint(tenantId, dispatchId, executorId);
+        if (pin != null && (!Objects.equals(pin.getCheckpointSeq(), seq)
+                || !Objects.equals(pin.getExecutorId(), executorId))) return false;
+        if (!matchesDurableReceipt(tenantId, dispatchId, seq, hash)) return false;
+        DispatchCheckpointDO receipt = checkpointDao.findByDispatchAndSeq(tenantId, dispatchId, seq);
+        if (receipt == null || !Objects.equals(receipt.getExecutorId(), executorId)) return false;
+        JSONObject input = new JSONObject();
+        input.put("dispatchId", dispatchId);input.put("resultId", resultId);
+        input.put("checkpointSeq", seq);input.put("checkpointSha256", hash);
+        JSONObject ack = new JSONObject();
+        ack.put("disposition", "ACCEPTED");ack.put("reasonCode", "PAUSE_CONFIRMED");
+        ack.put("accepted", true);ack.put("retryable", false);
+        resultStore.insert(tenantId, executorId, input, payloadHash, ack, null);
+        return true;
+    }
+
     private void pruneBestEffort(DispatchDO dispatch) {
         try {
             prune(dispatch);
@@ -149,13 +184,84 @@ public class DispatchCheckpointService {
     }
 
     private void prune(DispatchDO dispatch) {
+        if (hasLiveReferences(dispatch)) return;
+        boolean paused = isPauseBoundary(dispatch);
+        boolean replacement = paused && hasDurablePauseReplacement(dispatch);
+        List<DispatchCheckpointDO> latest = paused && !replacement
+                ? checkpointDao.listLatestByDispatch(dispatch.getTenantId(), dispatch.getId(), RETAIN_CHECKPOINTS) : List.of();
+        DispatchCheckpointDO pausePin = paused
+                ? checkpointDao.findPauseCheckpoint(dispatch.getTenantId(), dispatch.getId(), dispatch.getExecutorId()) : null;
+        if (paused && !replacement && pausePin == null) return;
         checkpointDao.releaseResolvedPins(dispatch.getTenantId(), dispatch.getId());
         for (DispatchCheckpointDO obsolete : checkpointDao.listObsolete(
                 dispatch.getTenantId(), dispatch.getId(), RETAIN_CHECKPOINTS)) {
+            if (paused && !replacement && ((pausePin != null && Objects.equals(pausePin.getId(), obsolete.getId()))
+                    || latest.stream().anyMatch(row -> Objects.equals(row.getId(), obsolete.getId())))) continue;
             // A committed tombstone removes the checkpoint from all materializable receipt queries.
             // Object deletion belongs to a later transaction; rollback never damages a live object.
             checkpointDao.markGarbage(dispatch.getTenantId(), dispatch.getId(), obsolete.getId());
         }
+    }
+
+    /** Follow unresolved lineage under the subject lock; a durable intermediate boundary cuts the dependency. */
+    private boolean hasLiveReferences(DispatchDO source) {
+        List<DispatchDO> rows = dispatchDao.listBySource(source.getTenantId(),
+                source.executionSourceType().name(), source.getWorkitemId());
+        if (rows == null) return true;
+        var byId = new java.util.HashMap<Long, DispatchDO>();
+        for (DispatchDO row : rows) if (Objects.equals(row.getTenantId(), source.getTenantId())
+                && Objects.equals(row.getWorkitemId(), source.getWorkitemId())
+                && row.executionSourceType() == source.executionSourceType()) byId.put(row.getId(), row);
+        for (DispatchDO consumer : byId.values()) {
+            if (Objects.equals(consumer.getId(), source.getId()) || DispatchStatus.isTerminal(consumer.getStatus())
+                    || DispatchStatus.PAUSED.equals(consumer.getStatus())) continue;
+            var queue = new java.util.ArrayDeque<Long>();
+            if (consumer.getResumeFromDispatchId() != null) queue.add(consumer.getResumeFromDispatchId());
+            if (consumer.getDeliverySourceDispatchId() != null) queue.add(consumer.getDeliverySourceDispatchId());
+            // Legacy work may encode its source only in an idempotency key. Do not infer absence of a reference.
+            if (queue.isEmpty() && consumer.getId() > source.getId()) return true;
+            Set<Long> visited = new LinkedHashSet<>();
+            while (!queue.isEmpty()) {
+                Long id = queue.removeFirst();
+                if (Objects.equals(id, source.getId())) return true;
+                if (!visited.add(id)) continue;
+                if (visited.size() > MAX_RESUME_LINEAGE_DEPTH) return true;
+                DispatchDO parent = byId.get(id);
+                if (parent == null) return true;
+                DispatchCheckpointDO boundary = DispatchStatus.PAUSED.equals(parent.getStatus())
+                        ? checkpointDao.findPauseCheckpoint(source.getTenantId(), id, parent.getExecutorId())
+                        : checkpointDao.findLatestByDispatch(source.getTenantId(), id);
+                if (boundary != null && Objects.equals(boundary.getExecutorId(), parent.getExecutorId())) continue;
+                if (parent.getResumeFromDispatchId() != null) queue.add(parent.getResumeFromDispatchId());
+                if (parent.getDeliverySourceDispatchId() != null) queue.add(parent.getDeliverySourceDispatchId());
+            }
+        }
+        return false;
+    }
+
+    private boolean isPauseBoundary(DispatchDO source) {
+        return DispatchStatus.PAUSED.equals(source.getStatus())
+                || (DispatchStatus.CANCELED.equals(source.getStatus()) && checkpointDao.hasPauseDecision(
+                    source.getTenantId(), source.getId(), source.getExecutorId()) > 0);
+    }
+
+    private boolean hasDurablePauseReplacement(DispatchDO source) {
+        List<DispatchDO> rows = dispatchDao.listBySource(source.getTenantId(),
+                source.executionSourceType().name(), source.getWorkitemId());
+        if (rows == null) return false;
+        for (DispatchDO newer : rows) {
+            if (newer.getId() <= source.getId() || !Objects.equals(newer.getAgentId(), source.getAgentId())
+                    || !Objects.equals(newer.getTenantId(), source.getTenantId())
+                    || !Objects.equals(newer.getWorkitemId(), source.getWorkitemId())
+                    || newer.executionSourceType() != source.executionSourceType()) continue;
+            DispatchCheckpointDO boundary = DispatchStatus.PAUSED.equals(newer.getStatus())
+                    ? checkpointDao.findPauseCheckpoint(source.getTenantId(), newer.getId(), newer.getExecutorId())
+                    : DispatchStatus.SUCCEEDED.equals(newer.getStatus())
+                        ? checkpointDao.findLatestByDispatch(source.getTenantId(), newer.getId()) : null;
+            if (boundary != null && Objects.equals(boundary.getExecutorId(), newer.getExecutorId())
+                    && boundary.getOssRef() != null && storage.exists(boundary.getOssRef())) return true;
+        }
+        return false;
     }
 
     /** Invoked by the existing compensation sweep; no separate scheduler or in-memory retry queue. */
@@ -164,9 +270,12 @@ public class DispatchCheckpointService {
         for (DispatchCheckpointDO subject : checkpointDao.listRetentionSubjects(RETAIN_CHECKPOINTS, 200)) {
             try {
                 resultStore.transaction(() -> {
-                    resultStore.lockDispatch(subject.getTenantId(), subject.getDispatchId());
                     DispatchDO dispatch = dispatchDao.findById(subject.getDispatchId());
-                    if (dispatch != null) prune(dispatch);
+                    if (dispatch != null) {
+                        resultStore.lockSubject(dispatch);
+                        resultStore.lockDispatch(subject.getTenantId(), subject.getDispatchId());
+                        prune(dispatch);
+                    }
                     return null;
                 });
             } catch (RuntimeException failure) {
@@ -176,7 +285,16 @@ public class DispatchCheckpointService {
         for (DispatchCheckpointDO pending : checkpointDao.listGarbage(200)) {
             try {
                 resultStore.transaction(() -> {
+                    DispatchDO dispatch = dispatchDao.findById(pending.getDispatchId());
+                    if (dispatch != null) resultStore.lockSubject(dispatch);
                     resultStore.lockDispatch(pending.getTenantId(), pending.getDispatchId());
+                    if (dispatch != null && (hasLiveReferences(dispatch)
+                            || (isPauseBoundary(dispatch) && !hasDurablePauseReplacement(dispatch)))) {
+                        checkpointDao.restoreGarbage(pending.getTenantId(), pending.getDispatchId(), pending.getId());
+                        return null;
+                    }
+                    if (checkpointDao.restoreReferencedGarbage(pending.getTenantId(), pending.getDispatchId(), pending.getId()) == 1)
+                        return null;
                     DispatchCheckpointDO garbage = checkpointDao.findGarbageById(pending.getId());
                     if (garbage == null) return null;
                     storage.delete(garbage.getOssRef());
@@ -444,6 +562,18 @@ public class DispatchCheckpointService {
 
     public static class CheckpointConflictException extends RuntimeException { }
 
+    /** The dispatch is not a resumable execution or the checkpoint is not one of its restore candidates. */
+    public static class CheckpointNotRestorableException extends RuntimeException { }
+
+    /** No durable checkpoint row with that sequence exists in this dispatch's resume lineage. */
+    public static class CheckpointNotFoundException extends RuntimeException { }
+
+    /** The checkpoint row exists but the object behind it is gone from object storage. */
+    public static class CheckpointObjectMissingException extends RuntimeException { }
+
+    /** The requested checkpoint identity cannot be resolved. */
+    public static class CheckpointInvalidRequestException extends RuntimeException { }
+
     public boolean hasResumableSession(long tenantId, long dispatchId) {
         return resolveResumeSource(tenantId, dispatchId, true).providerSession() != null;
     }
@@ -478,13 +608,7 @@ public class DispatchCheckpointService {
                     providerSession == null ? null : providerSession.sessionId(),
                     null, null, null, List.of());
         }
-        List<ResumeCheckpointCandidate> candidates = ("RECOVERY".equals(dispatch.getResumeMode())
-                || "CONTINUOUS".equals(dispatch.getResumeMode())
-                || "DEGRADED_CONTINUOUS".equals(dispatch.getResumeMode())
-                || "COMMENT_INTERACTION".equals(dispatch.getResumeMode())
-                || "SIDE_INTERACTION".equals(dispatch.getResumeMode())
-                || "CANONICAL_INTERACTION".equals(dispatch.getResumeMode())
-                || "COMMENT_REWORK".equals(dispatch.getResumeMode()))
+        List<ResumeCheckpointCandidate> candidates = resumableCheckpointMode(dispatch.getResumeMode())
                 ? checkpoints.stream().map(item -> legacyCheckpointNormalizer == null
                         ? item : legacyCheckpointNormalizer.normalize(item))
                         .map(item -> new ResumeCheckpointCandidate(
@@ -495,7 +619,7 @@ public class DispatchCheckpointService {
         log.info("dispatch resume checkpoint urls dispatchId={} sourceDispatchId={} checkpointSeq={}"
                         + " candidateCount={} checkpointDownloadUrl={}",
                 dispatch.getId(), source.dispatchId(), checkpoint.getCheckpointSeq(),
-                candidates.size(), downloadUrl);
+                candidates.size(), SignedUrlRedactor.redact(downloadUrl));
         return descriptor(dispatch,
                 source.dispatchId(),
                 providerSession == null ? checkpoint.getProvider() : providerSession.provider(),
@@ -524,6 +648,96 @@ public class DispatchCheckpointService {
                 checkpointDownloadUrl, checkpointSha256, checkpointSeq, checkpointCandidates);
     }
 
+    /**
+     * Re-sign the download link of one checkpoint that the given dispatch is
+     * allowed to restore. Only a sequence number is accepted: callers can never
+     * ask the platform to sign an arbitrary object key.
+     */
+    public CheckpointDownloadLink refreshDownloadLink(DispatchDO dispatch, long checkpointSeq) {
+        if (dispatch == null || dispatch.getResumeFromDispatchId() == null
+                || !resumableCheckpointMode(dispatch.getResumeMode())) {
+            throw new CheckpointNotRestorableException();
+        }
+        if (checkpointSeq <= 0) {
+            throw new CheckpointInvalidRequestException();
+        }
+        ResumeSource source = resolveResumeSource(dispatch.getTenantId(),
+                dispatch.getResumeFromDispatchId(), false);
+        DispatchCheckpointDO recorded = findCheckpoint(source.recordedCheckpoints(), checkpointSeq);
+        if (recorded == null) {
+            DispatchCheckpointDO lineageRow = findCheckpointInLineage(dispatch, checkpointSeq);
+            if (lineageRow == null) {
+                throw new CheckpointNotFoundException();
+            }
+            if (!checkpointAvailable(lineageRow)) {
+                throw new CheckpointObjectMissingException();
+            }
+            throw new CheckpointNotRestorableException();
+        }
+        DispatchCheckpointDO available = findCheckpoint(source.checkpoints(), checkpointSeq);
+        if (available == null) {
+            throw new CheckpointObjectMissingException();
+        }
+        DispatchCheckpointDO checkpoint = legacyCheckpointNormalizer == null
+                ? available : legacyCheckpointNormalizer.normalize(available);
+        if (checkpoint.getOssRef() == null || checkpoint.getOssRef().isBlank()) {
+            throw new CheckpointObjectMissingException();
+        }
+        String downloadUrl = storage.presignGet(checkpoint.getOssRef(), DOWNLOAD_TTL_SECONDS);
+        log.info("checkpoint download url refreshed dispatchId={} sourceDispatchId={} checkpointSeq={}"
+                        + " ttlSeconds={}",
+                dispatch.getId(), source.dispatchId(), checkpointSeq, DOWNLOAD_TTL_SECONDS);
+        return new CheckpointDownloadLink(checkpointSeq, downloadUrl,
+                Instant.now().plusSeconds(DOWNLOAD_TTL_SECONDS).toString(),
+                "sha256:" + checkpoint.getSha256(), DOWNLOAD_TTL_SECONDS);
+    }
+
+    private static boolean resumableCheckpointMode(String mode) {
+        return "RECOVERY".equals(mode)
+                || "CONTINUOUS".equals(mode)
+                || "DEGRADED_CONTINUOUS".equals(mode)
+                || "COMMENT_INTERACTION".equals(mode)
+                || "SIDE_INTERACTION".equals(mode)
+                || "CANONICAL_INTERACTION".equals(mode)
+                || "COMMENT_REWORK".equals(mode);
+    }
+
+    private DispatchCheckpointDO findCheckpoint(List<DispatchCheckpointDO> checkpoints, long checkpointSeq) {
+        if (checkpoints == null) {
+            return null;
+        }
+        for (DispatchCheckpointDO checkpoint : checkpoints) {
+            if (checkpoint != null && checkpoint.getCheckpointSeq() != null
+                    && checkpoint.getCheckpointSeq() == checkpointSeq) {
+                return checkpoint;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Distinguishes "pruned or not a restore candidate" from "never existed".
+     * Everything reachable from this dispatch's resume lineage is owned by it;
+     * any other dispatch's checkpoint stays indistinguishable from a missing one.
+     */
+    private DispatchCheckpointDO findCheckpointInLineage(DispatchDO dispatch, long checkpointSeq) {
+        Long current = dispatch.getResumeFromDispatchId();
+        Set<Long> visited = new LinkedHashSet<>();
+        while (current != null && visited.size() < MAX_RESUME_LINEAGE_DEPTH && visited.add(current)) {
+            DispatchCheckpointDO row = checkpointDao.findByDispatchAndSeq(
+                    dispatch.getTenantId(), current, checkpointSeq);
+            if (row != null) {
+                return row;
+            }
+            DispatchDO source = dispatchDao.findById(current);
+            if (source == null || !Objects.equals(source.getTenantId(), dispatch.getTenantId())) {
+                return null;
+            }
+            current = source.getResumeFromDispatchId();
+        }
+        return null;
+    }
+
     private ResumeSource resolveResumeSource(long tenantId, long initialDispatchId,
             boolean requireProviderSession) {
         long currentDispatchId = initialDispatchId;
@@ -542,7 +756,8 @@ public class DispatchCheckpointService {
                     .filter(this::checkpointAvailable)
                     .toList();
             ProviderSession providerSession = providerSession(tenantId, currentDispatchId, recordedCheckpoint);
-            ResumeSource candidate = new ResumeSource(currentDispatchId, checkpoints, providerSession);
+            ResumeSource candidate = new ResumeSource(currentDispatchId, recordedCheckpoints,
+                    checkpoints, providerSession);
             if (fallback == null) {
                 fallback = candidate;
             }
@@ -557,7 +772,7 @@ public class DispatchCheckpointService {
             currentDispatchId = current.getResumeFromDispatchId();
         }
         return fallback != null ? fallback
-                : new ResumeSource(initialDispatchId, List.of(), null);
+                : new ResumeSource(initialDispatchId, List.of(), List.of(), null);
     }
 
     private boolean checkpointAvailable(DispatchCheckpointDO checkpoint) {
@@ -602,8 +817,8 @@ public class DispatchCheckpointService {
     private record ProviderSession(String provider, String sessionId) {
     }
 
-    private record ResumeSource(long dispatchId, List<DispatchCheckpointDO> checkpoints,
-            ProviderSession providerSession) {
+    private record ResumeSource(long dispatchId, List<DispatchCheckpointDO> recordedCheckpoints,
+            List<DispatchCheckpointDO> checkpoints, ProviderSession providerSession) {
     }
 
     private static String sha256(byte[] bytes) {

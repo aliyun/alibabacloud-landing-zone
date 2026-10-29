@@ -333,6 +333,7 @@
     "deleteError": "删除失败，请稍后重试",
     "bindingLabel": "{{name}}（{{label}}）",
     "close": "关闭",
-    "createAction": "新建数字员工"
+    "createAction": "新建数字员工",
+    "officialCapabilities": "平台内置能力（只读）"
   }
 }

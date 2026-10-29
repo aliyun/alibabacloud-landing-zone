@@ -36,6 +36,15 @@ upgrade tooling validates that value, records it in the working manifest and
 writes `AUTOWONDER_RUNTIME_RECOMMENDED_VERSION` before activation. Do not keep a
 separate hard-coded runtime version in deployment templates.
 
+The Community real-executor gate (`verify.sh --check --with-runtime`) follows
+the same exact-source recommendation. It accepts an explicit override only from
+the lifecycle's protected application environment snapshot and requires the live
+public branding API to agree. It never falls back to a helper-pinned version.
+Use the token-free resolver and isolated package installation procedure in the
+[E2E Agent guide](../../e2e-tests/AGENT_GUIDE.md#optional-real-qoder-task-dispatch)
+on each verification machine. A version mismatch is a configuration failure,
+not permission to edit the snapshot or weaken the real dispatch assertions.
+
 `oss.backup-bucket` / `OSS_BACKUP_BUCKET` is optional and defaults to empty.
 Backups use this bucket when configured, then `oss.artifact-bucket`, then
 `oss.bucket`. Ensure an explicit backup bucket is reachable through the configured
@@ -89,3 +98,33 @@ and upgrade scripts continue deriving it from that exact release and writing the
 resolved override before application activation; do not pin a second value in a
 manifest template. Community `application-local.yml` already provides multipart
 limits of 100 MB per file and 200 MB per request, including clarification uploads.
+
+## 1.1.0 optional tuning
+
+Recommended runtime is 0.3.30, still derived from the exact release YAML.
+New optional YAML placeholders preserve upstream defaults; deployment and upgrade
+inventory discovers them automatically. No new required secret or external service
+is introduced. Keep scheduled intervals positive and change them only with an
+operational reason. Normal installs need no overrides.
+
+| Prefix / property | Defaults | Purpose |
+| --- | --- | --- |
+| `AUTOWONDER_CONVERSATION_QUEUE_RECOVERY_FIXED_DELAY_MS` | 10000 ms | Retry queued conversations |
+| `AUTOWONDER_CONVERSATION_IM_DELIVERY_FIXED_DELAY_MS` | 5000 ms | Retry IM delivery |
+| `AUTOWONDER_CONVERSATION_ELICITATION_TIMEOUT_MINUTES` | 30 min | Question expiry |
+| `AUTOWONDER_CONVERSATION_ELICITATION_DELIVERY_TIMEOUT_SECONDS` | 300 s | Answer delivery deadline |
+| `AUTOWONDER_CONVERSATION_ELICITATION_DELIVERY_SWEEP_MS` | 1000 ms | Answer delivery retry sweep |
+| `AUTOWONDER_SQUAD_WORKFLOW_CANCEL_INTERVAL_MS` / `RECOVERY_INTERVAL_MS` | 30000 ms each | Workflow cancel and recovery |
+| `AUTOWONDER_SQUAD_WORKFLOW_CLEANUP_INTERVAL_MS` | 3600000 ms | Workflow retention sweep |
+| `AUTOWONDER_SQUAD_WORKFLOW_MAX_ACTIVE_GENERATIONS` | 2 | Concurrent generations |
+| `AUTOWONDER_SQUAD_WORKFLOW_DEADLINE_SECONDS` | 1200 s | Generation deadline |
+| `AUTOWONDER_SQUAD_WORKFLOW_RETENTION_FAILED_DAYS` / `RETENTION_SUCCESS_DAYS` | 7 / 30 days | Retention by result |
+| `AUTOWONDER_SQUAD_WORKFLOW_MAX_INPUT_BYTES` | 2097152 | Input size bound |
+| `AUTOWONDER_INSIGHTS_HUMAN_AGENT_TAIL_CACHE_TTL_SECONDS` | 60 s | Live participation cache |
+| `DASHBOARD_PIPELINE_HEALTH_AVG_SOURCE` | FACT | Average-duration data source |
+| `AUTOWONDER_TELEMETRY_SLS_ENABLED` | true | Additional business/metric export switch |
+
+`AUTOWONDER_SLS_ENABLED=false` continues to disable all public SLS exporters.
+The telemetry switch additionally suppresses metric/business export while keeping
+local logging and metrics available; it does not independently disable the system
+log appender. Set the main SLS switch false when no SLS traffic is desired.

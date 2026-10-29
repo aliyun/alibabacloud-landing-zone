@@ -24,6 +24,8 @@ import com.aliyun.autowonder.taskpackage.PackageContext;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
 import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.aliyun.autowonder.workitem.AssignmentActor;
+import com.aliyun.autowonder.workitem.WorkitemControlEventWriter.ExecutionControlEvent;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunService;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunOrchestrator;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskNotificationService;
@@ -32,6 +34,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
@@ -71,6 +74,7 @@ public class DispatchService {
     private final DispatchCheckpointService checkpointService;
     private final AuditLogService auditLogService;
     private final ExecutorRegistry executorRegistry;
+    private TransactionTemplate tx;
     private final EvolutionTelemetryEvidenceLiteService telemetryEvidenceService;
 	private final EvolutionTrialAssignmentLiteService trialAssignmentService;
     private AgentEnvironmentVariableRefDao environmentVariableRefDao;
@@ -123,6 +127,11 @@ public class DispatchService {
             "runtime_recovery");
 
     private static final long MAX_SESSION_RECOVERY_FAILOVERS = 1L;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.tx = transactionManager == null ? null : new TransactionTemplate(transactionManager);
+    }
 
     @Autowired
     public DispatchService(DispatchDao dispatchDao, DispatchRuntimeEventDao runtimeEventDao,
@@ -309,9 +318,15 @@ public class DispatchService {
     /** Starts an assignment with a fresh attempt while remaining idempotent for the assignment write. */
     public DispatchDO enqueueAssignment(long workspaceId, long workitemId, long sdlcStepId, long agentId,
             int assignmentVersion, long userId) {
+        return enqueueAssignment(workspaceId, workitemId, sdlcStepId, agentId, assignmentVersion, userId,
+                userId == SYSTEM_USER_ID ? AssignmentActor.systemFallback() : AssignmentActor.human(userId, null));
+    }
+
+    public DispatchDO enqueueAssignment(long workspaceId, long workitemId, long sdlcStepId, long agentId,
+            int assignmentVersion, long userId, AssignmentActor actor) {
         String idem = "assignment:" + workitemId + ":" + sdlcStepId + ":" + agentId
                 + ":" + assignmentVersion;
-        return enqueueAssignmentWithKey(workspaceId, workitemId, sdlcStepId, agentId, idem, userId);
+        return enqueueAssignmentWithKey(workspaceId, workitemId, sdlcStepId, agentId, idem, userId, actor);
     }
 
     /**
@@ -321,7 +336,7 @@ public class DispatchService {
      */
     public DispatchDO enqueueRestartAssignment(long workspaceId, long workitemId, long sdlcStepId,
             long agentId, String restartKey, long userId) {
-        return enqueueAssignmentWithKey(workspaceId, workitemId, sdlcStepId, agentId, restartKey, userId);
+        return enqueueAssignmentWithKey(workspaceId, workitemId, sdlcStepId, agentId, restartKey, userId, null);
     }
 
     public DispatchDO findByIdempotencyKey(long workspaceId, String idempotencyKey) {
@@ -333,7 +348,7 @@ public class DispatchService {
     }
 
     private DispatchDO enqueueAssignmentWithKey(long workspaceId, long workitemId, long sdlcStepId,
-            long agentId, String idem, long userId) {
+            long agentId, String idem, long userId, AssignmentActor actor) {
         DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
         if (existing != null) {
             log.info("assignment enqueue idempotent hit key={}", idem);
@@ -358,7 +373,15 @@ public class DispatchService {
         d.setModifierId(userId);
         d.setVersion(0);
         try {
-            insertDispatch(d);
+            if (actor != null && recoveryService != null) {
+                recoveryService.insert(d, new ExecutionControlEvent()
+                        .setAction("START").setPhase("CONFIRMED").setOrigin("ASSIGNMENT")
+                        .setAgentId(agentId).setActorType(actor.type()).setActorRef(actor.ref())
+                        .setRequestedById(actor.isHuman() ? actor.ref() : null)
+                        .setRequestedByName("SYSTEM".equals(actor.type()) ? null : actor.displayName()));
+            } else {
+                insertDispatch(d);
+            }
             log.info("assignment dispatch enqueued dispatchId={} workitemId={} stepId={} agentId={} attempt={}",
                     d.getId(), workitemId, sdlcStepId, agentId, attempt);
             return d;
@@ -759,7 +782,9 @@ public class DispatchService {
                 ? current.getError()
                 : DispatchFailureReason.PAUSE_CONFIRMATION_MISSING
                     + ": 执行器权威清单已释放该任务，但平台未收到有效暂停检查点";
-        return transition(current, DispatchStatus.CANCELED, null, null, null, null, reason);
+        return recoveryService != null
+                ? recoveryService.fencePauseFailed(current, reason)
+                : transition(current, DispatchStatus.CANCELED, null, null, null, null, reason);
     }
 
     /** Cancel a not-yet-delivered main dispatch before a comment rework replaces it. */
@@ -807,94 +832,222 @@ public class DispatchService {
             throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.busy", new Object[0], "恢复请求正在处理中");
         }
         try {
-            DispatchDO source = dispatchDao.findById(sourceDispatchId);
-            if (source == null || source.getTenantId() != workspaceId
-                    || source.executionSourceType() != ExecutionSourceType.WORKITEM
-                    || source.getWorkitemId() != workitemId) {
-                throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
-            }
-            if (recoveryService != null) recoveryService.requireOpen(source);
-            DispatchDO alreadyRetried = dispatchDao.findByIdempotencyKey(workspaceId, "continue:" + sourceDispatchId);
-            if (alreadyRetried != null) return alreadyRetried;
-            List<DispatchDO> workerDispatches = dispatchDao.listByWorkitem(workspaceId, workitemId).stream()
-                    .filter(item -> java.util.Objects.equals(item.getAgentId(), source.getAgentId()))
-                    .toList();
-            DispatchDO latestAny = workerDispatches.stream()
-                    .reduce((left, right) -> right)
-                    .orElse(null);
-            DispatchDO target;
-            if (isInteractionDispatch(source)) {
-                // 交互记录本身：维持现行围栏语义，不转接（现网该调用在最新交互上可成功续跑）
-                if (latestAny == null || !latestAny.getId().equals(source.getId())) {
-                    throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.latest", new Object[0], "只能继续该 Worker 的最新一次执行");
-                }
-                target = source;
-            } else {
-                // 仅当最新一条就是非终态交互才代表 Worker 正在处理评论；
-                // 被后续正式执行甩在身后的残留交互不得永久阻断继续
-                if (latestAny != null && isInteractionDispatch(latestAny)
-                        && !DispatchStatus.isTerminal(latestAny.getStatus())) {
-                    throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.interaction", new Object[0], "该 Worker 正在处理评论交互，请稍后再试");
-                }
-                target = workerDispatches.stream()
-                        .filter(item -> !isInteractionDispatch(item))
-                        .reduce((left, right) -> right)
-                        .orElse(null);
-                if (target == null) {
-                    throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.latest", new Object[0], "只能继续该 Worker 的最新一次执行");
-                }
-                if (!target.getId().equals(source.getId())
-                        && !java.util.Objects.equals(target.getSdlcStepId(), source.getSdlcStepId())) {
-                    throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.newer", new Object[]{target.getId(), target.getSdlcStepId()}, "该 Worker 有更新的执行（dispatchId="
-                            + target.getId() + ", stepId=" + target.getSdlcStepId()
-                            + "），请刷新后对最新执行操作");
-                }
-            }
-            String idem = "continue:" + target.getId();
-            DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
-            if (existing != null) {
-                return existing;
-            }
-            if (recoveryService != null && !DispatchStatus.isTerminal(target.getStatus()) && !DispatchStatus.PAUSED.equals(target.getStatus())) {
-                throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.end_previous", new Object[0], "请先取消或强制结束旧执行，再重试");
-            }
-            if (!canContinue(target, System.currentTimeMillis())) {
-                throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.online", new Object[0], "当前执行仍在线或已成功，不能继续");
-            }
-            if (!DispatchStatus.isTerminal(target.getStatus())
-                    && !transition(target, DispatchStatus.CANCELED, null, null, null, null,
-                            DispatchFailureReason.MANUAL_CONTINUE)) {
-                throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.state_changed", new Object[0], "执行状态已变化，请刷新后重试");
-            }
-            Integer maxAttempt = dispatchDao.findMaxAttempt(workspaceId, workitemId,
-                    target.getSdlcStepId());
-            DispatchDO recovery = new DispatchDO();
-            recovery.setTenantId(workspaceId);
-            recovery.setSourceType(ExecutionSourceType.WORKITEM.name());
-            recovery.setWorkitemId(workitemId);
-            recovery.setSdlcStepId(target.getSdlcStepId());
-            recovery.setAgentId(target.getAgentId());
-            recovery.setStatus(DispatchStatus.PENDING);
-            recovery.setAttempt((maxAttempt == null ? 0 : maxAttempt) + 1);
-            recovery.setIdempotencyKey(idem);
-            recovery.setResumeFromDispatchId(target.getId());
-            recovery.setResumeMode(isInteractionDispatch(target) ? "CANONICAL_INTERACTION" : "RECOVERY");
-            recovery.setCreatorId(userId);
-            recovery.setModifierId(userId);
-            recovery.setVersion(0);
+            ContinueResult result;
             try {
-                insertDispatch(recovery);
-            } catch (DuplicateKeyException race) {
-                DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
-                if (winner == null) {
-                    throw race;
-                }
+                result = tx == null
+                        ? continueDispatchDb(workspaceId, workitemId, sourceDispatchId, userId)
+                        : tx.execute(status -> continueDispatchDb(workspaceId, workitemId, sourceDispatchId, userId));
+            } catch (ContinueDuplicateKeyException race) {
+                DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, "continue:" + race.targetId());
+                if (winner == null) throw race.duplicate();
                 return winner;
             }
-            runPending(recovery.getId());
-            return recovery;
+            if (result.created()) runPending(result.dispatch().getId());
+            return result.dispatch();
         } finally {
             redisManager.releaseLock(lockKey, lockOwner);
+        }
+    }
+
+    private ContinueResult continueDispatchDb(long workspaceId, long workitemId,
+            long sourceDispatchId, long userId) {
+        // Lock the workitem control row before the first consistent read. Under MySQL
+        // REPEATABLE READ a read before this lock would pin an old snapshot across a
+        // concurrent close, letting a terminal retry insert into a closed delivery.
+        if (recoveryService != null) {
+            DispatchDO subject = new DispatchDO();
+            subject.setTenantId(workspaceId);
+            subject.setWorkitemId(workitemId);
+            subject.setSourceType(ExecutionSourceType.WORKITEM.name());
+            recoveryService.lockWorkitemControl(subject);
+        }
+        DispatchDO source = dispatchDao.findById(sourceDispatchId);
+        if (source == null || source.getTenantId() != workspaceId
+                || source.executionSourceType() != ExecutionSourceType.WORKITEM
+                || source.getWorkitemId() != workitemId) {
+            throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
+        }
+        if (recoveryService != null) recoveryService.requireOpen(source);
+        DispatchDO alreadyRetried = dispatchDao.findByIdempotencyKey(workspaceId, "continue:" + sourceDispatchId);
+        if (alreadyRetried != null) return new ContinueResult(alreadyRetried, false);
+        List<DispatchDO> workitemDispatches = dispatchDao.listByWorkitem(workspaceId, workitemId);
+        ContinueResolution resolution = resolveContinueTarget(source, workitemDispatches);
+        if (resolution.errorKey() != null) {
+            throw BizException.keyed(ErrorCode.CONFLICT, resolution.errorKey(),
+                    resolution.errorArgs() == null ? new Object[0] : resolution.errorArgs(),
+                    resolution.diagnostic());
+        }
+        DispatchDO target = resolution.target();
+        String idem = "continue:" + target.getId();
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
+        if (existing != null) return new ContinueResult(existing, false);
+        if (recoveryService != null && !DispatchStatus.isTerminal(target.getStatus()) && !DispatchStatus.PAUSED.equals(target.getStatus())) {
+            throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.end_previous", new Object[0], "请先取消或强制结束旧执行，再重试");
+        }
+        if (!canContinue(target, System.currentTimeMillis())) {
+            throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.online", new Object[0], "当前执行仍在线或已成功，不能继续");
+        }
+        String resumeMode = DispatchStatus.PAUSED.equals(target.getStatus()) ? "RESUME" : "RETRY";
+        if (!DispatchStatus.isTerminal(target.getStatus())
+                && !transition(target, DispatchStatus.CANCELED, null, null, null, null,
+                        DispatchFailureReason.MANUAL_CONTINUE)) {
+            throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.state_changed", new Object[0], "执行状态已变化，请刷新后重试");
+        }
+        Integer maxAttempt = dispatchDao.findMaxAttempt(workspaceId, workitemId,
+                target.getSdlcStepId());
+        DispatchDO recovery = new DispatchDO();
+        recovery.setTenantId(workspaceId);
+        recovery.setSourceType(ExecutionSourceType.WORKITEM.name());
+        recovery.setWorkitemId(workitemId);
+        recovery.setSdlcStepId(target.getSdlcStepId());
+        recovery.setAgentId(target.getAgentId());
+        recovery.setStatus(DispatchStatus.PENDING);
+        recovery.setAttempt((maxAttempt == null ? 0 : maxAttempt) + 1);
+        recovery.setIdempotencyKey(idem);
+        recovery.setResumeFromDispatchId(target.getId());
+        recovery.setResumeMode(isInteractionDispatch(target) ? "CANONICAL_INTERACTION" : "RECOVERY");
+        recovery.setCreatorId(userId);
+        recovery.setModifierId(userId);
+        recovery.setVersion(0);
+        try {
+            insertDispatch(recovery);
+        } catch (DuplicateKeyException race) {
+            throw new ContinueDuplicateKeyException(target.getId(), race);
+        }
+        if (recoveryService != null) recoveryService.recordResumeOutcome(target, recovery, userId, resumeMode);
+        return new ContinueResult(recovery, true);
+    }
+
+    private record ContinueResult(DispatchDO dispatch, boolean created) {
+    }
+
+    private static final class ContinueDuplicateKeyException extends RuntimeException {
+        private final long targetId;
+        private final DuplicateKeyException duplicate;
+
+        private ContinueDuplicateKeyException(long targetId, DuplicateKeyException duplicate) {
+            super(duplicate);
+            this.targetId = targetId;
+            this.duplicate = duplicate;
+        }
+
+        private long targetId() {
+            return targetId;
+        }
+
+        private DuplicateKeyException duplicate() {
+            return duplicate;
+        }
+    }
+
+    /** Shared pause rule for the write endpoint and delivery-progress capability flags. */
+    public static PauseResolution resolvePauseCapability(DispatchDO target, List<DispatchDO> workitemDispatches,
+                                                         boolean closed, boolean cancelRequested,
+                                                         boolean runtimeFailed, boolean executorOnline) {
+        if (target == null) {
+            return PauseResolution.deny("delivery.controlReason.notResumable", "dispatch.pause.invalid_state",
+                    "执行不存在");
+        }
+        if (closed) {
+            return PauseResolution.deny("delivery.controlReason.closed", "dispatch.recovery.closed",
+                    "交付已关闭，请先重新开启交付");
+        }
+        if (isInteractionDispatchValue(target)) {
+            return PauseResolution.deny("delivery.controlReason.interactionNoPause", "dispatch.pause.interaction",
+                    "评论交互执行不支持暂停");
+        }
+        if (cancelRequested) {
+            return PauseResolution.deny("delivery.controlReason.cancelling", "dispatch.pause.invalid_state",
+                    "正在结束本次执行");
+        }
+        List<DispatchDO> worker = (workitemDispatches == null ? List.<DispatchDO>of() : workitemDispatches).stream()
+                .filter(item -> Objects.equals(item.getAgentId(), target.getAgentId()))
+                .toList();
+        DispatchDO latestFormal = worker.stream()
+                .filter(item -> !isInteractionDispatchValue(item))
+                .reduce((left, right) -> right)
+                .orElse(null);
+        boolean pauseBarrier = latestFormal != null
+                && DispatchStatus.WAITING_FOR_PAUSE.equals(latestFormal.getStatus())
+                && ("waitForDispatchId=" + target.getId()).equals(latestFormal.getResultSummary());
+        if (!pauseBarrier && (latestFormal == null || !Objects.equals(latestFormal.getId(), target.getId()))) {
+            return PauseResolution.deny("delivery.controlReason.notLatest", "dispatch.pause.not_latest",
+                    "只能暂停该数字员工最新的执行");
+        }
+        if (runtimeFailed) {
+            return PauseResolution.deny("delivery.controlReason.runtimeFailed", "dispatch.pause.invalid_state",
+                    "执行已失败，不能暂停");
+        }
+        if (DispatchStatus.PAUSING.equals(target.getStatus())) {
+            return PauseResolution.deny("delivery.controlReason.pausing", "dispatch.pause.invalid_state",
+                    "正在暂停");
+        }
+        if (DispatchStatus.isTerminal(target.getStatus())) {
+            return PauseResolution.deny("delivery.controlReason.terminal", "dispatch.pause.invalid_state",
+                    "执行已结束");
+        }
+        if (!DispatchStatus.isPauseable(target.getStatus()) && !DispatchStatus.PAUSE_FAILED.equals(target.getStatus())) {
+            return PauseResolution.deny("delivery.controlReason.notPauseable", "dispatch.pause.invalid_state",
+                    "当前执行状态不能暂停");
+        }
+        if (!executorOnline) {
+            return PauseResolution.deny("delivery.controlReason.executorOffline", "dispatch.pause.executor_offline",
+                    "执行器离线，不能暂停");
+        }
+        return PauseResolution.allow();
+    }
+
+    public record PauseResolution(boolean allowed, String reasonKey, String errorKey, String diagnostic) {
+        static PauseResolution allow() {
+            return new PauseResolution(true, null, null, null);
+        }
+
+        static PauseResolution deny(String reasonKey, String errorKey, String diagnostic) {
+            return new PauseResolution(false, reasonKey, errorKey, diagnostic);
+        }
+    }
+
+    /** Shared by the write endpoint and delivery-progress capability flags. */
+    public static ContinueResolution resolveContinueTarget(DispatchDO source, List<DispatchDO> workitemDispatches) {
+        List<DispatchDO> workerDispatches = (workitemDispatches == null ? List.<DispatchDO>of() : workitemDispatches).stream()
+                .filter(item -> java.util.Objects.equals(item.getAgentId(), source.getAgentId()))
+                .toList();
+        DispatchDO latestAny = workerDispatches.stream().reduce((left, right) -> right).orElse(null);
+        DispatchDO target;
+        if (isInteractionDispatchValue(source)) {
+            if (latestAny == null || !latestAny.getId().equals(source.getId())) {
+                return ContinueResolution.error("dispatch.recovery.latest", new Object[0],
+                        "只能继续该 Worker 的最新一次执行");
+            }
+            target = source;
+        } else {
+            if (latestAny != null && isInteractionDispatchValue(latestAny)
+                    && !DispatchStatus.isTerminal(latestAny.getStatus())) {
+                return ContinueResolution.error("dispatch.recovery.interaction", new Object[0],
+                        "该 Worker 正在处理评论交互，请稍后再试");
+            }
+            target = workerDispatches.stream()
+                    .filter(item -> !isInteractionDispatchValue(item))
+                    .reduce((left, right) -> right)
+                    .orElse(null);
+            if (target == null) {
+                return ContinueResolution.error("dispatch.recovery.latest", new Object[0],
+                        "只能继续该 Worker 的最新一次执行");
+            }
+            if (!target.getId().equals(source.getId())
+                    && !java.util.Objects.equals(target.getSdlcStepId(), source.getSdlcStepId())) {
+                return ContinueResolution.error("dispatch.recovery.newer",
+                        new Object[]{target.getId(), target.getSdlcStepId()},
+                        "该 Worker 有更新的执行（dispatchId=" + target.getId()
+                                + ", stepId=" + target.getSdlcStepId() + "），请刷新后对最新执行操作");
+            }
+        }
+        return new ContinueResolution(target, null, null, null);
+    }
+
+    public record ContinueResolution(DispatchDO target, String errorKey, Object[] errorArgs, String diagnostic) {
+        static ContinueResolution error(String key, Object[] args, String diagnostic) {
+            return new ContinueResolution(null, key, args, diagnostic);
         }
     }
 
@@ -946,7 +1099,8 @@ public class DispatchService {
 
     /** Package and dispatch a PENDING row. Returns true once capacity was reserved. */
     public boolean runPending(long dispatchId) {
-        if (ResultCommitActions.defer("dispatch:" + dispatchId, () -> runPending(dispatchId))) return false;
+        // Packaging after commit must not block the WebSocket reader that delivers comments on ACK.
+        if (ResultCommitActions.deferAsync("dispatch:" + dispatchId, () -> runPending(dispatchId))) return false;
         String lockKey = "dispatch:lock:" + dispatchId;
         String lockOwner = UUID.randomUUID().toString();
         if (!redisManager.tryAcquireLock(lockKey, lockOwner, LOCK_TTL_MS)) {
@@ -1216,7 +1370,7 @@ public class DispatchService {
 
     /** Fill currently available capacity from the durable oldest-first PENDING queue. */
     public void drainPending(long agentId) {
-        if (ResultCommitActions.defer("drain:" + agentId, () -> drainPending(agentId))) return;
+        if (ResultCommitActions.deferAsync("drain:" + agentId, () -> drainPending(agentId))) return;
         while (true) {
             java.util.List<DispatchDO> pending = dispatchDao.listOldestPendingByAgent(agentId, 20);
             if (pending == null || pending.isEmpty()) {
@@ -1870,12 +2024,17 @@ public class DispatchService {
     }
 
     public boolean isInteractionDispatch(DispatchDO dispatch) {
+        return isInteractionDispatchValue(dispatch);
+    }
+
+    /** Static form for read-model/helper code; the instance method stays mock-friendly. */
+    public static boolean isInteractionDispatchValue(DispatchDO dispatch) {
         return dispatch != null && ("COMMENT_INTERACTION".equals(dispatch.getResumeMode())
                 || "SIDE_INTERACTION".equals(dispatch.getResumeMode())
                 || "CANONICAL_INTERACTION".equals(dispatch.getResumeMode()));
     }
 
-    private boolean isDetachedInteractionDispatch(DispatchDO dispatch) {
+    private static boolean isDetachedInteractionDispatch(DispatchDO dispatch) {
         return dispatch != null && ("SIDE_INTERACTION".equals(dispatch.getResumeMode())
                 || "CANONICAL_INTERACTION".equals(dispatch.getResumeMode()));
     }

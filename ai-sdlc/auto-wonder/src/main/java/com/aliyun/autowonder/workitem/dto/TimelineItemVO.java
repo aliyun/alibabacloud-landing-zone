@@ -19,6 +19,10 @@ public class TimelineItemVO {
     private String fromValDisplay;
     private String toValDisplay;
     private String operatorDisplayName;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private ExecutionControlVO executionControl;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private DeliveryControlVO deliveryControl;
     private Date gmtCreate;
     /** Source workitem metadata used when rendering an external-sync timeline event. */
     private String sourceProvider;

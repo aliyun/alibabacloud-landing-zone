@@ -28,6 +28,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -933,6 +934,16 @@ class ExecutorUpdateServiceTest {
         verify(presence).supportsProtocolFeature(7L, "EXECUTOR_UPDATE_V1");
         when(presence.supportsProtocolFeature(eq(7L), anyString())).thenReturn(false);
         assertFalse(service.supportsUpgrade(7));
+    }
+
+    @Test
+    void supportsUpgradeAcceptsAnAlreadyBatchedFeatureSetWithoutAnotherRead() {
+        assertTrue(service.supportsUpgrade(Set.of("EXECUTOR_UPDATE_V1", "EXECUTOR_RESTART_V1")));
+        assertFalse(service.supportsUpgrade(Set.of("EXECUTOR_RESTART_V1")));
+        assertFalse(service.supportsUpgrade(Set.of()));
+        assertFalse(service.supportsUpgrade(null));
+
+        verify(presence, never()).supportsProtocolFeature(anyLong(), anyString());
     }
 
     // ------------------------------------------------------------ deployment switch

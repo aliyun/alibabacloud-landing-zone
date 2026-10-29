@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -53,7 +53,7 @@ function firePointer(type: 'pointerdown' | 'pointermove' | 'pointerup', target: 
 
 function renderPanel(props: Partial<Parameters<typeof RightPanel>[0]> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  return { queryClient, ...render(
     <QueryClientProvider client={queryClient}>
       <RightPanel
         workitemId="1"
@@ -63,7 +63,7 @@ function renderPanel(props: Partial<Parameters<typeof RightPanel>[0]> = {}) {
         {...props}
       />
     </QueryClientProvider>,
-  );
+  ) };
 }
 
 async function enterClarifyMode() {
@@ -163,6 +163,39 @@ describe('RightPanel resize handles', () => {
       position: 'fixed',
     });
   });
+});
+
+it('replaces recovery diagnostics rather than accumulating them while switching executions and refreshing data', async () => {
+  const progress = { steps: [], executions: [301, 302].map(dispatchId => ({ dispatchId, agentId: 41,
+    agentName: 'RD', executorName: null, status: 'PAUSED', startedAt: null, durationMs: null })) };
+  let reads = 0;
+  server.use(http.get('/api/dispatches/:dispatchId/runtime-trace/events', () => HttpResponse.json({ success: true, code: '0', data: { events: [], changed: false } })),
+  http.get('/api/workitems/1/recovery', () => { reads++; return HttpResponse.json({ success: true, code: '0', data: {
+    closed: false, restarts: [], executions: [301, 302].map(dispatchId => ({ dispatchId, agentId: 41,
+      attempt: 6, status: 'PAUSED', error: `recovery-${dispatchId}`, recovery: {} })),
+  } }); }));
+  const timeline = [301, 302].map(dispatchId => ({ id: dispatchId, type: 'system' as const,
+    authorId: null, authorName: null, authorType: 'SYSTEM', isAgent: false, content: '', gmtCreate: '2026-10-21T04:00:00Z',
+    executionControl: { action: 'PAUSE', phase: 'CONFIRMED', dispatchId },
+  }));
+  const { queryClient } = renderPanel({ progress, timeline });
+  await userEvent.click(screen.getByRole('button', { name: '查看执行' }));
+  const workbench = await screen.findByTestId('delivery-workbench');
+  await waitFor(() => expect(within(workbench).getByText('recovery-302')).toBeVisible());
+  for (let i = 0; i < 3; i++) {
+    await userEvent.click(within(workbench).getByRole('button', { name: /Dispatch 301/ }));
+    await waitFor(() => expect(within(workbench).getByText('recovery-301')).toBeVisible());
+    expect(within(workbench).queryByText('recovery-302')).not.toBeInTheDocument();
+    await userEvent.click(within(workbench).getByRole('button', { name: '回到当前执行' }));
+    await waitFor(() => expect(within(workbench).getByText('recovery-302')).toBeVisible());
+    expect(within(workbench).queryByText('recovery-301')).not.toBeInTheDocument();
+    await userEvent.click(within(workbench).getByRole('tab', { name: '控制记录' }));
+    expect(within(workbench).getByTestId('execution-control-timeline-302')).toBeVisible();
+    expect(within(workbench).queryByTestId('execution-control-timeline-301')).not.toBeInTheDocument();
+    await act(() => queryClient.invalidateQueries({ queryKey: ['workitem-recovery', '1'] }));
+    expect(within(workbench).getAllByText('recovery-302')).toHaveLength(1);
+  }
+  expect(reads).toBeGreaterThanOrEqual(4);
 });
 
 describe('RightPanel clarify fullscreen', () => {

@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
+import com.aliyun.autowonder.im.PlatformImChannelConfigDO;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.slf4j.Logger;
@@ -34,12 +35,36 @@ public class DingTalkStreamStatusStore {
         write(binding.getId(), Status.notConnected(System.currentTimeMillis()));
     }
 
+    public void markConnecting(PlatformImChannelConfigDO config) {
+        write(configKey(config.getId()), new Status("CONNECTING", null, System.currentTimeMillis()));
+    }
+
+    public void markConnected(PlatformImChannelConfigDO config) {
+        write(configKey(config.getId()), new Status("CONNECTED", null, System.currentTimeMillis()));
+    }
+
+    public void markFailed(PlatformImChannelConfigDO config, String error) {
+        write(configKey(config.getId()), new Status("FAILED", error, System.currentTimeMillis()));
+    }
+
+    public void markNotConnected(PlatformImChannelConfigDO config) {
+        write(configKey(config.getId()), Status.notConnected(System.currentTimeMillis()));
+    }
+
     public Status get(Long bindingId) {
-        if (bindingId == null) {
+        return read(bindingId == null ? null : key(bindingId));
+    }
+
+    public Status getGroupChat(Long configId) {
+        return read(configId == null ? null : configKey(configId));
+    }
+
+    private Status read(String key) {
+        if (key == null) {
             return Status.notConnected();
         }
         try {
-            String raw = redisManager.getString(key(bindingId));
+            String raw = redisManager.getString(key);
             if (raw == null || raw.isBlank()) {
                 return Status.notConnected();
             }
@@ -49,17 +74,25 @@ public class DingTalkStreamStatusStore {
             }
             return status;
         } catch (RuntimeException e) {
-            log.warn("failed to read DingTalk Stream status bindingId={}", bindingId, e);
+            log.warn("failed to read DingTalk Stream status key={}", key, e);
             return Status.notConnected();
         }
     }
 
     private void write(Long bindingId, Status status) {
-        redisManager.setWithExpire(key(bindingId), JSON.toJSONString(status), TTL_SECONDS);
+        write(key(bindingId), status);
+    }
+
+    private void write(String key, Status status) {
+        redisManager.setWithExpire(key, JSON.toJSONString(status), TTL_SECONDS);
     }
 
     static String key(Long bindingId) {
         return "dingtalk:stream:status:" + bindingId;
+    }
+
+    static String configKey(Long configId) {
+        return "dingtalk:stream:config-status:" + configId;
     }
 
     public static class Status {

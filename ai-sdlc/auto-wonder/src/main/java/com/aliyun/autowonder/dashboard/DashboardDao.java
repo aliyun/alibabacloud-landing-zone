@@ -3,9 +3,11 @@ package com.aliyun.autowonder.dashboard;
 import com.aliyun.autowonder.dashboard.dto.CompletedWorkitemVO;
 import com.aliyun.autowonder.dashboard.dto.RecentTaskVO;
 import com.aliyun.autowonder.dashboard.dto.RunningTaskVO;
+import com.aliyun.autowonder.dashboard.dto.RunningWorkitemVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -24,6 +26,10 @@ public interface DashboardDao {
     int countInProgressWorkitems(@Param("tenantId") long tenantId);
 
     int countQueuedDispatches(@Param("tenantId") long tenantId);
+
+    int countTodayCreatedWorkitems(@Param("tenantId") long tenantId);
+
+    int countRunningWorkitems(@Param("tenantId") long tenantId);
 
     int countOnlineAgents(@Param("tenantId") long tenantId);
 
@@ -51,6 +57,19 @@ public interface DashboardDao {
 
     Integer avgTodaySuccessDurationMinutes(@Param("tenantId") long tenantId);
 
+    // Pipeline health (formal delivery dispatches inside an explicit [start, end) window)
+    Map<String, Object> pipelineExecutionStats(@Param("tenantId") long tenantId,
+                                               @Param("start") LocalDateTime start,
+                                               @Param("end") LocalDateTime end);
+
+    Map<String, Object> pipelineReworkStats(@Param("tenantId") long tenantId,
+                                            @Param("start") LocalDateTime start,
+                                            @Param("end") LocalDateTime end);
+
+    Integer avgPipelineWorkitemDurationMinutes(@Param("tenantId") long tenantId,
+                                               @Param("start") LocalDateTime start,
+                                               @Param("end") LocalDateTime end);
+
     // Feeds
     List<RunningTaskVO> listRunningFeed(@Param("tenantId") long tenantId, @Param("limit") int limit);
 
@@ -61,7 +80,7 @@ public interface DashboardDao {
 
     List<CompletedWorkitemVO> listWeekCompletedWorkitems(@Param("tenantId") long tenantId);
 
-    List<RunningTaskVO> listRunningWorkitems(@Param("tenantId") long tenantId);
+    List<RunningWorkitemVO> listRunningWorkitems(@Param("tenantId") long tenantId);
 
     // Lazy expand + validation
     List<RunningTaskVO> listAgentRunning(@Param("tenantId") long tenantId, @Param("agentId") long agentId);

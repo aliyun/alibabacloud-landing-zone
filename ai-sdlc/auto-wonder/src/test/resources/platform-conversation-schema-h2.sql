@@ -1,4 +1,4 @@
--- H2 版平台管家会话建表语句，镜像 docs/migrations/V051 的列、唯一键与 Owner 索引，
+-- H2 版平台管家会话建表语句，镜像 docs/migration/V062 的列、唯一键与 Owner 索引，
 -- 仅用于 DAO 层回归测试。生产 DDL 以 docs/migration/V062__platform_chief_conversation.sql 为准。
 CREATE TABLE IF NOT EXISTS agent_conversation (
     id                      BIGINT       NOT NULL AUTO_INCREMENT,
@@ -60,4 +60,17 @@ CREATE TABLE IF NOT EXISTS conversation_turn_artifact (
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversation_artifact
-    ON conversation_turn_artifact (tenant_id, conversation_id, artifact_id)
+    ON conversation_turn_artifact (tenant_id, conversation_id, artifact_id);
+
+CREATE TABLE IF NOT EXISTS agent_conversation_turn (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    tenant_id BIGINT NOT NULL, conversation_id BIGINT NOT NULL,
+    direction VARCHAR(8) NOT NULL, content CLOB, external_msg_id VARCHAR(256),
+    request_id VARCHAR(64), source_context CLOB, submitted_user_id BIGINT NULL,
+    status VARCHAR(32), error CLOB, source_inbound_turn_id BIGINT,
+    delivery_status VARCHAR(32), delivery_attempt INT DEFAULT 0,
+    delivery_available_at TIMESTAMP, delivery_error CLOB,
+    last_dispatch_at TIMESTAMP, dispatch_attempt INT DEFAULT 0,
+    gmt_create TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (tenant_id, external_msg_id)
+);

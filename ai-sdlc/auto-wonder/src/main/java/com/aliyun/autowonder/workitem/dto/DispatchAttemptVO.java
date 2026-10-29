@@ -24,4 +24,8 @@ public class DispatchAttemptVO {
     private List<StepTimingVO> stepTimings;
     private Boolean canContinue;
     private Boolean canPause;
+    private Boolean cancelRequested;
+    private Boolean stopPending;
+    private Boolean forced;
+    private DispatchControlCapabilitiesVO control;
 }

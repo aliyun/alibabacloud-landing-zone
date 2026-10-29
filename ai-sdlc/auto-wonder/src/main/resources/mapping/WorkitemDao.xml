@@ -234,6 +234,39 @@
              参数为空时不追加条件，保证既有列表/计数查询零回归 -->
         <if test="createdFrom != null">AND w.gmt_create &gt;= #{createdFrom}</if>
         <if test="createdTo != null">AND w.gmt_create &lt; #{createdTo}</if>
+        <!-- 创建者高级筛选（工单 #56513）：多选之间为 OR，与其他筛选按 AND 组合；
+             参数缺省或空集合时不追加条件，保证既有列表/计数查询零回归 -->
+        <if test="creatorIds != null and creatorIds.size() > 0">
+            AND w.creator_id IN
+            <foreach collection="creatorIds" item="creatorId" open="(" separator="," close=")">
+                #{creatorId}
+            </foreach>
+        </if>
+        <!-- 标签逻辑条件（工单 #56796）：条件之间恒为 AND；
+             AND=同时包含全部标签，OR/IN=命中任一，NOT=一个都不包含（无标签工单也命中）。
+             标签走绑定参数并由数据库生成 JSON 数组，目标列为 NULL 时 AND/OR/IN 自然不命中；
+             参数缺省或空集合时不追加条件，保证既有列表/计数查询零回归。 -->
+        <if test="tagConditions != null and tagConditions.size() > 0">
+            <foreach collection="tagConditions" item="cond">
+                <choose>
+                    <when test="cond.op == 'AND'">
+                        AND JSON_CONTAINS(w.tags, JSON_ARRAY(
+                        <foreach collection="cond.tags" item="tag" separator=",">#{tag}</foreach>
+                        ))
+                    </when>
+                    <when test="cond.op == 'NOT'">
+                        AND (w.tags IS NULL OR NOT JSON_OVERLAPS(w.tags, JSON_ARRAY(
+                        <foreach collection="cond.tags" item="tag" separator=",">#{tag}</foreach>
+                        )))
+                    </when>
+                    <otherwise>
+                        AND JSON_OVERLAPS(w.tags, JSON_ARRAY(
+                        <foreach collection="cond.tags" item="tag" separator=",">#{tag}</foreach>
+                        ))
+                    </otherwise>
+                </choose>
+            </foreach>
+        </if>
     </sql>
     <!-- 「待我决策」：统一分类 = PENDING_DECISION 且当前责任人 = 当前登录人
          （未结束 + 真人负责 + 历史成功启动过派发；外部待认领不属于任何人的「待我决策」）。
@@ -407,6 +440,19 @@
             version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>
+    <!-- 标签联想：未删除工单的 tags JSON 展开聚合，按使用次数降序、名称升序，LIMIT 由服务层固定为 200 -->
+    <select id="listTagOptions" resultType="java.lang.String">
+        SELECT jt.tag
+        FROM workitem w
+        JOIN JSON_TABLE(w.tags, '$[*]' COLUMNS (tag VARCHAR(64) PATH '$')) AS jt
+        WHERE w.tenant_id = #{tenantId}
+          AND w.is_deleted = 0
+          AND w.tags IS NOT NULL
+          AND JSON_VALID(w.tags)
+        GROUP BY jt.tag
+        ORDER BY COUNT(*) DESC, jt.tag ASC
+        LIMIT #{limit}
+    </select>
     <select id="findByExternalShareToken" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
         SELECT * FROM workitem
         WHERE external_share_token = #{externalShareToken} AND is_deleted = 0

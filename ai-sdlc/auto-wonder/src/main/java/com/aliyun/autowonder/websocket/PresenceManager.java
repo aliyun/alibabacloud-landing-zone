@@ -3,13 +3,20 @@ package com.aliyun.autowonder.websocket;
 import com.aliyun.autowonder.conversation.ConversationRuntimePresence;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.executor.ExecutorDispatchSnapshot;
+import com.aliyun.autowonder.redis.AbstractRedisManager;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 @Component
@@ -129,6 +136,121 @@ public class PresenceManager implements ConversationRuntimePresence {
         return redisManager.getString(modelKey(executorId));
     }
 
+    /** One executor's ephemeral presence, resolved for list pages without a Redis read per field. */
+    public record ExecutorPresence(boolean online, Set<String> protocolFeatures, String version, String model) {
+        public static final ExecutorPresence ABSENT = new ExecutorPresence(false, Set.of(), null, null);
+    }
+
+    private static final int PRESENCE_KEYS_PER_EXECUTOR = 5;
+
+    public ExecutorPresence presenceState(long executorId) {
+        return presenceStates(List.of(executorId)).getOrDefault(executorId, ExecutorPresence.ABSENT);
+    }
+
+    /**
+     * Resolves the presence of several executors at once. The per-executor getters above would cost
+     * about twenty round trips per row on a list page, so every key that does not depend on another
+     * read is fetched in one MGET; the closed-session markers need the session id first and ride in
+     * a second MGET. Semantics match {@link #currentDispatchSnapshot} / {@link #isExecutorOnline}.
+     */
+    public Map<Long, ExecutorPresence> presenceStates(Collection<Long> executorIds) {
+        Map<Long, ExecutorPresence> result = new HashMap<>();
+        if (executorIds == null || executorIds.isEmpty()) {
+            return result;
+        }
+        List<Long> ids = executorIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            return result;
+        }
+        List<String> keys = new ArrayList<>(ids.size() * PRESENCE_KEYS_PER_EXECUTOR);
+        for (Long id : ids) {
+            keys.add(ExecutorDispatchSnapshot.key(id));
+            keys.add(sessionKey(id));
+            keys.add(ExecutorRegistry.onlineKey(id));
+            keys.add(versionKey(id));
+            keys.add(modelKey(id));
+        }
+        List<byte[]> values = redisManager.mget(keys);
+        Map<Long, ExecutorDispatchSnapshot> snapshots = new HashMap<>();
+        Map<Long, String> sessions = new HashMap<>();
+        Map<Long, Boolean> onlineMarkers = new HashMap<>();
+        Map<Long, String> versions = new HashMap<>();
+        Map<Long, String> models = new HashMap<>();
+        Set<Long> undecodable = new HashSet<>();
+        for (int index = 0; index < ids.size(); index++) {
+            Long id = ids.get(index);
+            int offset = index * PRESENCE_KEYS_PER_EXECUTOR;
+            byte[] snapshotRaw = rawAt(values, offset);
+            if (snapshotRaw != null) {
+                try {
+                    if (AbstractRedisManager.deserialize(snapshotRaw) instanceof ExecutorDispatchSnapshot snapshot) {
+                        snapshots.put(id, snapshot);
+                    }
+                } catch (RuntimeException e) {
+                    // A snapshot written by another release must cost this row only, never the page.
+                    undecodable.add(id);
+                    log.warn("executor presence snapshot is not decodable, degrading it to absent. executorId={}",
+                            id, e);
+                }
+            }
+            String session = decodeText(rawAt(values, offset + 1));
+            if (session != null) {
+                sessions.put(id, session);
+            }
+            onlineMarkers.put(id, rawAt(values, offset + 2) != null);
+            String version = decodeText(rawAt(values, offset + 3));
+            if (version != null) {
+                versions.put(id, version);
+            }
+            String model = decodeText(rawAt(values, offset + 4));
+            if (model != null) {
+                models.put(id, model);
+            }
+        }
+        Set<Long> closedSessions = new LinkedHashSet<>();
+        if (!sessions.isEmpty()) {
+            List<Long> probing = new ArrayList<>(sessions.keySet());
+            List<byte[]> closedValues = redisManager.mget(probing.stream()
+                    .map(id -> ExecutorDispatchSnapshot.closedSessionKey(id, sessions.get(id))).toList());
+            for (int index = 0; index < probing.size(); index++) {
+                if (index < closedValues.size() && closedValues.get(index) != null) {
+                    closedSessions.add(probing.get(index));
+                }
+            }
+        }
+        for (Long id : ids) {
+            if (undecodable.contains(id)) {
+                result.put(id, ExecutorPresence.ABSENT);
+                continue;
+            }
+            ExecutorDispatchSnapshot snapshot = snapshots.get(id);
+            String session = sessions.get(id);
+            boolean currentSession = snapshot != null && session != null
+                    && session.equals(snapshot.sessionId()) && !closedSessions.contains(id);
+            Set<String> features = currentSession && snapshot.protocolFeatures() != null
+                    ? snapshot.protocolFeatures() : Set.of();
+            result.put(id, new ExecutorPresence(
+                    currentSession && Boolean.TRUE.equals(onlineMarkers.get(id)),
+                    features, versions.get(id), models.get(id)));
+        }
+        return result;
+    }
+
+    private static byte[] rawAt(List<byte[]> values, int index) {
+        return index < values.size() ? values.get(index) : null;
+    }
+
+    private static String decodeText(byte[] raw) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return AbstractRedisManager.decodeString(raw);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
     public boolean announceSession(long executorId, String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             return false;
@@ -176,7 +298,7 @@ public class PresenceManager implements ConversationRuntimePresence {
                 snapshot.inventoryReady(), snapshot.runningDispatchIds(), snapshot.ownedDispatchIds(),
                 snapshot.hasConversationActivityReport() ? snapshot.runningConversationTurnIds() : null,
                 Set.copyOf(features), snapshot.inventoryError(),
-                snapshot.reportedAt());
+                snapshot.reportedAt(), snapshot.computingConversationTurnIds());
         if (!redisManager.set(ExecutorDispatchSnapshot.key(executorId), storedSnapshot,
                 (int) TTL_SEC)) {
             return SessionMutationResult.RETRY;
@@ -231,6 +353,14 @@ public class PresenceManager implements ConversationRuntimePresence {
         ExecutorDispatchSnapshot snapshot = currentDispatchSnapshot(executorId);
         if (snapshot != null) return snapshot.runningConversationTurnIds();
         return Collections.emptySet();
+    }
+
+    @Override
+    public boolean isConversationTurnInactiveAfter(long executorId, long turnId, long boundaryMillis) {
+        ExecutorDispatchSnapshot snapshot = currentDispatchSnapshot(executorId);
+        return snapshot != null && snapshot.hasConversationActivityReport()
+                && snapshot.reportedAt() > boundaryMillis
+                && !snapshot.runningConversationTurnIds().contains(turnId);
     }
 
     public int capacity(long executorId) {

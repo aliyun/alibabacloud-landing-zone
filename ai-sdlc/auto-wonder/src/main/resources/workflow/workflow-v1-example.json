@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "1.0",
+  "inputHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "workflow": {
+    "nodes": [
+      {
+        "id": "n-dev",
+        "kind": "MEMBER",
+        "label": "Developer",
+        "agentId": "1",
+        "responsibility": "Implements the change and hands it to review.",
+        "stepSummaries": [
+          {
+            "stepId": "101",
+            "label": "Implement",
+            "description": "Writes code and self-tests the change.",
+            "evidenceRefs": [
+              { "sourceId": "agent:1:agent-md", "fieldPath": "responsibilities", "quote": "responsible for implementation" }
+            ]
+          }
+        ],
+        "evidenceRefs": [
+          { "sourceId": "agent:1:agent-md", "fieldPath": "responsibilities", "quote": "responsible for implementation" }
+        ]
+      },
+      {
+        "id": "n-review",
+        "kind": "MEMBER",
+        "label": "Reviewer",
+        "agentId": "2",
+        "responsibility": "Reviews the change and may return it.",
+        "stepSummaries": [],
+        "evidenceRefs": [
+          { "sourceId": "agent:2:agent-md", "fieldPath": "responsibilities", "quote": "reviews changes" }
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-dev-review",
+        "source": "n-dev",
+        "target": "n-review",
+        "kind": "HANDOFF",
+        "condition": "Implementation and self-test are complete.",
+        "isMainPath": true,
+        "evidenceRefs": [
+          { "sourceId": "agent:1:agent-md", "fieldPath": "responsibilities", "quote": "hands it to review" }
+        ]
+      },
+      {
+        "id": "e-review-dev",
+        "source": "n-review",
+        "target": "n-dev",
+        "kind": "REWORK",
+        "condition": "Review finds blocking defects.",
+        "isMainPath": false,
+        "evidenceRefs": [
+          { "sourceId": "agent:2:agent-md", "fieldPath": "responsibilities", "quote": "may return it" }
+        ]
+      }
+    ],
+    "findings": []
+  },
+  "review": {
+    "status": "PASSED",
+    "checks": {
+      "memberCoverage": "PASSED",
+      "evidenceAccuracy": "PASSED",
+      "routeCompleteness": "PASSED",
+      "targetResolution": "PASSED",
+      "mainPathConsistency": "PASSED",
+      "uncertaintyDisclosure": "PASSED",
+      "schemaIntegrity": "PASSED"
+    },
+    "summary": "Two members with a handoff and a rework return; all evidence is sourced."
+  }
+}

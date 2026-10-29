@@ -19,6 +19,64 @@ import static org.mockito.Mockito.*;
 
 class WsConversationTransportTest {
 
+    @ParameterizedTest
+    @CsvSource({"true", "false"})
+    void officialIdentityReplacesLegacyPromptWithoutLosingChannelPolicy(boolean acp) throws Exception {
+        var presence = mock(PresenceManager.class);
+        when(presence.supportsProtocolFeature(9L, "CONVERSATION_ACP_INTERACTION_V1")).thenReturn(acp);
+        var sender = new WsConversationTransport(sessionRegistry, redisManager, capabilityService, null, presence);
+        var conv = new AgentConversationDO();
+        conv.setId(5L);
+        conv.setExecutorId(9L);
+        conv.setAgentId(3L);
+        conv.setChannel("PLATFORM_ASSISTANT");
+        when(capabilityService.prepare(conv, 11L)).thenReturn(new ConversationCapabilitySnapshot(
+                50L, "https://bundle", "sha", "hash", "token", Map.of(), "OFFICIAL_IDENTITY"));
+        sender.send(conv, 11L, "hello", "OLD_RESPONSIBILITIES OLD_IDENTITY_JSON", 1);
+        var payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+        var frame = new ObjectMapper().readTree(payload.getValue());
+        String prompt = frame.path("systemPrompt").asText();
+        assertTrue(prompt.startsWith("OFFICIAL_IDENTITY"));
+        assertFalse(prompt.contains("OLD_"));
+        assertTrue(prompt.contains("autowonder.propose_platform_actions"));
+        assertEquals(!acp, prompt.contains("不能使用AskUserQuestion"));
+        assertEquals(50L, frame.path("agentVersionId").asLong());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true", "false"})
+    void officialScopedChiefFramePreservesTrustedActorContentAndSession(boolean acp) throws Exception {
+        var presence = mock(PresenceManager.class);
+        when(presence.supportsProtocolFeature(9L, "CONVERSATION_ACP_INTERACTION_V1")).thenReturn(acp);
+        var sender = new WsConversationTransport(sessionRegistry, redisManager, capabilityService, null, presence);
+        var conv = new AgentConversationDO();
+        conv.setId(5L); conv.setExecutorId(9L); conv.setAgentId(3L);
+        conv.setChannel("PLATFORM_ASSISTANT"); conv.setCliSessionRef("existing-session");
+        String trustedContent = "Authenticated AutoWonder context: userId=7 workspaceId=1 "
+                + "conversationId=5 turnId=11 dispatchAttempt=2\nUser message:\nhello";
+        when(capabilityService.prepare(conv, 11L)).thenReturn(new ConversationCapabilitySnapshot(
+                50L, "https://bundle", "sha", "official-hash", "current-actor-token", Map.of(),
+                1, "OFFICIAL_IDENTITY"));
+
+        sender.send(conv, 11L, trustedContent, "OLD_IDENTITY", 2);
+
+        var payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+        var frame = new ObjectMapper().readTree(payload.getValue());
+        assertEquals(trustedContent, frame.path("content").asText());
+        assertEquals(1, frame.path("conversationActorProtocolVersion").asInt());
+        assertEquals("current-actor-token", frame.path("mcpToken").asText());
+        assertEquals("existing-session", frame.path("cliSessionRef").asText());
+        assertEquals("official-hash", frame.path("capabilityHash").asText());
+        assertEquals(2, frame.path("dispatchAttempt").asInt());
+        String prompt = frame.path("systemPrompt").asText();
+        assertTrue(prompt.startsWith("OFFICIAL_IDENTITY"));
+        assertFalse(prompt.contains("OLD_IDENTITY"));
+        assertTrue(prompt.contains("autowonder.propose_platform_actions"));
+        assertEquals(!acp, prompt.contains("不能使用AskUserQuestion"));
+    }
+
     private final SessionRegistry sessionRegistry = mock(SessionRegistry.class);
     private final RedisManager redisManager = mock(RedisManager.class);
     private final ConversationCapabilityService capabilityService = mock(ConversationCapabilityService.class);
@@ -101,7 +159,18 @@ class WsConversationTransportTest {
         assertTrue(frame.contains("\"capabilitySha256\":\"abc123\""));
         assertTrue(frame.contains("\"capabilityHash\":\"abc123\""));
         assertTrue(frame.contains("\"mcpToken\":\"awconversation_token\""));
+        assertFalse(frame.contains("conversationActorProtocolVersion"));
         assertTrue(frame.contains("\"mcpSecrets\":{\"kc:v1:test\":\"secret\"}"));
+    }
+
+    @Test
+    void scopedActorSnapshotSignalsFailClosedRuntimeProtocol() {
+        AgentConversationDO conv = new AgentConversationDO(); conv.setId(5L); conv.setExecutorId(9L); conv.setAgentId(3L);
+        when(capabilityService.prepare(conv,11L)).thenReturn(new ConversationCapabilitySnapshot(50L,"url","sha","hash","token",Map.of(),1));
+        transport.send(conv,11L,"hello",null,null);
+        ArgumentCaptor<String> payload=ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL),payload.capture());
+        assertTrue(payload.getValue().contains("\"conversationActorProtocolVersion\":1"));
     }
 
     @Test

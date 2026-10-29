@@ -1,8 +1,8 @@
 import { i18n } from '@/shared/i18n';
 import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { useTranslation } from 'react-i18next';
-import { useState, type CSSProperties } from 'react';
-import { Button, Card, Form, Input, Typography, message, Spin, Tabs } from 'antd';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
+import { Alert, Button, Card, Form, Input, Typography, message, Spin, Tabs } from 'antd';
 import {
   BgColorsOutlined,
   DeleteOutlined,
@@ -10,19 +10,21 @@ import {
   PlusOutlined,
   RestOutlined,
 } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/shared/api/client';
 import { PageHeader } from '@/shared/ui/PageHeader';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useAuthStore } from '@/shared/auth/store';
-import type { WorkspaceInfo, SwitchWorkspaceResponse } from '@/shared/types/common';
+import type { WorkspaceInfo } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
 import { myWorkspacesQueryKey } from './api';
 import { AllWorkspacesTab } from './AllWorkspacesTab';
+import { useSwitchWorkspace } from './useSwitchWorkspace';
+import { SpaceDashboardPage } from '@/features/spaceDashboard/SpaceDashboardPage';
+import { SpaceDashboardForbidden } from '@/features/spaceDashboard/components/SpaceDashboardForbidden';
 import { WorkspaceEditModal } from './WorkspaceEditModal';
 import { WorkspaceDeleteModal } from './WorkspaceDeleteModal';
-import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
 import './workspaceLifecycle.css';
 
 const { Title, Text } = Typography;
@@ -31,6 +33,12 @@ const { TextArea } = Input;
 const ACCENT_COLOR = 'var(--aw-accent-text)';
 const BORDER_COLOR = 'var(--aw-border)';
 const WORKSPACE_CARD_SHADOW = '0 0 0 1px var(--aw-accent-text)';
+/** Deep links may only return to the channel integration page this feature owns. */
+const ALLOWED_RETURN_TO = '/integrations?tab=channels';
+
+function safeReturnTo(value: string | null): string | null {
+  return value === ALLOWED_RETURN_TO ? value : null;
+}
 
 export function WorkspaceSelectPage() {
   const { t } = useTranslation('auth');
@@ -39,9 +47,13 @@ export function WorkspaceSelectPage() {
   const [editTarget, setEditTarget] = useState<WorkspaceInfo | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkspaceInfo | null>(null);
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const setAccessToken = useAuthStore((s) => s.setAccessToken);
-  const setCurrentWorkspace = useAuthStore((s) => s.setCurrentWorkspace);
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const targetWorkspaceId = Number(searchParams.get('targetWorkspaceId')) || null;
+  const returnTo = safeReturnTo(searchParams.get('returnTo'));
+  const deepLinkAttempted = useRef(false);
+  const [deepLinkDenied, setDeepLinkDenied] = useState(false);
+  const switchWorkspace = useSwitchWorkspace();
   const clearCurrentWorkspace = useAuthStore((s) => s.clearCurrentWorkspace);
   const currentWorkspace = useAuthStore((s) => s.currentWorkspace);
   const user = useAuthStore((s) => s.user);
@@ -55,20 +67,42 @@ export function WorkspaceSelectPage() {
     },
   });
 
-  const handleSwitch = async (workspace: WorkspaceInfo) => {
-    try {
-      const resp = await apiClient.post<SwitchWorkspaceResponse>(`/api/workspaces/${workspace.id}/switch`);
-      const { accessToken, accessLevel } = resp.data;
-      setAccessToken(accessToken);
-      setCurrentWorkspace(workspace, accessLevel);
-      await refreshTenantScopedQueries(queryClient);
-      navigate('/');
-    } catch (e) {
-      if (e instanceof ApiError) {
-        message.error(e.message);
-      }
+  // 入口可见性只影响 Tab 是否出现，安全边界在服务端（非管理员调用接口返回 403）。
+  const canSeeDashboard = user?.isAdmin === true
+    || (workspaces ?? []).some((workspace) => workspace.canManage === true);
+  const requestedTab = searchParams.get('tab')
+    ?? (location.pathname === '/workspaces/dashboard' ? 'dashboard' : 'mine');
+  const knownTab = requestedTab === 'all' || requestedTab === 'dashboard' ? requestedTab : 'mine';
+  // 无管理权限却直接访问看板路径时按 requirement-spec §3.1/§4.7/§6-3 展示无权限空态，
+  // 不再静默回落到「我的工作空间」；Tab 本身仍对非管理员隐藏。
+  const dashboardDenied = knownTab === 'dashboard' && workspaces !== undefined && !canSeeDashboard;
+  // 列表未加载完成前先停留在「我的工作空间」，避免无权限判定尚未成立时提前挂载看板请求。
+  const activeTab = knownTab === 'dashboard' && workspaces === undefined ? 'mine' : knownTab;
+
+  const handleSwitch = (workspace: WorkspaceInfo, destination: string = '/') =>
+    switchWorkspace(workspace, destination);
+
+  // Cross-Workspace deep link: only a Workspace the caller is actually a member of is switched to,
+  // and the return route is limited to the channel page. A missing membership never falls back to
+  // the current Workspace.
+  useEffect(() => {
+    if (!targetWorkspaceId || deepLinkAttempted.current || !workspaces) {
+      return;
     }
-  };
+    deepLinkAttempted.current = true;
+    const target = workspaces.find((workspace) => workspace.id === targetWorkspaceId);
+    if (!target) {
+      setDeepLinkDenied(true);
+      return;
+    }
+    handleSwitch(target, returnTo ?? '/').then((switched) => {
+      if (!switched) {
+        setDeepLinkDenied(true);
+      }
+    });
+    // handleSwitch only changes identity-scoped state and navigates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetWorkspaceId, workspaces]);
 
   const handleCreate = async (values: { name: string; description?: string; background?: string }) => {
     setCreating(true);
@@ -94,6 +128,18 @@ export function WorkspaceSelectPage() {
     }
   };
 
+  // 看板 Tab 用独立路径便于深链与分享；其余 Tab 走 ?tab= 与 URL 双向同步。
+  const handleTabChange = (key: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    if (key === 'dashboard') {
+      navigate({ pathname: '/workspaces/dashboard', search: next.toString() });
+      return;
+    }
+    next.set('tab', key);
+    navigate({ pathname: '/workspaces', search: next.toString() });
+  };
+
   return (
     <div style={pageShellStyle}>
       <PageHeader brandTo="/workspaces" />
@@ -103,8 +149,21 @@ export function WorkspaceSelectPage() {
           <Button icon={<BgColorsOutlined />} onClick={() => navigate('/workspaces/branding')}>{t('workspace.platformSettings')}</Button>
         </div>
 
+        {deepLinkDenied && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={t('workspace.deepLinkDenied')}
+          />
+        )}
+
+        {dashboardDenied && <SpaceDashboardForbidden />}
+
+        {!dashboardDenied && (
         <Tabs
-          defaultActiveKey="mine"
+          activeKey={activeTab}
+          onChange={handleTabChange}
           tabBarExtraContent={
           <button
             type="button"
@@ -262,8 +321,14 @@ export function WorkspaceSelectPage() {
               label: t('workspace.all'),
               children: <AllWorkspacesTab />,
             },
+            ...(canSeeDashboard ? [{
+              key: 'dashboard',
+              label: <span data-testid="workspace-dashboard-tab">{t('workspace.spaceDashboard')}</span>,
+              children: <SpaceDashboardPage />,
+            }] : []),
           ]}
         />
+        )}
 
         <WorkspaceEditModal workspace={editTarget} onClose={() => setEditTarget(null)} />
         <WorkspaceDeleteModal

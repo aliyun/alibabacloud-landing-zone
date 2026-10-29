@@ -30,6 +30,7 @@ import java.util.Map;
 public class WorkitemCliDownloadTokenService {
 
     public static final String TOKEN_PREFIX = "awdownload_";
+    public static final String TURN_PURPOSE = "conversation-turn-workitem-download";
     public static final String PURPOSE = "workitem-requirement-download";
     public static final String TOKEN_ENV_NAME = "AUTOWONDER_DOWNLOAD_TOKEN";
     public static final Duration TOKEN_TTL = Duration.ofMinutes(30);
@@ -39,19 +40,47 @@ public class WorkitemCliDownloadTokenService {
     private final WorkitemDao workitemDao;
     private final WorkspaceMemberDao workspaceMemberDao;
     private final PlatformBrandingService brandingService;
+    private final ConversationMcpTokenService conversationTokens;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ConversationCredentialAuditService executionAudit;
+
+    public void auditUse(McpAccessTokenService.Principal principal, long workitemId, String action, Throwable failure) {
+        if (executionAudit != null) executionAudit.record(principal, action, workitemId, failure);
+    }
 
     public WorkitemCliDownloadTokenService(JwtService jwtService,
                                            WorkitemDao workitemDao,
                                            WorkspaceMemberDao workspaceMemberDao,
                                            PlatformBrandingService brandingService) {
+        this(jwtService, workitemDao, workspaceMemberDao, brandingService, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public WorkitemCliDownloadTokenService(JwtService jwtService, WorkitemDao workitemDao,
+            WorkspaceMemberDao workspaceMemberDao, PlatformBrandingService brandingService,
+            ConversationMcpTokenService conversationTokens) {
+        this.conversationTokens = conversationTokens;
         this.jwtService = jwtService;
         this.workitemDao = workitemDao;
         this.workspaceMemberDao = workspaceMemberDao;
         this.brandingService = brandingService;
     }
 
+    public WorkitemCliDownloadTokenVO mint(McpAccessTokenService.Principal principal, long workitemId) {
+        if (principal.executionScope() == null) return mint(principal.credentialType(), principal.userId(), workitemId);
+        if (conversationTokens == null) throw new BizException(ErrorCode.UNAUTHORIZED);
+        var verified = conversationTokens.validateExecution(principal.userId(), principal.workspaceId(), principal.executionScope());
+        if (!verified.accessLevel().allows(WorkspaceAccessLevel.READ_ONLY)) throw new BizException(ErrorCode.NO_PERMISSION);
+        return mintInternal(principal.credentialType(), principal.userId(), workitemId, verified);
+    }
+
     public WorkitemCliDownloadTokenVO mint(McpAccessTokenService.CredentialType credentialType,
                                            long userId, long workitemId) {
+        return mintInternal(credentialType, userId, workitemId, null);
+    }
+
+    private WorkitemCliDownloadTokenVO mintInternal(McpAccessTokenService.CredentialType credentialType,
+            long userId, long workitemId, McpAccessTokenService.Principal principal) {
         if (credentialType != McpAccessTokenService.CredentialType.LONG_LIVED
                 && credentialType != McpAccessTokenService.CredentialType.DISPATCH
                 && credentialType != McpAccessTokenService.CredentialType.CONVERSATION) {
@@ -61,10 +90,13 @@ public class WorkitemCliDownloadTokenService {
         if (workitem == null || workitem.getTenantId() == null) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
+        if (principal != null && !workitem.getTenantId().equals(principal.workspaceId())) throw new BizException(ErrorCode.NO_PERMISSION);
         requireReadMembership(workitem.getTenantId(), userId, WorkspaceDomain.ARTIFACT);
 
         String token = TOKEN_PREFIX
-                + jwtService.signUserPurpose(userId, PURPOSE, TOKEN_TTL.getSeconds());
+                + (principal == null ? jwtService.signUserPurpose(userId, PURPOSE, TOKEN_TTL.getSeconds())
+                : jwtService.signConversationTurn(userId, principal.workspaceId(), TURN_PURPOSE,
+                        principal.executionScope(), workitemId, TOKEN_TTL.getSeconds()));
         long now = Instant.now().getEpochSecond();
 
         WorkitemCliDownloadTokenVO vo = new WorkitemCliDownloadTokenVO();
@@ -96,6 +128,34 @@ public class WorkitemCliDownloadTokenService {
             }
             return ((Number) claims.get("uid")).longValue();
         } catch (Exception e) {
+            throw new BizException(ErrorCode.UNAUTHORIZED);
+        }
+    }
+
+    public McpAccessTokenService.Principal authenticateForWorkitem(String token, long workitemId) {
+        McpAccessTokenService.Principal signedIdentity = null;
+        try {
+            if (token == null || !token.startsWith(TOKEN_PREFIX)) throw new BizException(ErrorCode.UNAUTHORIZED);
+            String jwt = token.substring(TOKEN_PREFIX.length());
+            var common = jwtService.parseUserPurpose(jwt);
+            if (PURPOSE.equals(common.get("purpose"))) return McpAccessTokenService.Principal.personal(authenticate(token), 0L);
+            if (!TURN_PURPOSE.equals(common.get("purpose")) || conversationTokens == null) throw new BizException(ErrorCode.UNAUTHORIZED);
+            var claims = jwtService.parseConversationTurn(jwt);
+            signedIdentity = new McpAccessTokenService.Principal(claims.workspaceId(), claims.userId(),
+                    claims.scope().conversationId(), WorkspaceAccessLevel.READ_ONLY,
+                    McpAccessTokenService.CredentialType.CONVERSATION, claims.scope());
+            if (!Long.valueOf(workitemId).equals(claims.workitemId())) throw new BizException(ErrorCode.UNAUTHORIZED);
+            var principal = conversationTokens.validateExecution(claims.userId(), claims.workspaceId(), claims.scope());
+            WorkitemDO workitem = workitemDao.findById(workitemId);
+            if (workitem == null || !Long.valueOf(claims.workspaceId()).equals(workitem.getTenantId())) throw new BizException(ErrorCode.UNAUTHORIZED);
+            if (!principal.accessLevel().allows(WorkspaceAccessLevel.READ_ONLY)) throw new BizException(ErrorCode.NO_PERMISSION);
+            requireReadMembership(claims.workspaceId(), claims.userId(), WorkspaceDomain.ARTIFACT);
+            return principal;
+        } catch (BizException e) {
+            auditUse(signedIdentity, workitemId, "CLI_DOWNLOAD_AUTHENTICATE", e);
+            throw e;
+        } catch (Exception e) {
+            auditUse(signedIdentity, workitemId, "CLI_DOWNLOAD_AUTHENTICATE", e);
             throw new BizException(ErrorCode.UNAUTHORIZED);
         }
     }

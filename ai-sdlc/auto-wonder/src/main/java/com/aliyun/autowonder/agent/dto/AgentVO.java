@@ -15,6 +15,9 @@ public class AgentVO {
     private String status;
     /** STANDARD=普通数字员工 / PLATFORM=平台数字人 */
     private String kind;
+    /** Read-only release-owned Chief configuration; absent for ordinary agents. */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private java.util.Map<String, Object> officialConfiguration;
     private Long onlineVersionId;
     private Long editingVersionId;
     private Integer latestVersionNo;

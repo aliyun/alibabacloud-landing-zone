@@ -39,7 +39,8 @@ class WorkitemScheduledStartDeliveryIntegrationTest {
         DispatchService dispatchService = mock(DispatchService.class);
         DispatchDO queued = new DispatchDO();
         queued.setId(77L);
-        when(dispatchService.enqueueAssignment(100L, 500L, 300031L, 40013L, 4, 0L)).thenReturn(queued);
+        when(dispatchService.enqueueAssignment(100L, 500L, 300031L, 40013L, 4, 0L,
+                AssignmentActor.systemFallback())).thenReturn(queued);
         context.getBeanFactory().registerSingleton("assignmentListener",
                 new DispatchAssignmentListener(dispatchService));
         context.refresh();
@@ -75,7 +76,8 @@ class WorkitemScheduledStartDeliveryIntegrationTest {
 
             scanner.scanDue();
 
-            verify(dispatchService).enqueueAssignment(100L, 500L, 300031L, 40013L, 4, 0L);
+            verify(dispatchService).enqueueAssignment(100L, 500L, 300031L, 40013L, 4, 0L,
+                    AssignmentActor.systemFallback());
             verify(dispatchService).runPending(77L);
         } finally {
             context.close();

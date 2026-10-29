@@ -65,25 +65,6 @@ class EnvironmentVariableServiceTest {
         verifyNoInteractions(keyCenter);
     }
 
-    @Test
-    void revealDecryptsOnlyTenantScopedRecord() {
-        when(dao.findActiveById(41L, 9L)).thenReturn(row(9L, 41L, "TOKEN", "kc:ref", 2));
-        when(keyCenter.decrypt("kc:ref")).thenReturn("secret");
-
-        assertEquals("secret", service.reveal(41L, 7L, 9L).getValue());
-        verify(dao).findActiveById(41L, 9L);
-    }
-
-    @Test
-    void crossTenantRecordIsIndistinguishableFromMissing() {
-        when(dao.findActiveById(99L, 9L)).thenReturn(null);
-
-        BizException error = assertThrows(BizException.class, () -> service.reveal(99L, 7L, 9L));
-
-        assertEquals("33001", error.getCode());
-        verifyNoInteractions(keyCenter);
-    }
-
     @ParameterizedTest
     @ValueSource(strings = {"1TOKEN", "HAS-DASH", "WITH SPACE", ""})
     void rejectsInvalidNames(String name) {
@@ -286,7 +267,7 @@ class EnvironmentVariableServiceTest {
     }
 
     @Test
-    void createAndRevealAuditMetadataWithoutSensitiveValues() {
+    void createAuditMetadataDoesNotContainSensitiveValues() {
         when(keyCenter.encrypt("plain-secret")).thenReturn("kc:v1:opaque");
         when(dao.findActiveByNameIgnoreCase(41L, "API_TOKEN")).thenReturn(null);
         doAnswer(invocation -> {
@@ -299,19 +280,12 @@ class EnvironmentVariableServiceTest {
         service.create(41L, 7L,
                 new CreateEnvironmentVariableRequest("API_TOKEN", "plain-secret", null));
 
-        when(dao.findActiveById(41L, 9L)).thenReturn(row(9L, 41L, "API_TOKEN", "kc:v1:opaque", 0));
-        when(keyCenter.decrypt("kc:v1:opaque")).thenReturn("plain-secret");
-        service.reveal(41L, 7L, 9L);
-
         var captor = org.mockito.ArgumentCaptor.forClass(AuditLogRecord.class);
-        verify(audit, times(2)).recordRequired(captor.capture());
-        assertEquals(List.of("CREATE", "REVEAL"),
-                captor.getAllValues().stream().map(AuditLogRecord::getAction).toList());
-        for (AuditLogRecord record : captor.getAllValues()) {
-            String detail = record.getDetail().toString();
-            assertFalse(detail.contains("plain-secret"));
-            assertFalse(detail.contains("kc:v1:opaque"));
-        }
+        verify(audit).recordRequired(captor.capture());
+        assertEquals("CREATE", captor.getValue().getAction());
+        String detail = captor.getValue().getDetail().toString();
+        assertFalse(detail.contains("plain-secret"));
+        assertFalse(detail.contains("kc:v1:opaque"));
     }
 
     private EnvironmentVariableDO captureInserted() {

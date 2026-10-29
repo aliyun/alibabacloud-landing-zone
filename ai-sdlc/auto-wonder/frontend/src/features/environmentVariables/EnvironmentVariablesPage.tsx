@@ -23,7 +23,6 @@ import {
   CloseCircleOutlined,
   InfoCircleOutlined,
   ExclamationCircleOutlined,
-  CopyOutlined,
   DeleteOutlined,
   EditOutlined,
   EyeInvisibleOutlined,
@@ -35,24 +34,17 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   createEnvironmentVariable,
   deleteEnvironmentVariable,
-  revealEnvironmentVariableValue,
   updateEnvironmentVariable,
 } from './api';
 import { environmentVariablesQueryKey, useEnvironmentVariables } from './hooks';
 import type { CreateEnvironmentVariableInput, EnvironmentVariable } from './types';
 import { useAuthStore } from '@/shared/auth/store';
 import { ApiError } from '@/shared/types/common';
-import { copyTextToClipboard } from '@/shared/lib/clipboard';
 
 const { Text } = Typography;
 
 interface VariableFormValues extends CreateEnvironmentVariableInput {
   replaceValue?: boolean;
-}
-
-interface RevealedValues {
-  boundary: string;
-  values: Record<number, string>;
 }
 
 function errorMessage(error: unknown, fallback: string) {
@@ -68,40 +60,26 @@ export function EnvironmentVariablesPage() {
   const { t } = useTranslation('environmentVariables');
   const workspaceId = useAuthStore((state) => state.currentWorkspace?.id);
   const accessLevel = useAuthStore((state) => state.accessLevel);
-  const revealBoundary = `${workspaceId ?? 'none'}:${accessLevel ?? 'none'}`;
   const isAdmin = accessLevel === 'ADMIN';
   const queryClient = useQueryClient();
   const query = useEnvironmentVariables();
-  const [revealed, setRevealed] = useState<RevealedValues>({ boundary: revealBoundary, values: {} });
-  const visibleValues = revealed.boundary === revealBoundary ? revealed.values : {};
-  const [revealingId, setRevealingId] = useState<number>();
-  const revealGeneration = useRef(0);
   const boundaryGeneration = useRef(0);
   const [savingGeneration, setSavingGeneration] = useState<number>();
   const [deleting, setDeleting] = useState<{ generation: number; id: number }>();
   const [editing, setEditing] = useState<EnvironmentVariable | 'create'>();
-  const [operationError, setOperationError] = useState<{ error: unknown; action: 'reveal' | 'delete' }>();
+  const [operationError, setOperationError] = useState<{ error: unknown }>();
   const [saveError, setSaveError] = useState<{ error: unknown }>();
   const [form] = Form.useForm<VariableFormValues>();
   useLocalizedValidation(form, Boolean(editing));
   const replaceValue = Form.useWatch('replaceValue', form);
 
-  const clearRevealed = () => {
-    revealGeneration.current += 1;
-    setRevealed({ boundary: revealBoundary, values: {} });
-    setRevealingId(undefined);
-  };
-
-  useEffect(() => clearRevealed(), [query.dataUpdatedAt, workspaceId]);
   useEffect(() => useAuthStore.subscribe((state, previous) => {
     if (state.currentWorkspace?.id !== previous.currentWorkspace?.id
       || state.accessLevel !== previous.accessLevel) {
       boundaryGeneration.current += 1;
-      revealGeneration.current += 1;
     }
   }), []);
   useEffect(() => () => {
-    revealGeneration.current += 1;
     boundaryGeneration.current += 1;
   }, []);
 
@@ -131,8 +109,6 @@ export function EnvironmentVariablesPage() {
   };
 
   useEffect(() => {
-    setRevealed({ boundary: revealBoundary, values: {} });
-    setRevealingId(undefined);
     setSavingGeneration(undefined);
     setDeleting(undefined);
     setEditing(undefined);
@@ -192,12 +168,6 @@ export function EnvironmentVariablesPage() {
         }
         await queryClient.invalidateQueries({ queryKey: environmentVariablesQueryKey(formWorkspaceId), exact: true });
         if (!stillAuthorizedForFormWorkspace()) return;
-        setRevealed((current) => {
-          if (current.boundary !== revealBoundary) return current;
-          const next = { ...current.values };
-          delete next[editing.id];
-          return { boundary: revealBoundary, values: next };
-        });
         message.success(i18n.t('environmentVariables:updated'));
       }
       closeEditor();
@@ -207,62 +177,6 @@ export function EnvironmentVariablesPage() {
       }
     } finally {
       if (stillAuthorizedForFormWorkspace()) setSavingGeneration(undefined);
-    }
-  };
-
-  const reveal = async (variable: EnvironmentVariable) => {
-    const generation = revealGeneration.current;
-    const boundary = boundaryGeneration.current;
-    const revealWorkspaceId = workspaceId;
-    const revealAccessLevel = accessLevel;
-    const isCurrentReveal = () => {
-      const auth = useAuthStore.getState();
-      return generation === revealGeneration.current
-        && boundary === boundaryGeneration.current
-        && auth.currentWorkspace?.id === revealWorkspaceId
-        && auth.accessLevel === revealAccessLevel;
-    };
-    setRevealingId(variable.id);
-    setOperationError(undefined);
-    try {
-      const value = await revealEnvironmentVariableValue(variable.id);
-      if (isCurrentReveal()) {
-        setRevealed((current) => ({
-          boundary: revealBoundary,
-          values: current.boundary === revealBoundary
-            ? { ...current.values, [variable.id]: value }
-            : { [variable.id]: value },
-        }));
-      }
-    } catch (error) {
-      if (isCurrentReveal()) {
-        setOperationError({ error, action: 'reveal' });
-      }
-    } finally {
-      if (isCurrentReveal()) setRevealingId(undefined);
-    }
-  };
-
-  const hide = (id: number) => {
-    setRevealed((current) => {
-      if (current.boundary !== revealBoundary) {
-        return { boundary: revealBoundary, values: {} };
-      }
-      const next = { ...current.values };
-      delete next[id];
-      return { boundary: revealBoundary, values: next };
-    });
-  };
-
-  const copy = async (variable: EnvironmentVariable) => {
-    const auth = useAuthStore.getState();
-    if (auth.currentWorkspace?.id !== workspaceId || auth.accessLevel !== accessLevel) return;
-    const value = visibleValues[variable.id];
-    if (value === undefined) return;
-    if (await copyTextToClipboard(value)) {
-      message.success(i18n.t('environmentVariables:copied'));
-    } else {
-      message.error(i18n.t('environmentVariables:copyFailed'));
     }
   };
 
@@ -289,11 +203,10 @@ export function EnvironmentVariablesPage() {
       }
       await queryClient.invalidateQueries({ queryKey: environmentVariablesQueryKey(deleteWorkspaceId), exact: true });
       if (!isCurrentDelete()) return;
-      hide(variable.id);
       message.success(i18n.t('environmentVariables:deleted'));
     } catch (error) {
       if (isCurrentDelete()) {
-        setOperationError({ error, action: 'delete' });
+        setOperationError({ error });
       }
     } finally {
       if (isCurrentDelete()) setDeleting(undefined);
@@ -301,7 +214,6 @@ export function EnvironmentVariablesPage() {
   };
 
   const refresh = () => {
-    clearRevealed();
     void query.refetch();
   };
 
@@ -311,7 +223,7 @@ export function EnvironmentVariablesPage() {
         extra={isAdmin && <Button aria-label={t('add')} type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={showCreate}>{t('add')}</Button>} />
 
 
-      {operationError && <Alert closable={{ closeIcon: <CloseOutlined aria-hidden="true" />, 'aria-label': t('dismissError') }} type="error" showIcon icon={<CloseCircleOutlined aria-hidden="true" />} message={t('operationFailed')} description={errorMessage(operationError.error, t(operationError.action === 'reveal' ? 'revealFailed' : 'deleteFailed'))} onClose={() => setOperationError(undefined)} />}
+      {operationError && <Alert closable={{ closeIcon: <CloseOutlined aria-hidden="true" />, 'aria-label': t('dismissError') }} type="error" showIcon icon={<CloseCircleOutlined aria-hidden="true" />} message={t('operationFailed')} description={errorMessage(operationError.error, t('deleteFailed'))} onClose={() => setOperationError(undefined)} />}
       {query.isError && <Alert type="error" showIcon icon={<CloseCircleOutlined aria-hidden="true" />} message={t('loadFailed')} description={errorMessage(query.error, t('retryLater'))} />}
 
       <Card styles={{ body: { padding: 0 } }}>
@@ -331,22 +243,7 @@ export function EnvironmentVariablesPage() {
             {
               title: t('value'),
               width: 280,
-              render: (_, variable) => {
-                const value = visibleValues[variable.id];
-                const visible = value !== undefined;
-                return <Space size={4}>
-                  <Text code style={{ maxWidth: 190 }} ellipsis={{ tooltip: visible ? value : undefined }}>{visible ? value : '**'}</Text>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={visible ? <EyeInvisibleOutlined aria-hidden="true" /> : <EyeOutlined aria-hidden="true" />}
-                    loading={revealingId === variable.id}
-                    aria-label={t(visible ? 'hideNamed' : 'showNamed', { name: variable.name })}
-                    onClick={() => visible ? hide(variable.id) : void reveal(variable)}
-                  />
-                  {visible && <Button type="text" size="small" icon={<CopyOutlined aria-hidden="true" />} aria-label={t('copyNamed', { name: variable.name })} onClick={() => void copy(variable)} />}
-                </Space>;
-              },
+              render: (_, variable) => <Text code>{variable.value}</Text>,
             },
             { title: t('notes'), dataIndex: 'description', align: 'left', render: (value: string | null) => value || <Text type="secondary">—</Text> },
             { title: t('updatedAt'), dataIndex: 'gmtModified', width: 180, render: formatDate },

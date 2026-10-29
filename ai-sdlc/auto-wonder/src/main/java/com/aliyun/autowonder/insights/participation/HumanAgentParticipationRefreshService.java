@@ -1,7 +1,6 @@
 package com.aliyun.autowonder.insights.participation;
 
 import com.aliyun.autowonder.insights.InsightsDao;
-import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO;
 import java.util.stream.Collectors;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.slf4j.Logger;
@@ -19,6 +18,7 @@ public class HumanAgentParticipationRefreshService implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(HumanAgentParticipationRefreshService.class);
     static final String LOCK_PREFIX = "autowonder:insights:human-agent:refresh-lock:";
     static final String INFLIGHT_PREFIX = "autowonder:insights:human-agent:refresh-inflight:";
+    static final int DISPATCH_QUERY_BATCH_SIZE = 500;
 
     private final InsightsDao insightsDao;
     private final HumanAgentParticipationSnapshotStore store;
@@ -128,20 +128,82 @@ public class HumanAgentParticipationRefreshService implements DisposableBean {
         List<HumanAgentParticipationFact> facts = calculator.reconstructWithQuality(allRows, cutoff);
         List<HumanAgentParticipationFact> eligible = facts.stream()
                 .filter(f -> f.exclusionReason() == null).collect(Collectors.toList());
-        for (int from = 0; from < eligible.size(); from += 500) {
-            List<HumanAgentParticipationFact> batch = eligible.subList(from, Math.min(from + 500, eligible.size()));
-            List<Long> ids = batch.stream().map(HumanAgentParticipationFact::workitemId).collect(Collectors.toList());
-            Map<Long, List<DispatchRuntimeEventDO>> runtime = insightsDao
-                    .listParticipationExecutionEvents(tenantId, ids, cutoffDate).stream()
-                    .collect(Collectors.groupingBy(DispatchRuntimeEventDO::getWorkitemId));
-            for (HumanAgentParticipationFact fact : batch) {
-                ParticipationExecutionCalculator.enrich(fact, runtime.getOrDefault(fact.workitemId(), Collections.emptyList()));
-            }
-        }
+        markDispatchParticipants(tenantId, eligible, cutoffDate);
         Instant now = Instant.now();
         store.write(tenantId, facts, dataThrough.toString(), now);
         log.info("Participation refresh completed tenantId={} dataThrough={} events={} eligible={}",
                 tenantId, dataThrough, allRows.size(), eligible.size());
+    }
+
+    public List<HumanAgentParticipationFact> todayFacts(long tenantId) {
+        Optional<HumanAgentParticipationSnapshotStore.ParsedSnapshot> cached = store.readTail(tenantId);
+        if (cached.isPresent()) {
+            return cached.get().items();
+        }
+        ZoneId zone = ZoneId.of(properties.getTimezone());
+        LocalDate today = LocalDate.now(zone);
+        Instant now = Instant.now();
+        Date cutoffDate = Date.from(now);
+        List<Long> workitemIds = insightsDao.listWorkitemIdsCompletedBetween(
+                tenantId, Date.from(today.atStartOfDay(zone).toInstant()), cutoffDate);
+        List<HumanAgentParticipationFact> facts = Collections.emptyList();
+        if (workitemIds != null && !workitemIds.isEmpty()) {
+            List<HumanAgentParticipationRawEventRow> rows = insightsDao
+                    .listParticipationLifecycleEventsByWorkitemIds(tenantId, workitemIds, cutoffDate);
+            if (rows != null && !rows.isEmpty()) {
+                facts = calculator.reconstructWithQuality(rows, now);
+                markDispatchParticipants(tenantId, facts, cutoffDate);
+            }
+        }
+        store.writeTail(tenantId, facts, today.toString(), now);
+        log.info("Participation realtime tail rebuilt tenantId={} workitems={} facts={}",
+                tenantId, workitemIds == null ? 0 : workitemIds.size(), facts.size());
+        return facts;
+    }
+
+    /**
+     * A workitem counts as agent participation when a dispatch existed before its first completion.
+     * Only the dispatch table is read here: runtime session events belong to the removed execution metric.
+     */
+    void markDispatchParticipants(long tenantId, List<HumanAgentParticipationFact> facts, Date cutoffDate) {
+        if (facts == null || facts.isEmpty()) {
+            return;
+        }
+        Map<Long, List<HumanAgentParticipationFact>> byWorkitem = new LinkedHashMap<>();
+        for (HumanAgentParticipationFact fact : facts) {
+            if (fact.exclusionReason() != null) {
+                continue;
+            }
+            byWorkitem.computeIfAbsent(fact.workitemId(), key -> new ArrayList<>()).add(fact);
+        }
+        if (byWorkitem.isEmpty()) {
+            return;
+        }
+        List<Long> workitemIds = new ArrayList<>(byWorkitem.keySet());
+        for (int from = 0; from < workitemIds.size(); from += DISPATCH_QUERY_BATCH_SIZE) {
+            List<Long> batch = workitemIds.subList(from,
+                    Math.min(from + DISPATCH_QUERY_BATCH_SIZE, workitemIds.size()));
+            List<HumanAgentParticipationDispatchRow> rows =
+                    insightsDao.listParticipationDispatchStarts(tenantId, batch, cutoffDate);
+            if (rows == null) {
+                continue;
+            }
+            for (HumanAgentParticipationDispatchRow row : rows) {
+                if (row == null || row.getFirstDispatchAt() == null) {
+                    continue;
+                }
+                List<HumanAgentParticipationFact> matched = byWorkitem.get(row.getWorkitemId());
+                if (matched == null) {
+                    continue;
+                }
+                Instant firstDispatchAt = row.getFirstDispatchAt().toInstant();
+                for (HumanAgentParticipationFact fact : matched) {
+                    if (firstDispatchAt.isBefore(fact.completedAt())) {
+                        fact.setAgentParticipated(true);
+                    }
+                }
+            }
+        }
     }
 
     public void refresh(long tenantId, LocalDate dataThrough) {
@@ -162,34 +224,43 @@ public class HumanAgentParticipationRefreshService implements DisposableBean {
         }
     }
 
-    public boolean forceRefresh(long tenantId) {
+    public ParticipationRefreshResult forceRefresh(long tenantId) {
         String inflightKey = INFLIGHT_PREFIX + tenantId;
         redisManager.del(inflightKey);
         String lockKey = LOCK_PREFIX + tenantId;
         String ownerToken = UUID.randomUUID().toString();
         boolean locked = redisManager.tryAcquireLock(lockKey, ownerToken, properties.getLockTtlMillis());
         if (!locked) {
-            log.info("Participation force refresh lock contention tenantId={}", tenantId);
-            return false;
+            // 上一次刷新可能异常退出遗留锁；强制释放后重试一次，避免用户再也无法重建快照。
+            // releaseLock 按 owner token 比对删除，旧任务结束时不会误删这里重新获取的锁。
+            redisManager.del(lockKey);
+            ownerToken = UUID.randomUUID().toString();
+            locked = redisManager.tryAcquireLock(lockKey, ownerToken, properties.getLockTtlMillis());
+            if (!locked) {
+                log.info("Participation force refresh lock contention tenantId={}", tenantId);
+                return ParticipationRefreshResult.LOCK_CONTENTION;
+            }
         }
+        String lockToken = ownerToken;
+        store.deleteTail(tenantId);
         redisManager.setWithExpire(inflightKey, "1", properties.getInflightTtlSeconds());
         try {
             executor.submit(() -> {
                 try {
-                    refresh(tenantId, computeDataThrough(), ownerToken);
+                    refresh(tenantId, computeDataThrough(), lockToken);
                 } catch (Exception e) {
                     log.warn("Force participation refresh failed tenantId={}", tenantId, e);
                 } finally {
                     redisManager.del(inflightKey);
-                    redisManager.releaseLock(lockKey, ownerToken);
+                    redisManager.releaseLock(lockKey, lockToken);
                 }
             });
-            return true;
+            return ParticipationRefreshResult.ACCEPTED;
         } catch (RejectedExecutionException e) {
             log.warn("Force participation refresh rejected tenantId={} queueFull", tenantId);
             redisManager.del(inflightKey);
-            redisManager.releaseLock(lockKey, ownerToken);
-            return false;
+            redisManager.releaseLock(lockKey, lockToken);
+            return ParticipationRefreshResult.QUEUE_FULL;
         }
     }
 

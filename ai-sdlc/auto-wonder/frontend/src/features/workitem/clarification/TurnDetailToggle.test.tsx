@@ -183,3 +183,20 @@ describe('TurnDetailToggle', () => {
     expect(screen.queryByText('历史回复')).toBeNull();
   });
 });
+
+it('suppresses only visible history identities and keeps event-only legacy questions and process', async () => {
+  server.use(http.get(TURN_EVENTS_URL, () => HttpResponse.json({ success: true, data: [
+    row({ id: 1, eventSeq: 1, eventType: 'acp_elicitation', payloadFragment: JSON.stringify({ data: { requestId: 'covered', message: 'Covered question' } }) }),
+    row({ id: 2, eventSeq: 2, eventType: 'acp_elicitation_resolved', payloadFragment: JSON.stringify({ data: { requestId: 'covered', action: 'accept', content: { value: 'Covered answer' } } }) }),
+    row({ id: 3, eventSeq: 3, eventType: 'acp_elicitation', payloadFragment: JSON.stringify({ data: { requestId: 'legacy', message: 'Legacy question' } }) }),
+    row({ id: 4, eventSeq: 4, eventType: 'acp_elicitation_resolved', payloadFragment: JSON.stringify({ data: { requestId: 'legacy', action: 'accept', content: { value: 'Legacy answer' } } }) }),
+    row({ id: 5, eventSeq: 5, eventType: 'tool_use', payloadFragment: '{"tool":"Bash","callId":"process"}' }),
+  ] })));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><TurnDetailToggle workitemId="100" conversationId={1} turnId={9} eventTurnId={8} coveredQuestionIds={new Set(['8:covered'])} /></QueryClientProvider>);
+  fireEvent.click(await screen.findByTestId('turn-detail-toggle-9'));
+  expect(await screen.findByText('Legacy answer')).toBeInTheDocument();
+  expect(screen.getByText('Bash')).toBeInTheDocument();
+  expect(screen.queryByText('Covered question')).not.toBeInTheDocument();
+  expect(screen.queryByText('Covered answer')).not.toBeInTheDocument();
+});

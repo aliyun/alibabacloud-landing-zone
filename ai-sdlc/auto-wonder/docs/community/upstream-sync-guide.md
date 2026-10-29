@@ -53,6 +53,14 @@ required for a community build and runtime.
    exist in that commit, the sync must not introduce it from master. Community
    E2E changes require a separate, intentional community-owned change and must
    not be bundled into an upstream sync.
+
+   A separately authorized Community E2E repair or verification-policy change
+   may follow the preserved merge as its own reviewed change. Record the exact
+   authorization, reason and changed paths; test that delta against the final
+   candidate. Keep the original preservation comparison for the merge and
+   account for the later authorized delta separately. This never permits
+   importing master E2E files, changing historical acceptance evidence, weakening
+   assertions, or treating a prior candidate's verdict as current.
 6. Do not preserve a community difference when the new master implementation is
    already community-compatible.
 7. Do not silently drop a master feature to make a conflict easier to resolve.
@@ -80,6 +88,15 @@ required for a community build and runtime.
     `AUTOWONDER_RUNTIME_RECOMMENDED_VERSION` before application activation or
     restart. A missing, invalid, or independently maintained value is a blocking
     sync defect.
+
+    The standard `verify.sh --check --with-runtime` must follow this source
+    recommendation, not a version pinned inside the E2E helper or instructions.
+    An explicit lifecycle deployment override is read only from its protected
+    `app.env`; the effective value must agree with public branding API
+    `data.recommendedRuntimeVersion`. Invalid values, API failures or mismatches
+    block the check. Package metadata and daemon self-check must both match the
+    selected version. Use the helper's `--print-recommended-version` to install
+    the correct package; see [the Agent guide](../../e2e-tests/AGENT_GUIDE.md).
 
 ## Conflict Decisions
 
@@ -321,3 +338,21 @@ Never move the recorded baseline until the merge and required verification have
 completed and the independent sync review has passed. Always record the full
 `origin/master` commit ID rather than a moving branch name or abbreviated SHA.
 The last verified baseline is the exclusive starting point for the next sync.
+
+## Community synchronization object-storage acceptance
+
+For Community synchronization acceptance, the release owner authorizes the
+standard lifecycle's MinIO S3-compatible backend. Use the existing `verify.sh`
+image lifecycle and its isolated MinIO, rather than provisioning real Alibaba
+Cloud OSS. Verify upload, object read, presigned download and real executor
+artifact download against the URLs returned by that backend; never rewrite
+signed URLs to make a failing download pass. Record `storageBackend=MinIO` in
+acceptance evidence. This verifies the S3-compatible application path and does
+not certify Alibaba Cloud OSS authentication, regional public endpoints, VPC
+routing or outside-VPC access. Those remain optional deployment-specific checks
+unless explicitly requested. Production storage requirements are unchanged.
+
+This clarification applies to synchronization gates in `verification.md` and
+`README.md`: absence of real OSS credentials does not block a synchronization
+whose required MinIO scenarios pass. SLS startup checks still follow the SDLC;
+MinIO is not an SLS substitute.

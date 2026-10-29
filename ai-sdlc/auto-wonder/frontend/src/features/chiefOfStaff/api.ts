@@ -21,3 +21,8 @@ export async function replyElicitation(id: number, requestId: string, action: st
 export async function getTurnEvents(id: number, turnId: number) { return (await apiClient.get<ClarificationTurnEvent[]>(`${base}/${id}/turns/${turnId}/events`)).data; }
 
 export async function uploadImage(id: number, file: File) { const form = new FormData(); form.append('file', file); return (await apiClient.post<ConversationImage>(`${base}/${id}/images`, form, { transformRequest: [(data, headers) => { headers.delete?.('Content-Type'); delete headers['Content-Type']; delete headers['content-type']; return data; }] })).data; }
+
+export interface TurnEventPage { rows: ClarificationTurnEvent[]; nextAfterId: number; hasMore: boolean; }
+export async function getTurnEventPage(id: number, turnId: number, afterId: number): Promise<TurnEventPage> {
+  return (await apiClient.get<TurnEventPage>(`${base}/${id}/turns/${turnId}/events/page`, { params: { afterId } })).data;
+}

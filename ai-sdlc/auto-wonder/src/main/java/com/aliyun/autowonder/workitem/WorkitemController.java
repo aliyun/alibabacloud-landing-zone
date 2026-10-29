@@ -86,7 +86,11 @@ public class WorkitemController {
         return Result.ok(workitem);
     }
 
-    /** createdFrom/createdTo 为创建时间高级筛选边界（ISO-8601 瞬间）：前者含下界，后者为排他上界。 */
+    /**
+     * createdFrom/createdTo 为创建时间高级筛选边界（ISO-8601 瞬间）：前者含下界，后者为排他上界。
+     * creatorIds 为创建者高级筛选（本地 creator_id，逗号分隔的正整数列表），缺省表示不过滤。
+     * tagConditions 为标签逻辑条件（JSON 数组字符串，支持 AND/OR/IN/NOT），缺省表示不过滤。
+     */
     @GetMapping
     public Result<PageResult<WorkitemVO>> list(
             @RequestParam(value = "workType", required = false) String workType,
@@ -101,13 +105,21 @@ public class WorkitemController {
             @RequestParam(value = "scheduledStart", required = false) String scheduledStart,
             @RequestParam(value = "createdFrom", required = false) String createdFrom,
             @RequestParam(value = "createdTo", required = false) String createdTo,
+            @RequestParam(value = "creatorIds", required = false) List<Long> creatorIds,
+            @RequestParam(value = "tagConditions", required = false) String tagConditions,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         PageResult<WorkitemVO> result = workitemService.list(workType, statusNodeId, statusCategory, assigneeType,
                 assigneeRef, pendingDecisionOnly, mineScope, currentWorkspaceId(), currentUserId(), keyword, tag,
-                scheduledStart, createdFrom, createdTo, page, size);
+                scheduledStart, createdFrom, createdTo, creatorIds, tagConditions, page, size);
         workitemWatcherService.applyWatchState(result.getList(), currentWorkspaceId(), currentUserId());
         return Result.ok(result);
+    }
+
+    /** 当前工作空间已有标签，供筛选与编辑联想；字面量路径优先于 /{id} 匹配。 */
+    @GetMapping("/tag-options")
+    public Result<List<String>> listTagOptions() {
+        return Result.ok(workitemService.listTagOptions(currentWorkspaceId()));
     }
 
     @PostMapping("/{id}/transition")

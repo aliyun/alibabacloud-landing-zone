@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.spacedashboard.SpaceDashboardDao">
+
+    <!--
+      可统计空间：未停用（status = 0）、未删除（is_deleted = 0），且为平台管理员 / 空间负责人 /
+      ADMIN 角色成员。等级只读 workspace_role.access_level：org_member.access_level 是迁移保留字段，
+      不参与鉴权（docs/autowonder-schema.sql）。
+    -->
+    <select id="listScopedWorkspaces" resultType="com.aliyun.autowonder.spacedashboard.ScopedWorkspace">
+        SELECT DISTINCT o.id, o.name
+        FROM `org` o
+        LEFT JOIN org_member m
+               ON m.tenant_id = o.id
+              AND m.user_id = #{userId}
+              AND m.status = 0
+              AND m.is_deleted = 0
+        LEFT JOIN workspace_role r
+               ON r.id = m.role_id
+              AND r.tenant_id = m.tenant_id
+              AND r.is_deleted = 0
+        WHERE o.is_deleted = 0
+          AND o.status = 0
+        <if test="!systemAdmin">
+          AND (o.owner_id = #{userId} OR r.access_level = 'ADMIN')
+        </if>
+        ORDER BY o.id DESC
+    </select>
+
+    <!-- 普通数字员工：排除每个空间自动播种的 kind = 'PLATFORM' 平台数字人。 -->
+    <select id="countAgents" resultType="com.aliyun.autowonder.spacedashboard.WorkspaceCount">
+        SELECT tenant_id AS workspaceId, COUNT(*) AS total
+        FROM agent
+        WHERE tenant_id IN
+        <foreach collection="workspaceIds" item="workspaceId" open="(" separator="," close=")">#{workspaceId}</foreach>
+          AND is_deleted = 0
+          AND kind = 'STANDARD'
+        GROUP BY tenant_id
+    </select>
+
+    <!-- 小队：排除已解散（status = 1）。 -->
+    <select id="countSquads" resultType="com.aliyun.autowonder.spacedashboard.WorkspaceCount">
+        SELECT tenant_id AS workspaceId, COUNT(*) AS total
+        FROM squad
+        WHERE tenant_id IN
+        <foreach collection="workspaceIds" item="workspaceId" open="(" separator="," close=")">#{workspaceId}</foreach>
+          AND is_deleted = 0
+          AND status = 0
+        GROUP BY tenant_id
+    </select>
+
+    <!-- 真人：跨空间按 user_id 去重，排除已移除/待审批成员与已删除用户。 -->
+    <select id="countDistinctHumans" resultType="long">
+        SELECT COUNT(DISTINCT m.user_id)
+        FROM org_member m
+        JOIN `user` u ON u.id = m.user_id AND u.is_deleted = 0
+        WHERE m.tenant_id IN
+        <foreach collection="workspaceIds" item="workspaceId" open="(" separator="," close=")">#{workspaceId}</foreach>
+          AND m.status = 0
+          AND m.is_deleted = 0
+    </select>
+
+    <!-- 工单：窗口内创建，含已取消与已完成，全部类型或指定类型。 -->
+    <select id="countCreatedWorkitems" resultType="com.aliyun.autowonder.spacedashboard.WorkspaceCount">
+        SELECT w.tenant_id AS workspaceId, COUNT(*) AS total
+        FROM workitem w
+        WHERE w.tenant_id IN
+        <foreach collection="workspaceIds" item="workspaceId" open="(" separator="," close=")">#{workspaceId}</foreach>
+          AND w.is_deleted = 0
+          AND w.gmt_create &gt;= #{start}
+          AND w.gmt_create &lt; #{end}
+        <if test="workTypes != null and workTypes.size() > 0">
+          AND w.work_type IN
+          <foreach collection="workTypes" item="workType" open="(" separator="," close=")">#{workType}</foreach>
+        </if>
+        GROUP BY w.tenant_id
+    </select>
+
+    <!--
+      已完成：当前状态节点 category = 'DONE'，完成时间取最近一次进入 DONE 节点的 STATUS_CHANGE
+      事件时间（to_val 存节点 code，按模板对齐），窗口内计一次，取消不计，不从当前状态反推。
+      模板条件必须留在子查询 WHERE：MySQL 8 不允许 JOIN ... ON 引用外层查询列。
+    -->
+    <select id="countCompletedWorkitems" resultType="com.aliyun.autowonder.spacedashboard.WorkspaceCount">
+        SELECT counted.tenant_id AS workspaceId, COUNT(*) AS total
+        FROM (
+            SELECT w.tenant_id AS tenant_id,
+                   (SELECT MAX(e.gmt_create)
+                    FROM workitem_event e
+                    JOIN status_node done_node
+                      ON done_node.tenant_id = e.tenant_id
+                     AND done_node.code = e.to_val
+                     AND done_node.category = 'DONE'
+                    WHERE e.tenant_id = w.tenant_id
+                      AND e.workitem_id = w.id
+                      AND e.event_type = 'STATUS_CHANGE'
+                      AND done_node.template_id = w.template_id) AS done_at
+            FROM workitem w
+            JOIN status_node sn ON sn.id = w.status_node_id AND sn.tenant_id = w.tenant_id
+            WHERE w.tenant_id IN
+            <foreach collection="workspaceIds" item="workspaceId" open="(" separator="," close=")">#{workspaceId}</foreach>
+              AND w.is_deleted = 0
+              AND sn.category = 'DONE'
+            <if test="workTypes != null and workTypes.size() > 0">
+              AND w.work_type IN
+              <foreach collection="workTypes" item="workType" open="(" separator="," close=")">#{workType}</foreach>
+            </if>
+        ) counted
+        WHERE counted.done_at &gt;= #{start}
+          AND counted.done_at &lt; #{end}
+        GROUP BY counted.tenant_id
+    </select>
+
+    <!-- 进行中：窗口内创建且当前状态分类为 INIT / IN_PROGRESS（含待决策）。 -->
+    <select id="countInProgressWorkitems" resultType="com.aliyun.autowonder.spacedashboard.WorkspaceCount">
+        SELECT w.tenant_id AS workspaceId, COUNT(*) AS total
+        FROM workitem w
+        JOIN status_node sn ON sn.id = w.status_node_id AND sn.tenant_id = w.tenant_id
+        WHERE w.tenant_id IN
+        <foreach collection="workspaceIds" item="workspaceId" open="(" separator="," close=")">#{workspaceId}</foreach>
+          AND w.is_deleted = 0
+          AND w.gmt_create &gt;= #{start}
+          AND w.gmt_create &lt; #{end}
+          AND sn.category IN ('INIT', 'IN_PROGRESS')
+        <if test="workTypes != null and workTypes.size() > 0">
+          AND w.work_type IN
+          <foreach collection="workTypes" item="workType" open="(" separator="," close=")">#{workType}</foreach>
+        </if>
+        GROUP BY w.tenant_id
+    </select>
+
+    <!--
+      Credits：派发执行（dispatch_ai_usage）与会话（agent_conversation_usage，含平台助手闲聊）
+      两条来源按窗口汇总；credits 可空，NULL 按 0 计。
+    -->
+    <select id="sumCredits" resultType="com.aliyun.autowonder.spacedashboard.WorkspaceCredits">
+        SELECT combined.tenant_id AS workspaceId, SUM(combined.credits) AS credits
+        FROM (
+            SELECT tenant_id, COALESCE(credits, 0) AS credits
+            FROM dispatch_ai_usage
+            WHERE tenant_id IN
+            <foreach collection="workspaceIds" item="workspaceId" open="(" separator="," close=")">#{workspaceId}</foreach>
+              AND usage_at &gt;= #{start}
+              AND usage_at &lt; #{end}
+            UNION ALL
+            SELECT tenant_id, COALESCE(credits, 0) AS credits
+            FROM agent_conversation_usage
+            WHERE tenant_id IN
+            <foreach collection="workspaceIds" item="workspaceId" open="(" separator="," close=")">#{workspaceId}</foreach>
+              AND usage_at &gt;= #{start}
+              AND usage_at &lt; #{end}
+        ) combined
+        GROUP BY combined.tenant_id
+    </select>
+</mapper>

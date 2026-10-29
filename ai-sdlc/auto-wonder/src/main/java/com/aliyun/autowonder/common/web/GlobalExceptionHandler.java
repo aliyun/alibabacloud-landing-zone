@@ -10,13 +10,21 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.common.i18n.SystemMessages;
+import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.im.ImIdentityConflictException;
+import com.aliyun.autowonder.im.ImIdentityConflictReason;
+import com.aliyun.autowonder.im.dto.ImConflictWorkspaceView;
+import com.aliyun.autowonder.im.dto.ImIdentityConflictView;
 import com.aliyun.autowonder.workitem.WorkitemInOtherWorkspaceException;
 import com.aliyun.autowonder.workitem.dto.WorkitemOwningWorkspaceVO;
+import com.aliyun.autowonder.workspace.WorkspaceService;
+import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import javax.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,9 +35,78 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    private final WorkspaceService workspaceService;
+
+    public GlobalExceptionHandler() {
+        this(null);
+    }
+
+    @Autowired
+    public GlobalExceptionHandler(WorkspaceService workspaceService) {
+        this.workspaceService = workspaceService;
+    }
+
+    /**
+     * Identity conflicts carry a structured reason plus the Workspaces the current user may view.
+     * Unreadable occupants are never named: they only set {@code restricted}.
+     */
+    @ExceptionHandler(ImIdentityConflictException.class)
+    public ResponseEntity<Result<ImIdentityConflictView>> handleImIdentityConflict(
+            ImIdentityConflictException ex) {
+        ImIdentityConflictView view = new ImIdentityConflictView();
+        view.setReason(ex.getReason().name());
+        if (ex.getReason() == ImIdentityConflictReason.LEGACY_BINDING_OCCUPIED) {
+            Map<Long, String> visible = visibleWorkspaces();
+            List<ImConflictWorkspaceView> workspaces = new ArrayList<>();
+            boolean restricted = false;
+            Set<Long> occupants = new LinkedHashSet<>(ex.getOccupantTenantIds());
+            for (Long occupantId : occupants) {
+                String name = visible.get(occupantId);
+                if (name == null) {
+                    restricted = true;
+                } else {
+                    workspaces.add(new ImConflictWorkspaceView(occupantId, name));
+                }
+            }
+            view.setWorkspaces(workspaces);
+            view.setRestricted(restricted);
+        }
+        Result<ImIdentityConflictView> result = Result.failKeyed(ex.getCode(),
+                ex.getMessageKey(), ex.getMessageArgs(), ex.getMessage(), view);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(result);
+    }
+
+    private Map<Long, String> visibleWorkspaces() {
+        Map<Long, String> result = new HashMap<>();
+        if (workspaceService == null) {
+            return result;
+        }
+        try {
+            Long userId = AutoWonderContext.get().getUserId();
+            if (userId == null) {
+                return result;
+            }
+            for (WorkspaceVO workspace : workspaceService.listByUserWithAccess(userId)) {
+                if (workspace.getId() != null && workspace.getName() != null) {
+                    result.put(workspace.getId(), workspace.getName());
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // Without a resolvable caller or readable membership nothing may be disclosed.
+        }
+        return result;
+    }
 
     @ExceptionHandler(BizException.class)
     public ResponseEntity<Result<Void>> handleBiz(BizException ex) {

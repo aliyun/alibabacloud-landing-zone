@@ -12,30 +12,55 @@
         <result column="external_msg_id" property="externalMsgId"/>
         <result column="request_id" property="requestId"/>
         <result column="source_context" property="sourceContext"/>
+        <result column="submitted_user_id" property="submittedUserId"/>
         <result column="status" property="status"/>
         <result column="error" property="error"/>
+        <result column="source_inbound_turn_id" property="sourceInboundTurnId"/>
+        <result column="delivery_status" property="deliveryStatus"/>
+        <result column="delivery_attempt" property="deliveryAttempt"/>
+        <result column="delivery_available_at" property="deliveryAvailableAt"/>
+        <result column="delivery_error" property="deliveryError"/>
         <result column="last_dispatch_at" property="lastDispatchAt"/>
         <result column="dispatch_attempt" property="dispatchAttempt"/>
         <result column="gmt_create" property="gmtCreate"/>
     </resultMap>
 
     <sql id="Base_Column_List">
-        id, tenant_id, conversation_id, direction, content, external_msg_id, request_id, source_context,
-        status, error, last_dispatch_at, dispatch_attempt, gmt_create
+        id, tenant_id, conversation_id, direction, content, external_msg_id, request_id, source_context, submitted_user_id,
+        status, error, source_inbound_turn_id, delivery_status, delivery_attempt,
+        delivery_available_at, delivery_error, last_dispatch_at, dispatch_attempt, gmt_create
     </sql>
 
     <sql id="Turn_Column_List">
         t.id, t.tenant_id, t.conversation_id, t.direction, t.content, t.external_msg_id,
-        t.request_id, t.source_context, t.status, t.error, t.last_dispatch_at,
-        t.dispatch_attempt, t.gmt_create
+        t.request_id, t.source_context, t.submitted_user_id, t.status, t.error, t.source_inbound_turn_id,
+        t.delivery_status, t.delivery_attempt, t.delivery_available_at, t.delivery_error,
+        t.last_dispatch_at, t.dispatch_attempt, t.gmt_create
     </sql>
 
+    <!-- Only unfinished turns, keyset-paged: historical conversations do not grow this scan. -->
+    <select id="listActiveWorkflowTurns" resultMap="BaseResultMap">
+        SELECT t.id, t.tenant_id, t.conversation_id, t.direction, t.status
+        FROM agent_conversation_turn t
+        JOIN agent_conversation c ON c.id = t.conversation_id AND c.tenant_id = t.tenant_id
+        WHERE t.status IN ('PROCESSING', 'QUEUED') AND t.direction = 'IN'
+          AND t.id &gt; #{afterId} AND c.channel = 'SQUAD_WORKFLOW'
+        ORDER BY t.id LIMIT #{limit}
+    </select>
+
+    <!-- error is a VARCHAR(1024) summary. Bound every writer so diagnostics cannot roll back terminal state. -->
     <insert id="insert" parameterType="com.aliyun.autowonder.conversation.AgentConversationTurnDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO agent_conversation_turn
-        (tenant_id, conversation_id, direction, content, external_msg_id, request_id, source_context, status, error)
+        (tenant_id, conversation_id, direction, content, external_msg_id, request_id, source_context, submitted_user_id,
+         status, error, source_inbound_turn_id, delivery_status,
+         <if test="deliveryAttempt != null">delivery_attempt,</if>
+         delivery_available_at, delivery_error)
         VALUES
-        (#{tenantId}, #{conversationId}, #{direction}, #{content}, #{externalMsgId}, #{requestId}, #{sourceContext}, #{status}, #{error})
+        (#{tenantId}, #{conversationId}, #{direction}, #{content}, #{externalMsgId}, #{requestId},
+         #{sourceContext}, #{submittedUserId}, #{status}, LEFT(#{error}, 1024), #{sourceInboundTurnId}, #{deliveryStatus},
+         <if test="deliveryAttempt != null">#{deliveryAttempt},</if>
+         #{deliveryAvailableAt}, #{deliveryError})
     </insert>
 
     <select id="findByExternalMsgId" resultMap="BaseResultMap">
@@ -43,6 +68,21 @@
         FROM agent_conversation_turn
         WHERE tenant_id = #{tenantId} AND external_msg_id = #{externalMsgId}
         LIMIT 1
+    </select>
+
+    <select id="findByConversationTurnForUpdate" resultMap="BaseResultMap">
+        SELECT * FROM agent_conversation_turn
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId} AND id = #{id}
+        FOR UPDATE
+    </select>
+
+    <select id="listQueuedInboundAfter" resultMap="BaseResultMap">
+        SELECT q.* FROM agent_conversation_turn q
+        WHERE q.direction = 'IN' AND q.status = 'QUEUED' AND q.id &gt; #{afterId}
+          AND NOT EXISTS (SELECT 1 FROM agent_conversation_turn p
+            WHERE p.tenant_id = q.tenant_id AND p.conversation_id = q.conversation_id
+              AND p.direction = 'IN' AND p.status = 'PROCESSING')
+        ORDER BY q.id ASC LIMIT #{limit}
     </select>
 
     <select id="findByConversationTurn" resultMap="BaseResultMap">
@@ -89,6 +129,13 @@
         LIMIT #{limit}
     </select>
 
+    <select id="listStaleProcessingInboundAfter" resultMap="BaseResultMap">
+        SELECT * FROM agent_conversation_turn
+        WHERE direction = 'IN' AND status = 'PROCESSING' AND id &gt; #{afterId}
+          AND (last_dispatch_at &lt;= #{cutoff} OR (last_dispatch_at IS NULL AND gmt_create &lt;= #{cutoff}))
+        ORDER BY id ASC LIMIT #{limit}
+    </select>
+
     <select id="listStaleProcessingInbound" resultMap="BaseResultMap">
         SELECT <include refid="Turn_Column_List"/>
         FROM agent_conversation_turn t
@@ -112,13 +159,19 @@
 
     <update id="updateStatus">
         UPDATE agent_conversation_turn
-        SET status = #{status}, error = #{error}
+        SET status = #{status}, error = LEFT(#{error}, 1024)
         WHERE tenant_id = #{tenantId} AND id = #{id}
+    </update>
+
+    <update id="updateInboundStatusIfProcessingAttempt">
+        UPDATE agent_conversation_turn SET status = #{status}, error = LEFT(#{error}, 1024)
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId} AND id = #{id}
+          AND direction = 'IN' AND status = 'PROCESSING' AND dispatch_attempt = #{dispatchAttempt}
     </update>
 
     <update id="updateInboundStatusIfProcessing">
         UPDATE agent_conversation_turn
-        SET status = #{status}, error = #{error}
+        SET status = #{status}, error = LEFT(#{error}, 1024)
         WHERE tenant_id = #{tenantId}
           AND conversation_id = #{conversationId}
           AND id = #{id}
@@ -128,7 +181,7 @@
 
     <update id="updateInboundStatusAndContextIfProcessing">
         UPDATE agent_conversation_turn
-        SET status = #{status}, error = #{error},
+        SET status = #{status}, error = LEFT(#{error}, 1024),
             source_context = CASE WHEN source_context IS NULL THEN #{sourceContext} ELSE source_context END
         WHERE tenant_id = #{tenantId}
           AND conversation_id = #{conversationId}
@@ -139,15 +192,22 @@
 
     <update id="updateStatusIfCurrent">
         UPDATE agent_conversation_turn
-        SET status = #{toStatus}, error = #{error}
+        SET status = #{toStatus}, error = LEFT(#{error}, 1024)
         WHERE tenant_id = #{tenantId} AND id = #{id} AND status = #{fromStatus}
     </update>
 
     <update id="updateStatusAndContextIfCurrent">
         UPDATE agent_conversation_turn
-        SET status = #{toStatus}, error = #{error},
+        SET status = #{toStatus}, error = LEFT(#{error}, 1024),
             source_context = CASE WHEN source_context IS NULL THEN #{sourceContext} ELSE source_context END
         WHERE tenant_id = #{tenantId} AND id = #{id} AND status = #{fromStatus}
+    </update>
+
+    <update id="updateProcessingSourceContext">
+        UPDATE agent_conversation_turn SET source_context = #{sourceContext}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND direction = 'IN' AND status = 'PROCESSING'
+          AND (source_context = #{previousContext}
+               OR (source_context IS NULL AND #{previousContext} IS NULL))
     </update>
 
     <update id="recordDispatchAttemptIfProcessing">
@@ -181,5 +241,79 @@
           AND conversation_id = #{conversationId}
         ORDER BY id ASC
     </select>
+
+    <select id="findDeliveryTurn" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation_turn
+        WHERE id = #{id} AND direction = 'OUT'
+        LIMIT 1
+    </select>
+
+    <select id="listDueDeliveryTurnIds" resultType="java.lang.Long">
+        SELECT id
+        FROM agent_conversation_turn
+        WHERE direction = 'OUT'
+          AND delivery_status IN ('PENDING', 'SENDING')
+          AND (delivery_available_at IS NULL OR delivery_available_at &lt;= CURRENT_TIMESTAMP(3))
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="claimPendingDelivery">
+        UPDATE agent_conversation_turn
+        SET delivery_status = 'SENDING',
+            delivery_attempt = delivery_attempt + 1,
+            delivery_available_at = #{leaseUntil}
+        WHERE id = #{id}
+          AND direction = 'OUT'
+          AND delivery_status = 'PENDING'
+          AND (delivery_available_at IS NULL OR delivery_available_at &lt;= CURRENT_TIMESTAMP(3))
+    </update>
+
+    <update id="claimExpiredDelivery">
+        UPDATE agent_conversation_turn
+        SET delivery_status = 'SENDING',
+            delivery_attempt = delivery_attempt + 1,
+            delivery_available_at = #{leaseUntil}
+        WHERE id = #{id}
+          AND direction = 'OUT'
+          AND delivery_status = 'SENDING'
+          AND delivery_available_at IS NOT NULL
+          AND delivery_available_at &lt;= CURRENT_TIMESTAMP(3)
+          AND delivery_attempt &lt; #{maxAttempts}
+          AND gmt_create &gt; #{retryWindowStart}
+    </update>
+
+    <update id="finishDelivery">
+        UPDATE agent_conversation_turn
+        SET delivery_status = #{status},
+            delivery_error = #{error},
+            delivery_available_at = #{availableAt}
+        WHERE id = #{id}
+          AND direction = 'OUT'
+          AND delivery_status = 'SENDING'
+          AND delivery_attempt = #{attempt}
+    </update>
+
+    <update id="expireUnconfirmedDelivery">
+        UPDATE agent_conversation_turn
+        SET delivery_status = 'UNKNOWN',
+            delivery_error = #{error}
+        WHERE id = #{id}
+          AND direction = 'OUT'
+          AND delivery_status = 'SENDING'
+          AND delivery_available_at IS NOT NULL
+          AND delivery_available_at &lt;= CURRENT_TIMESTAMP(3)
+    </update>
+
+    <update id="cancelUndeliverableDelivery">
+        UPDATE agent_conversation_turn
+        SET delivery_status = 'CANCELED',
+            delivery_error = #{error},
+            delivery_available_at = NULL
+        WHERE id = #{id}
+          AND direction = 'OUT'
+          AND delivery_status IN ('PENDING', 'SENDING')
+    </update>
 
 </mapper>
