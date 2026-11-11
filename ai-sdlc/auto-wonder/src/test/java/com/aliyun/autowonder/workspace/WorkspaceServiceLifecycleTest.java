@@ -85,7 +85,8 @@ class WorkspaceServiceLifecycleTest {
         when(roleService.builtIn(anyLong(), eq(WorkspaceAccessLevel.ADMIN))).thenReturn(adminRole);
         service = new WorkspaceService(workspaceDao, workspaceMemberDao,
                 mock(StatusTemplateSeeder.class), mock(PlatformAgentSeeder.class), jwtService, userDao,
-                auditLogService, systemAdminService, deletionLinkage, eventPublisher, roleService);
+                auditLogService, systemAdminService, deletionLinkage, eventPublisher, roleService,
+                mock(com.aliyun.autowonder.user.WorkspaceCreationPermissionService.class));
 
         // Empty defaults, because both bulk helpers below feed an IN (...) list and a bare mock
         // would hand them null instead of an empty collection.

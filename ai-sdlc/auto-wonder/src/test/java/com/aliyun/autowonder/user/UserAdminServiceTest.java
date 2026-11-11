@@ -60,9 +60,12 @@ class UserAdminServiceTest {
     private final UserImIdentityService userImIdentityService = mock(UserImIdentityService.class);
     private final NotifyService notifyService = mock(NotifyService.class);
     private final AuditLogService auditLogService = mock(AuditLogService.class);
+    private final WorkspaceCreationPermissionService workspaceCreationPermissionService =
+            mock(WorkspaceCreationPermissionService.class);
     private final UserAdminService service = new UserAdminService(userDao, userService,
             userDeletionService, workspaceDao, workspaceMemberDao, workspaceService,
-            workspaceRoleService, userImIdentityService, notifyService, auditLogService);
+            workspaceRoleService, userImIdentityService, notifyService, auditLogService,
+            workspaceCreationPermissionService);
 
     private static final long TARGET_ID = 42L;
     private static final long OPERATOR_ID = 9L;
@@ -73,11 +76,11 @@ class UserAdminServiceTest {
     @Test
     void thePageClampsPagingAndKeepsTheUnfilteredTotalSeparate() {
         when(userDao.countAllUsers()).thenReturn(37L);
-        when(userDao.countUsersForAdmin(null, null, null)).thenReturn(5L);
-        when(userDao.searchUsersForAdmin(null, null, null, 0, 100))
+        when(userDao.countUsersForAdmin(null, null, null, null, false)).thenReturn(5L);
+        when(userDao.searchUsersForAdmin(null, null, null, null, false, 0, 100))
                 .thenReturn(List.of(normalUser(TARGET_ID, "alice")));
 
-        UserAdminListVO result = service.page(null, null, null, 0, 1000);
+        UserAdminListVO result = service.page(null, null, null, null, 0, 1000);
 
         assertEquals(1, result.getPageNum());
         assertEquals(100, result.getPageSize());
@@ -85,36 +88,36 @@ class UserAdminServiceTest {
         assertEquals(37L, result.getTotalAll());
         assertEquals(5L, result.getTotal());
         assertEquals(1, result.getList().size());
-        verify(userDao).searchUsersForAdmin(null, null, null, 0, 100);
+        verify(userDao).searchUsersForAdmin(null, null, null, null, false, 0, 100);
     }
 
     @Test
     void thePageNormalisesFiltersAndTrimsTheKeyword() {
-        when(userDao.searchUsersForAdmin("ali", "DELETED", "ADMIN", 20, 20)).thenReturn(List.of());
+        when(userDao.searchUsersForAdmin("ali", "DELETED", "ADMIN", null, false, 20, 20)).thenReturn(List.of());
 
-        service.page("  ali  ", " deleted ", "admin", 2, 20);
+        service.page("  ali  ", " deleted ", "admin", null, 2, 20);
 
-        verify(userDao).countUsersForAdmin("ali", "DELETED", "ADMIN");
-        verify(userDao).searchUsersForAdmin("ali", "DELETED", "ADMIN", 20, 20);
+        verify(userDao).countUsersForAdmin("ali", "DELETED", "ADMIN", null, false);
+        verify(userDao).searchUsersForAdmin("ali", "DELETED", "ADMIN", null, false, 20, 20);
     }
 
     @Test
     void theAllSentinelIsEquivalentToNoFilter() {
-        when(userDao.searchUsersForAdmin(null, null, null, 0, 20)).thenReturn(List.of());
+        when(userDao.searchUsersForAdmin(null, null, null, null, false, 0, 20)).thenReturn(List.of());
 
-        service.page(null, "all", "ALL", 1, 20);
+        service.page(null, "all", "ALL", null, 1, 20);
 
-        verify(userDao).countUsersForAdmin(null, null, null);
+        verify(userDao).countUsersForAdmin(null, null, null, null, false);
     }
 
     @Test
     void anUnknownStatusOrTypeFilterIsRejected() {
         BizException status = assertThrows(BizException.class,
-                () -> service.page(null, "bogus", null, 1, 20));
+                () -> service.page(null, "bogus", null, null, 1, 20));
         assertEquals("10001", status.getCode());
         assertEquals("user.filter_invalid", status.getMessageKey());
         BizException type = assertThrows(BizException.class,
-                () -> service.page(null, null, "bogus", 1, 20));
+                () -> service.page(null, null, "bogus", null, 1, 20));
         assertEquals("10001", type.getCode());
     }
 
@@ -480,6 +483,96 @@ class UserAdminServiceTest {
         req.setNewPassword("brand-new-pw");
         req.setConfirmPassword("brand-new-pw");
         return req;
+    }
+
+    // ---- registration review ----
+
+    @Test
+    void approvingAPendingRegistrationUsesTheConditionalUpdateAndAuditsTheResult() {
+        UserDO pending = normalUser(TARGET_ID, "alice");
+        pending.setStatus(2);
+        when(userDao.findByIdIncludingDeleted(TARGET_ID)).thenReturn(pending);
+        when(userDao.approvePendingReview(TARGET_ID)).thenReturn(1);
+
+        service.reviewRegistration(TARGET_ID, " approve ", OPERATOR_ID);
+
+        verify(userDao).approvePendingReview(TARGET_ID);
+        AuditLogRecord record = recordedAudit();
+        assertEquals("USER_REGISTRATION_APPROVE", record.getAction());
+        assertEquals(OPERATOR_ID, record.getActorId());
+        assertEquals(TARGET_ID, record.getTargetId());
+    }
+
+    @Test
+    void approvingARecordAlreadyHandledByAConcurrentRequestReturnsConflict() {
+        UserDO pending = normalUser(TARGET_ID, "alice");
+        pending.setStatus(2);
+        when(userDao.findByIdIncludingDeleted(TARGET_ID)).thenReturn(pending);
+        when(userDao.approvePendingReview(TARGET_ID)).thenReturn(0);
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.reviewRegistration(TARGET_ID, "APPROVE", OPERATOR_ID));
+
+        assertEquals("37013", error.getCode());
+        verify(auditLogService, never()).recordRequired(any());
+    }
+
+    @Test
+    void rejectingDelegatesToTheSharedLogicalDeleteFlow() {
+        when(userDao.findByIdIncludingDeleted(TARGET_ID)).thenReturn(normalUser(TARGET_ID, "alice"));
+
+        service.reviewRegistration(TARGET_ID, "REJECT", OPERATOR_ID);
+
+        verify(userDeletionService).rejectPendingRegistration(TARGET_ID, OPERATOR_ID);
+    }
+
+    @Test
+    void anUnknownReviewDecisionIsRejectedBeforeTouchingAnyRow() {
+        when(userDao.findByIdIncludingDeleted(TARGET_ID)).thenReturn(normalUser(TARGET_ID, "alice"));
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.reviewRegistration(TARGET_ID, "HOLD", OPERATOR_ID));
+
+        assertEquals("37014", error.getCode());
+        verify(userDao, never()).approvePendingReview(anyLong());
+        verifyNoDeletion();
+    }
+
+    @Test
+    void workspaceCreationPermissionRequiresAnExplicitBoolean() {
+        BizException error = assertThrows(BizException.class,
+                () -> service.updateWorkspaceCreationPermission(TARGET_ID, null, OPERATOR_ID));
+
+        assertEquals("10001", error.getCode());
+        assertEquals("user.workspace_creation_allowed_required", error.getMessageKey());
+    }
+
+    @Test
+    void grantingWorkspaceCreationDelegatesAndAuditsTheGrant() {
+        UserDO target = normalUser(TARGET_ID, "alice");
+        when(workspaceCreationPermissionService.updateGrant(TARGET_ID, true)).thenReturn(target);
+        when(userDao.findByIdIncludingDeleted(TARGET_ID)).thenReturn(target);
+
+        service.updateWorkspaceCreationPermission(TARGET_ID, true, OPERATOR_ID);
+
+        verify(workspaceCreationPermissionService).updateGrant(TARGET_ID, true);
+        assertEquals("USER_WORKSPACE_CREATION_GRANT", recordedAudit().getAction());
+    }
+
+    @Test
+    void revokingWorkspaceCreationAuditsTheRevoke() {
+        UserDO target = normalUser(TARGET_ID, "alice");
+        when(workspaceCreationPermissionService.updateGrant(TARGET_ID, false)).thenReturn(target);
+        when(userDao.findByIdIncludingDeleted(TARGET_ID)).thenReturn(target);
+
+        service.updateWorkspaceCreationPermission(TARGET_ID, false, OPERATOR_ID);
+
+        verify(workspaceCreationPermissionService).updateGrant(TARGET_ID, false);
+        assertEquals("USER_WORKSPACE_CREATION_REVOKE", recordedAudit().getAction());
+    }
+
+    private void verifyNoDeletion() {
+        verify(userDeletionService, never()).rejectPendingRegistration(anyLong(), anyLong());
     }
 
     private UserDO normalUser(long id, String username) {

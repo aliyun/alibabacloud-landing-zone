@@ -81,6 +81,25 @@ class AuthFilterTest {
     }
 
     @Test
+    void creationRequestPathsStayReachableWhenTheTokenWorkspaceIsGone() throws Exception {
+        JwtService jwtService = newJwtService();
+        WorkspaceDao goneWorkspaceDao = mock(WorkspaceDao.class);
+        when(goneWorkspaceDao.countUsable(anyLong())).thenReturn(0L);
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), goneWorkspaceDao, activeUserDao());
+        String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-creation-requests"));
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/workspaces/creation-requests");
+        req.addHeader("Authorization", "Bearer " + token);
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(req, resp, chain);
+
+        assertEquals(200, resp.getStatus());
+        assertNotNull(chain.getRequest());
+    }
+
+    @Test
     void mcp_root_path_passes_without_platform_jwt() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
@@ -818,6 +837,26 @@ class AuthFilterTest {
     }
 
     @Test
+    void aPendingReviewAccountIsRejectedWithTheRegistrationReviewCode() throws Exception {
+        JwtService jwtService = newJwtService();
+        UserDao userDao = mock(UserDao.class);
+        UserDO pending = user(42L, 0);
+        pending.setStatus(2);
+        when(userDao.findById(42L)).thenReturn(pending);
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), usableWorkspaceDao(), userDao);
+        String token = jwtService.signAccess(new TokenPayload(42L, null, "jti-pending"));
+
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        filter.doFilter(authenticatedRequest(token), resp, chain);
+
+        assertEquals(401, resp.getStatus());
+        assertTrue(resp.getContentAsString().contains("\"code\":\"37012\""));
+        assertNull(chain.getRequest());
+    }
+
+    @Test
     void aLegacyDeactivatedAccountIsRejectedWithItsDedicatedCode() throws Exception {
         JwtService jwtService = newJwtService();
         UserDao userDao = mock(UserDao.class);
@@ -891,6 +930,66 @@ class AuthFilterTest {
         // consulting it would make the recycle bin and restore permanently unreachable (F5.2).
         verifyNoInteractions(workspaceDao);
         verifyNoInteractions(workspaceMemberDao);
+    }
+
+    @Test
+    void workspace_discovery_lists_work_with_an_unusable_bound_workspace_while_workitems_stay_blocked()
+            throws Exception {
+        JwtService jwtService = newJwtService();
+        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
+        when(workspaceDao.countUsable(anyLong())).thenReturn(0L);
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), workspaceDao, activeUserDao());
+        String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-discovery"));
+
+        for (String path : new String[]{"/api/workspaces/all", "/api/workspaces/all/",
+                "/api/workspaces/mine"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", path);
+            req.addHeader("Authorization", "Bearer " + token);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(req, resp, chain);
+
+            assertEquals(200, resp.getStatus(), path);
+            assertNotNull(chain.getRequest(), path);
+        }
+
+        // 只有列表豁免：具体空间与工单仍按 token 绑定空间校验权限。
+        for (String path : new String[]{"/api/workitems", "/api/workitems/1"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", path);
+            req.addHeader("Authorization", "Bearer " + token);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(req, resp, chain);
+
+            assertEquals(403, resp.getStatus(), path);
+            assertTrue(resp.getContentAsString().contains("\"code\":\"11005\""), path);
+            assertNull(chain.getRequest(), path);
+        }
+    }
+
+    @Test
+    void expired_token_still_cannot_reach_the_workspace_discovery_list() throws Exception {
+        Environment env = mock(Environment.class);
+        when(env.getActiveProfiles()).thenReturn(new String[]{"daily"});
+        JwtProperties props = new JwtProperties(env);
+        props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
+        props.setAccessTtlSeconds(-60);
+        String expiredToken = new JwtService(props)
+                .signAccess(new TokenPayload(42L, 100L, "jti-expired-discovery"));
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), usableWorkspaceDao(), activeUserDao());
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/workspaces/all");
+        req.addHeader("Authorization", "Bearer " + expiredToken);
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(req, resp, chain);
+
+        assertEquals(401, resp.getStatus());
+        assertNull(chain.getRequest());
     }
 
     @Test
@@ -1039,6 +1138,8 @@ class AuthFilterTest {
                 Arguments.of("POST", "/api/workspaces/"),
                 Arguments.of("GET", "/api/workspaces/mine"),
                 Arguments.of("GET", "/api/workspaces/mine/"),
+                Arguments.of("GET", "/api/workspaces/all"),
+                Arguments.of("GET", "/api/workspaces/all/"),
                 Arguments.of("POST", "/api/workspaces/123/switch"),
                 Arguments.of("POST", "/api/workspaces/123/switch/"),
                 Arguments.of("GET", "/api/mcp/tokens"),
@@ -1075,6 +1176,9 @@ class AuthFilterTest {
                 Arguments.of("POST", "/api/workspaces/123/restore/extra"),
                 Arguments.of("POST", "/api/workspaces/recycle-bin"),
                 Arguments.of("DELETE", "/api/workspaces/recycle-bin"),
-                Arguments.of("GET", "/api/workspaces/current"));
+                Arguments.of("POST", "/api/workspaces/all"),
+                Arguments.of("GET", "/api/workspaces/current"),
+                Arguments.of("GET", "/api/workitems"),
+                Arguments.of("GET", "/api/workitems/1"));
     }
 }

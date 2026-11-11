@@ -50,14 +50,34 @@ class DashboardDaoMappingTest {
     }
 
     @Test
+    void todayCreatedDetailListReusesCountScope() throws IOException {
+        String xml = readMapping();
+
+        String normalized = selectBody(xml, "listTodayCreatedWorkitems").replaceAll("\\s+", " ").trim();
+        assertTrue(normalized.contains("<include refid=\"todayCreatedWorkitemScope\"/>"),
+                "detail list must share the count scope so the modal size equals the KPI value");
+        assertTrue(normalized.contains("w.id AS workitemId"));
+        assertTrue(normalized.contains("w.title AS title"));
+        assertTrue(normalized.contains("ORDER BY w.gmt_create DESC, w.id DESC"));
+        assertFalse(normalized.contains("LIMIT"), "detail list returns the full day without paging");
+    }
+
+    @Test
     void overviewWorkitemKpisUseWorkitemScopeQueries() throws IOException {
         String xml = readMapping();
 
         String todayCreated = selectBody(xml, "countTodayCreatedWorkitems").replaceAll("\\s+", " ").trim();
-        assertTrue(todayCreated.contains("FROM workitem"));
-        assertTrue(todayCreated.contains("is_deleted = 0"));
-        assertTrue(todayCreated.contains("gmt_create >= CURDATE()"));
+        assertTrue(todayCreated.contains("<include refid=\"todayCreatedWorkitemScope\"/>"));
         assertFalse(todayCreated.contains("dispatch"), "today-created must stay workitem-level");
+
+        String todayCreatedScope = sqlBody(xml, "todayCreatedWorkitemScope").replaceAll("\\s+", " ").trim();
+        assertTrue(todayCreatedScope.contains("FROM workitem w"));
+        assertTrue(todayCreatedScope.contains("LEFT JOIN status_node sn ON sn.id = w.status_node_id AND sn.tenant_id = w.tenant_id"));
+        assertTrue(todayCreatedScope.contains("w.tenant_id = #{tenantId}"));
+        assertTrue(todayCreatedScope.contains("w.is_deleted = 0"));
+        assertTrue(todayCreatedScope.contains("w.gmt_create &gt;= CURDATE()"));
+        assertTrue(todayCreatedScope.contains("(sn.category IS NULL OR sn.category &lt;&gt; 'CANCELED')"));
+        assertFalse(todayCreatedScope.contains("dispatch"), "today-created must stay workitem-level");
 
         String running = selectBody(xml, "countRunningWorkitems").replaceAll("\\s+", " ").trim();
         assertTrue(running.contains("COUNT(DISTINCT d.workitem_id)"));

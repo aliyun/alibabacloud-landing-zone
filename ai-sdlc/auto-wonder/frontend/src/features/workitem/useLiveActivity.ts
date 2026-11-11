@@ -89,11 +89,11 @@ export function useLiveActivity(dispatchId: number | null | undefined, enabled =
     seqRef.current = data.lastSeq;
   }, [mergeActions]);
 
-  const fetchActivity = useCallback(async (afterSeq?: number | null) => {
+  const fetchActivity = useCallback(async (afterSeq: number | null | undefined, background: boolean) => {
     if (!dispatchId) return;
     const generation = generationRef.current;
     try {
-      const data = await getDispatchLiveActivity(dispatchId, afterSeq, MAX_WINDOW);
+      const data = await getDispatchLiveActivity(dispatchId, afterSeq, MAX_WINDOW, { background });
       if (generation !== generationRef.current) return;
       applyResponse(data, afterSeq == null);
       setError(null);
@@ -146,7 +146,8 @@ export function useLiveActivity(dispatchId: number | null | undefined, enabled =
   // Heartbeat health can change without a runtime event or a browser reconnect.
   useEffect(() => {
     if (!dispatchId || !enabled || loading) return;
-    const timer = setInterval(() => { void fetchActivity(seqRef.current); }, HEALTH_POLL_MS);
+    // 心跳轮询属于后台流量：允许换发访问令牌，但不得顺延会话。
+    const timer = setInterval(() => { void fetchActivity(seqRef.current, true); }, HEALTH_POLL_MS);
     return () => clearInterval(timer);
   }, [dispatchId, enabled, loading, fetchActivity]);
 
@@ -169,7 +170,8 @@ export function useLiveActivity(dispatchId: number | null | undefined, enabled =
 
   const handleReconnect = useCallback(() => {
     if (loading) return;
-    fetchActivity(seqRef.current);
+    // 自动重连后的补偿拉取同样是后台流量。
+    fetchActivity(seqRef.current, true);
   }, [fetchActivity, loading]);
 
   const channel = dispatchId && enabled ? `dispatch:${dispatchId}` : null;

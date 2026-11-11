@@ -29,6 +29,22 @@ function attempt(overrides: Partial<DispatchAttempt> = {}): DispatchAttempt {
 afterEach(() => Modal.destroyAll());
 
 describe('ExecutionActionBar', () => {
+  it('keeps ordinary resume separate from an explicitly confirmed latest-workflow restart', async () => {
+    const onAction = vi.fn();
+    render(<ExecutionActionBar attempt={attempt({ status: 'PAUSED', control: {
+      pause: { allowed: false }, end: { allowed: false }, forceEnd: { allowed: false },
+      resume: { allowed: true, mode: 'RESUME' }, restartLatest: { allowed: true },
+    } })} onAction={onAction} />);
+    await userEvent.click(screen.getByRole('button', { name: '继续' }));
+    expect(onAction).toHaveBeenLastCalledWith('resume');
+    await userEvent.click(screen.getByRole('button', { name: '更多执行操作' }));
+    await userEvent.click(await screen.findByText('按最新流程重启'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/从入口新建一轮/)).toBeInTheDocument();
+    expect(onAction).toHaveBeenCalledTimes(1);
+    await userEvent.click(within(dialog).getByRole('button', { name: '按最新流程重启' }));
+    await waitFor(() => expect(onAction).toHaveBeenLastCalledWith('restartLatest'));
+  });
   it('runs pause directly and confirms end before dispatching it', async () => {
     const onAction = vi.fn();
     render(<ExecutionActionBar attempt={attempt()} onAction={onAction} />);

@@ -8,6 +8,7 @@ import com.aliyun.autowonder.integration.AoneIntegrationController;
 import com.aliyun.autowonder.integration.ImChannelPublicController;
 import com.aliyun.autowonder.integration.dingtalk.DingTalkBindingController;
 import com.aliyun.autowonder.integration.feishu.FeishuCallbackController;
+import com.aliyun.autowonder.feature.PlatformFeatureSwitchController;
 import com.aliyun.autowonder.im.PlatformImChannelConfigController;
 import com.aliyun.autowonder.mcp.McpTokenController;
 import com.aliyun.autowonder.setting.SystemSettingController;
@@ -65,6 +66,10 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.mcp.McpController",
             "com.aliyun.autowonder.memory.store.DaemonMemoryController",
             "com.aliyun.autowonder.notification.NotificationController",
+            // Executor write-back for per-requirement acceptance: authenticates with the executor
+            // token through DaemonUploadAuthenticator and carries no logged-in workspace context,
+            // same trust boundary as artifact uploads.
+            "com.aliyun.autowonder.prd.DaemonPrdAcceptanceController",
             "com.aliyun.autowonder.taskpackage.DaemonTaskPackageController",
             // Dispatch-scoped task data/identity endpoints authenticate with the executor token
             // through DaemonUploadAuthenticator and carry no logged-in workspace context.
@@ -117,6 +122,10 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.auth.federation.FederationAdminController#updateConnection("
                     + "java.lang.Long, com.aliyun.autowonder.auth.federation.dto.UpdateConnectionRequest)",
             "com.aliyun.autowonder.auth.federation.FederationAdminController#deleteConnection(java.lang.Long)",
+            // 平台认证配置（注册开关与默认登录连接）与 SSO 配置面同源，由 requireSystemAdmin 把关。
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#authConfig()",
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#updateAuthConfig("
+                    + "com.aliyun.autowonder.auth.federation.dto.UpdatePlatformAuthConfigRequest)",
             // SSO 只读概览：与 PlatformImChannelConfigController#list 同为平台级全局配置读取，
             // 面向所有已登录用户且不进入工作区访问阶梯；管理端点仍由 requireSystemAdmin 把关。
             "com.aliyun.autowonder.auth.federation.FederationOverviewController#overview()",
@@ -124,6 +133,12 @@ class WorkspaceAccessAnnotationCoverageTest {
             // application.yml, so the workspace ladder cannot express it; reading is open to any
             // signed-in user and there is no write endpoint.
             "com.aliyun.autowonder.executor.PlatformRuntimeAutoUpdateController#view()",
+            // 平台级功能开关是全局配置（platform_feature_switch 无 tenant_id），不随空间切换：
+            // 写端点由 SystemAdminService.requireSystemAdmin 鉴权，读端点对所有登录用户只读开放，
+            // 与 PlatformImChannelConfigController 同款，因此不进入工作区访问阶梯。
+            "com.aliyun.autowonder.feature.PlatformFeatureSwitchController#get()",
+            "com.aliyun.autowonder.feature.PlatformFeatureSwitchController#update("
+                    + "com.aliyun.autowonder.feature.dto.UpdateFeatureSwitchRequest)",
             "com.aliyun.autowonder.im.PlatformImChannelConfigController#list()",
             "com.aliyun.autowonder.im.PlatformImChannelConfigController#updateFeishu("
                     + "com.aliyun.autowonder.im.dto.UpdateDingTalkChannelRequest)",
@@ -167,6 +182,10 @@ class WorkspaceAccessAnnotationCoverageTest {
                     + "java.lang.String, int, int)",
             "com.aliyun.autowonder.workspace.WorkspaceController#restore("
                     + "java.lang.Long, com.aliyun.autowonder.workspace.dto.RestoreWorkspaceRequest)",
+            // Platform-level creation capability: a user without any workspace (or whose token
+            // workspace is gone) must still be able to query status and request access.
+            "com.aliyun.autowonder.workspace.WorkspaceController#myCreationRequest(boolean)",
+            "com.aliyun.autowonder.workspace.WorkspaceController#requestCreationPermission()",
             "com.aliyun.autowonder.im.UserImIdentityController#list()",
             "com.aliyun.autowonder.im.UserImIdentityController#updateFeishu("
                     + "com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest)",
@@ -203,7 +222,13 @@ class WorkspaceAccessAnnotationCoverageTest {
             // endpoint stays outside the access ladder. Keep the exemptions method-specific so new
             // endpoints still require an explicit access classification.
             "com.aliyun.autowonder.user.UserAdminController#list("
-                    + "java.lang.String, java.lang.String, java.lang.String, int, int)",
+                    + "java.lang.String, java.lang.String, java.lang.String, java.lang.Boolean, int, int)",
+            // Platform-admin-only endpoints: requireSystemAdmin runs for every call and the
+            // subject is a platform account, not the caller's workspace membership.
+            "com.aliyun.autowonder.user.UserAdminController#reviewRegistration("
+                    + "java.lang.Long, com.aliyun.autowonder.user.dto.RegistrationReviewRequest)",
+            "com.aliyun.autowonder.user.UserAdminController#updateWorkspaceCreationPermission("
+                    + "java.lang.Long, com.aliyun.autowonder.user.dto.WorkspaceCreationPermissionRequest)",
             "com.aliyun.autowonder.user.UserAdminController#detail(java.lang.Long)",
             "com.aliyun.autowonder.user.UserAdminController#updateProfile("
                     + "java.lang.Long, com.aliyun.autowonder.user.dto.UpdateProfileRequest)",
@@ -416,8 +441,9 @@ class WorkspaceAccessAnnotationCoverageTest {
         assertExempt(PlatformBrandingController.class, "adminConfig");
         assertExempt(PlatformBrandingController.class, "update");
         assertExempt(PlatformBrandingController.class, "uploadLogo");
-        assertExempt(PlatformImChannelConfigController.class, "list");
-        assertExempt(PlatformImChannelConfigController.class, "updateDingTalk");
+        assertExempt(PlatformFeatureSwitchController.class, "get");
+        assertExempt(PlatformFeatureSwitchController.class, "update");
+        assertExempt(PlatformImChannelConfigController.class, "list");        assertExempt(PlatformImChannelConfigController.class, "updateDingTalk");
         assertExempt(PlatformImChannelConfigController.class, "selection");
         assertExempt(PlatformImChannelConfigController.class, "selectProvider");
         assertExempt(PlatformImChannelConfigController.class, "groupChat");

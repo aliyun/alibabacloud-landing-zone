@@ -237,8 +237,7 @@ public class ExecutorUpdateService {
         boolean versionChanged = versionMoved(executorId, version);
         ExecutorUpdateTaskDO active = taskDao.findActiveByExecutor(session.getTenantId(), executorId);
         if (active != null) {
-            // The client reports success in the last frame before it re-execs, so that frame can be
-            // lost. The version this heartbeat carries is the proof that the upgrade landed.
+            // A startup result can be lost; the version in this heartbeat also proves the upgrade landed.
             String reported = version != null && !version.isBlank() ? version.trim() : presence.currentVersion(executorId);
             OptionalInt comparison = RuntimeVersion.compare(reported, active.getTargetVersion());
             if (comparison.isPresent() && comparison.getAsInt() >= 0) {
@@ -267,7 +266,8 @@ public class ExecutorUpdateService {
         if (executor == null || !Objects.equals(executor.getTenantId(), session.getTenantId())) {
             return;
         }
-        if (ExecutorLaunchConfigService.parse(executor.getLaunchConfig()).runtimeVersion != null) return;
+        var launchConfig = ExecutorLaunchConfigService.parse(executor.getLaunchConfig());
+        if (Boolean.TRUE.equals(launchConfig.runtimeVersionPinned) && launchConfig.runtimeVersion != null) return;
         // The frame carries the version this heartbeat just reported; the router mirrored it to presence.
         String reported = version.trim();
         String target = targetVersion();
@@ -290,23 +290,63 @@ public class ExecutorUpdateService {
             return;
         }
         ExecutorUpdateTaskDO task = taskDao.findByRequestId(requestId);
-        if (task == null || !Objects.equals(task.getExecutorId(), session.getExecutorId())) {
-            return;
-        }
-        if (!ACTIVE_STATUSES.contains(task.getStatus())) {
+        if (task == null || !Objects.equals(task.getExecutorId(), session.getExecutorId())
+                || !Objects.equals(task.getTenantId(), session.getTenantId())) {
             return;
         }
         String phase = frame.getString("phase");
-        if (phase == null) {
+        String receiptId = frame.get("receiptId") instanceof String value ? value : null;
+        boolean validReceipt = receiptId != null && !receiptId.isBlank() && receiptId.length() <= 128;
+        if ("receipt_probe".equals(phase)) {
+            // Capability is negotiated on each connection: a peer may reconnect to an older
+            // server after rollback. SUPPORT never consumes or acknowledges the pending result.
+            if (validReceipt) sendReceiptResponse(session, requestId, receiptId, "EXECUTOR_UPGRADE_RESULT_SUPPORT");
             return;
         }
+        boolean terminalFailure = validReceipt && "failed".equals(phase)
+                && Boolean.TRUE.equals(frame.get("terminal"));
+        boolean receiptResult = validReceipt && ("success".equals(phase) || terminalFailure);
+        // New receipts are only final startup outcomes. Reject malformed receipts rather than
+        // accidentally treating an outbox replay as another legacy retryable failure.
+        if (frame.containsKey("receiptId") && !receiptResult) return;
+        if (!ACTIVE_STATUSES.contains(task.getStatus())) {
+            if (receiptResult) sendReceiptResponse(session, requestId, receiptId, "EXECUTOR_UPGRADE_RESULT_ACK");
+            return;
+        }
+        if (phase == null) return;
         switch (phase) {
             case "accepted" -> postpone(task);
             case "draining" -> advance(task, STATUS_DRAINING);
             case "downloading", "applying" -> advance(task, STATUS_UPDATING);
-            case "success" -> complete(task, frame.getString("currentVersion"));
-            case "failed" -> fail(task, describe(frame.getString("error")), false);
-            default -> LOGGER.debug("ignored unknown upgrade phase={} requestId={}", phase, requestId);
+            case "success" -> {
+                String version = frame.getString("currentVersion");
+                OptionalInt comparison = RuntimeVersion.compare(version, task.getTargetVersion());
+                if (comparison.isEmpty() || comparison.getAsInt() < 0) {
+                    // Older workers report success before restarting. Keep waiting for real startup.
+                    advance(task, STATUS_UPDATING);
+                    return;
+                }
+                complete(task, version);
+            }
+            case "failed" -> fail(task, describe(frame.getString("error")), terminalFailure);
+            default -> { return; }
+        }
+        // Database writes above are conditional on active state, so competing/replayed terminal
+        // results cannot consume another attempt or rewrite an already terminal task.
+        if (receiptResult) sendReceiptResponse(session, requestId, receiptId, "EXECUTOR_UPGRADE_RESULT_ACK");
+    }
+
+    private void sendReceiptResponse(ExecutorSession session, String requestId, String receiptId, String type) {
+        JSONObject ack = new JSONObject(true);
+        ack.put("type", type);
+        ack.put("requestId", requestId);
+        ack.put("receiptId", receiptId);
+        try {
+            session.sendText(ack.toJSONString());
+        } catch (Exception e) {
+            // The durable client receipt will replay on reconnect; the stored task is the dedup key.
+            LOGGER.debug("upgrade receipt response deferred executorId={} requestId={}",
+                    session.getExecutorId(), requestId, e);
         }
     }
 
@@ -491,6 +531,7 @@ public class ExecutorUpdateService {
         frame.put("executorId", executorId);
         frame.put("requestId", task.getRequestId());
         frame.put("targetVersion", task.getTargetVersion());
+        frame.put("resultReceiptAck", true);
         frame.put("issuedAt", Instant.now().toString());
         String payload = frame.toJSONString();
         try {

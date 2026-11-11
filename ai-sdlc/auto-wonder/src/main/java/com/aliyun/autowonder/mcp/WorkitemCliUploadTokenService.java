@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.mcp;
 
+import com.aliyun.autowonder.common.RuntimeNpmPackage;
+
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
@@ -170,7 +172,7 @@ public class WorkitemCliUploadTokenService {
 
     /** One-line command template used in MCP tool descriptions; carries no token. */
     public String commandTemplate() {
-        return "npx -y autowonder@" + brandingService.recommendedRuntimeVersion()
+        return "npx -y " + RuntimeNpmPackage.spec(brandingService.recommendedRuntimeVersion())
                 + " workitem upload --server-url " + brandingService.effectivePublicBaseUrl()
                 + " --workitem-id <workitem-id>"
                 + " --file <filepath-1> --file <filepath-2> --file <images-1> --json";
@@ -178,7 +180,7 @@ public class WorkitemCliUploadTokenService {
 
     /** One-line scheduled-task upload command template used in MCP tool descriptions; carries no token. */
     public String scheduledTaskCommandTemplate() {
-        return "npx -y autowonder@" + brandingService.recommendedRuntimeVersion()
+        return "npx -y " + RuntimeNpmPackage.spec(brandingService.recommendedRuntimeVersion())
                 + " scheduled-task upload --server-url " + brandingService.effectivePublicBaseUrl()
                 + " --scheduled-task-id <scheduled-task-id>"
                 + " --file <filepath-1> --file <filepath-2> --file <images-1> --json";
@@ -190,7 +192,7 @@ public class WorkitemCliUploadTokenService {
 
     private String posixCommand(String token, long workitemId) {
         return "export " + TOKEN_ENV_NAME + "=" + posixQuote(token) + "\n\n"
-                + "npx -y autowonder@" + brandingService.recommendedRuntimeVersion() + " workitem upload \\\n"
+                + "npx -y " + RuntimeNpmPackage.spec(brandingService.recommendedRuntimeVersion()) + " workitem upload \\\n"
                 + "  --server-url " + posixQuote(brandingService.effectivePublicBaseUrl()) + " \\\n"
                 + "  --workitem-id " + workitemId + " \\\n"
                 + "  --file <filepath-1> \\\n"
@@ -201,7 +203,7 @@ public class WorkitemCliUploadTokenService {
 
     private String powershellCommand(String token, long workitemId) {
         return "$env:" + TOKEN_ENV_NAME + "=" + powershellQuote(token) + "\n\n"
-                + "npx -y autowonder@" + brandingService.recommendedRuntimeVersion() + " workitem upload `\n"
+                + "npx -y " + RuntimeNpmPackage.spec(brandingService.recommendedRuntimeVersion()) + " workitem upload `\n"
                 + "  --server-url " + powershellQuote(brandingService.effectivePublicBaseUrl()) + " `\n"
                 + "  --workitem-id " + workitemId + " `\n"
                 + "  --file <filepath-1> `\n"

@@ -2,25 +2,20 @@ import { externalPrincipalName, timelineSystemContent } from '../runtimeLabels';
 import { Trans, useTranslation } from 'react-i18next';
 import { i18n } from '@/shared/i18n';
 import { formatDateTime } from '@/shared/i18n/format';
-import { memo, useCallback, useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Typography, Avatar, Spin, Button } from 'antd';
 import { UserOutlined } from '@ant-design/icons';
 import { CommentRobotIcon } from './CommentRobotIcon';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { CopyContentMenu } from '@/shared/ui/CopyContentMenu';
-import type { Artifact, Participant, TimelineItem } from '@/shared/types/workitem';
+import type { Artifact, CommentInteraction, Participant, TimelineItem } from '@/shared/types/workitem';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { CommentInteractionCard } from './CommentInteractionCard';
 
 const { Text } = Typography;
 
 const TIMELINE_PAGE_SIZE = 50;
-
-const timelineItemStyle: CSSProperties = {
-  contentVisibility: 'auto',
-  containIntrinsicSize: 'auto 120px',
-};
 
 const EMPTY_PARTICIPANTS: Participant[] = [];
 const EMPTY_ARTIFACTS: Artifact[] = [];
@@ -30,6 +25,11 @@ interface UnifiedTimelineProps {
   participants?: Participant[];
   artifacts?: Artifact[];
   loading?: boolean;
+  page?: number;
+  hasMore?: boolean;
+  onPageChange?: (page: number) => void;
+  /** Optional per-interaction action slot; only pages that may control interactions pass it. */
+  renderInteractionActions?: (interaction: CommentInteraction) => ReactNode;
 }
 
 function formatTime(gmtCreate: string): string {
@@ -51,11 +51,13 @@ const CommentCard = memo(function CommentCard({
   mentionNames,
   artifacts,
   onArtifactClick,
+  renderInteractionActions,
 }: {
   item: TimelineItem;
   mentionNames: string[];
   artifacts?: Artifact[];
   onArtifactClick?: (artifact: Artifact) => void;
+  renderInteractionActions?: (interaction: CommentInteraction) => ReactNode;
 }) {
   const { t } = useTranslation('workitem');
   const authorName = externalPrincipalName(item.authorName, item.authorNameFallback);
@@ -86,7 +88,8 @@ const CommentCard = memo(function CommentCard({
         </div>
         {item.interactions?.filter(interaction => interaction.status !== 'APPLIED' || interaction.replyContent).map(interaction => (
           <CommentInteractionCard key={`${interaction.guidanceId}-${interaction.dispatchId || ''}`} interaction={interaction}
-            createdAt={item.gmtCreate} artifacts={artifacts} onArtifactClick={onArtifactClick} />
+            createdAt={item.gmtCreate} artifacts={artifacts} onArtifactClick={onArtifactClick}
+            actions={renderInteractionActions?.(interaction)} />
         ))}
       </div>
     </div>
@@ -144,10 +147,22 @@ export const UnifiedTimeline = memo(function UnifiedTimeline({
   participants = EMPTY_PARTICIPANTS,
   artifacts = EMPTY_ARTIFACTS,
   loading,
+  page = 0,
+  hasMore = false,
+  onPageChange,
+  renderInteractionActions,
 }: UnifiedTimelineProps) {
   const { t } = useTranslation('workitem');
   const [previewArtifact, setPreviewArtifact] = useState<Artifact | null>(null);
   const [visibleCount, setVisibleCount] = useState(TIMELINE_PAGE_SIZE);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const anchoredPageRef = useRef(page);
+  // 服务端分页整窗替换：新窗口数据渲染完成后回到该页第一条，不沿用上一页的滚动位置。
+  useEffect(() => {
+    if (page === anchoredPageRef.current || loading) return;
+    anchoredPageRef.current = page;
+    sectionRef.current?.scrollIntoView?.({ block: 'start' });
+  }, [page, loading]);
   // 只在 participants 引用变化时重建，避免每次时间线渲染都给所有评论换一个新的 mentionNames 引用。
   const mentionNames = useMemo(
     () => participants
@@ -158,17 +173,18 @@ export const UnifiedTimeline = memo(function UnifiedTimeline({
   const handleArtifactClick = useCallback((artifact: Artifact) => setPreviewArtifact(artifact), []);
   const handlePreviewClose = useCallback(() => setPreviewArtifact(null), []);
 
-  const hiddenCount = Math.max(0, items.length - visibleCount);
+  const hiddenCount = Math.max(0, items.length - (onPageChange ? TIMELINE_PAGE_SIZE : visibleCount));
   const handleLoadEarlier = useCallback(
     () => setVisibleCount((current) => Math.min(items.length, current + TIMELINE_PAGE_SIZE)),
     [items.length],
   );
 
-  // API 按最新在前返回，窗口取数组头部即最近 N 条；展开时在下方追加更旧条目，当前视口不移动。
-  const visibleItems = items.slice(0, visibleCount);
+  // API 最新在前；服务端分页替换窗口，本地分批模式在下方追加旧条目。
+  const visibleItems = items.slice(0, onPageChange ? TIMELINE_PAGE_SIZE : visibleCount);
 
   return (
     <div
+      ref={sectionRef}
       data-testid="workitem-timeline-section"
       style={{
         background: 'var(--aw-panel)',
@@ -186,8 +202,24 @@ export const UnifiedTimeline = memo(function UnifiedTimeline({
       ) : (
         <>
           <div>
+            {onPageChange && page > 0 && (
+              <div
+                data-testid="timeline-newer-page-bar"
+                style={{
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: 2,
+                  marginBottom: 12,
+                  padding: '4px 0',
+                  background: 'var(--aw-panel)',
+                  textAlign: 'center',
+                }}
+              >
+                <Button size="small" onClick={() => onPageChange(page - 1)}>{t('timeline.newerPage')}</Button>
+              </div>
+            )}
             {visibleItems.map((item) => (
-              <div key={item.id} data-testid="timeline-item" style={timelineItemStyle}>
+              <div key={`${item.type}-${item.id}`} data-testid="timeline-item">
                 {item.type === 'comment'
                   ? (
                     <CommentCard
@@ -195,21 +227,22 @@ export const UnifiedTimeline = memo(function UnifiedTimeline({
                       mentionNames={mentionNames}
                       artifacts={artifacts}
                       onArtifactClick={handleArtifactClick}
+                      renderInteractionActions={renderInteractionActions}
                     />
                   )
                   : <SystemCard item={item} participants={participants} />}
               </div>
             ))}
           </div>
-          {hiddenCount > 0 && (
+          {(onPageChange ? hasMore : hiddenCount > 0) && (
             <div style={{ textAlign: 'center', marginTop: 16 }}>
               <Button
                 type="link"
                 size="small"
                 data-testid="timeline-load-earlier"
-                onClick={handleLoadEarlier}
+                onClick={onPageChange ? () => onPageChange(page + 1) : handleLoadEarlier}
               >
-                {t('timeline.loadEarlier', { count: Math.min(TIMELINE_PAGE_SIZE, hiddenCount) })}
+                {onPageChange ? t('timeline.earlierPage') : t('timeline.loadEarlier', { count: Math.min(TIMELINE_PAGE_SIZE, hiddenCount) })}
               </Button>
             </div>
           )}

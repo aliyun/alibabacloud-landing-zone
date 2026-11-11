@@ -19,6 +19,7 @@ import com.aliyun.autowonder.agent.PlatformAgentSeeder;
 import com.aliyun.autowonder.statemachine.StatusTemplateSeeder;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
+import com.aliyun.autowonder.workspace.event.WorkspaceCreatedEvent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -86,7 +87,8 @@ class WorkspaceServiceTest {
         when(roleService.requireRole(100L, 12L)).thenReturn(role(WorkspaceAccessLevel.READ_WRITE));
         service = new WorkspaceService(workspaceDao, workspaceMemberDao, statusTemplateSeeder,
                 platformAgentSeeder, jwtService, userDao, auditLogService, systemAdminService,
-                deletionLinkage, eventPublisher, roleService);
+                deletionLinkage, eventPublisher, roleService,
+                mock(com.aliyun.autowonder.user.WorkspaceCreationPermissionService.class));
     }
 
     @AfterEach
@@ -117,6 +119,25 @@ class WorkspaceServiceTest {
         verify(roleService).seed(10L, 7L);
         verify(workspaceMemberDao).insert(argThat(member -> Long.valueOf(13L).equals(member.getRoleId())));
         verify(statusTemplateSeeder).seed(10L, 7L);
+    }
+
+    @Test
+    void createPublishesWorkspaceCreatedEventForGuideEligibility() {
+        doAnswer(invocation -> {
+            ((WorkspaceDO) invocation.getArgument(0)).setId(77L);
+            return null;
+        }).when(workspaceDao).insert(any(WorkspaceDO.class));
+        CreateWorkspaceRequest request = new CreateWorkspaceRequest();
+        request.setName("引导空间");
+
+        service.create(request, 7L);
+
+        ArgumentCaptor<Object> event = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        WorkspaceCreatedEvent created = (WorkspaceCreatedEvent) event.getValue();
+        assertEquals(77L, created.workspaceId());
+        assertEquals("引导空间", created.workspaceName());
+        assertEquals(7L, created.ownerUserId());
     }
 
     @Test

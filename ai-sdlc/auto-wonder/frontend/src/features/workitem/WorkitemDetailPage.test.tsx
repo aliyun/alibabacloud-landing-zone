@@ -83,7 +83,7 @@ function setupHandlers() {
       });
     }),
     http.get('/api/workitems/1/dispatch-requests', () => HttpResponse.json({ success: true, code: '0', data: [] })),
-    http.get('/api/workitems/1/unified-timeline', () => {
+    http.get('/api/workitems/1/unified-timeline/window', () => {
       return HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: mockTimeline,
@@ -113,6 +113,12 @@ function setupHandlers() {
         data: mockClarification,
       });
     }),
+    // 澄清面板挂载即解析「最近一次会话」：默认无记录，保持既有用例行为。
+    // 同一批 server.use 内按书写顺序匹配，所以这里排在 :conversationId 之前；
+    // 跨批调用时后注册者优先（见 test/mocks/clarificationLatest.ts）。
+    http.get('/api/workitems/1/clarification-conversations/latest', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: null,
+    })),
     http.get('/api/workitems/1/artifacts', () => {
       return HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
@@ -147,6 +153,11 @@ function mockClarifyEndpoints() {
     })),
     http.get('/api/workitems/1/clarification-conversations', () => HttpResponse.json({
       success: true, code: '0', message: '', traceId: null, data: [],
+    })),
+    // 进入面板会先解析「最近一次会话」：默认无记录，保持既有用例行为。
+    // 必须排在 :conversationId 详情 handler 之前，否则 latest 会被它匹配掉。
+    http.get('/api/workitems/1/clarification-conversations/latest', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: null,
     })),
     http.post('/api/workitems/1/clarification-conversations', async ({ request }) => {
       const body = (await request.json()) as { agentId?: number };
@@ -598,7 +609,7 @@ describe('WorkitemDetailPage', () => {
   it('opens a markdown artifact preview from a timeline comment path', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('# Completion Report\nPASS', { status: 200 })));
     server.use(
-      http.get('/api/workitems/1/unified-timeline', () => HttpResponse.json({
+      http.get('/api/workitems/1/unified-timeline/window', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: [{
           id: 10,
@@ -651,7 +662,7 @@ describe('WorkitemDetailPage', () => {
 
   it('shows one activity card while waiting for the mentioned worker', async () => {
     server.use(
-      http.get('/api/workitems/1/unified-timeline', () => HttpResponse.json({
+      http.get('/api/workitems/1/unified-timeline/window', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: [{
           id: 10, type: 'comment', authorId: 1, authorName: 'zichaojin',
@@ -672,7 +683,7 @@ describe('WorkitemDetailPage', () => {
 
   it('renders a side conversation answer directly below the question it answers', async () => {
     server.use(
-      http.get('/api/workitems/1/unified-timeline', () => HttpResponse.json({
+      http.get('/api/workitems/1/unified-timeline/window', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: [{
           id: 10, type: 'comment', authorId: 10004, authorName: 'zichaojin',
@@ -700,7 +711,7 @@ describe('WorkitemDetailPage', () => {
   it('opens an artifact preview from an interaction reply path', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('# Reply Report\nPASS', { status: 200 })));
     server.use(
-      http.get('/api/workitems/1/unified-timeline', () => HttpResponse.json({
+      http.get('/api/workitems/1/unified-timeline/window', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: [{
           id: 10, type: 'comment', authorId: 10004, authorName: 'zichaojin',
@@ -1331,7 +1342,7 @@ describe('WorkitemDetailPage', () => {
         success: true, code: '0', message: '', traceId: null,
         data: [...mockParticipants, humanOnlyInCandidates],
       })),
-      http.get('/api/workitems/1/unified-timeline', () => HttpResponse.json({
+      http.get('/api/workitems/1/unified-timeline/window', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: participantsCallCount >= 2 ? [{
           id: 20, type: 'comment', authorId: 1, authorName: 'zichaojin',
@@ -1345,7 +1356,7 @@ describe('WorkitemDetailPage', () => {
       })),
       ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1/participants'
         && h.info.path !== '/api/workitems/1/mention-candidates'
-        && h.info.path !== '/api/workitems/1/unified-timeline'
+        && h.info.path !== '/api/workitems/1/unified-timeline/window'
         && h.info.path !== '/api/workitems/1/comments'),
     );
 

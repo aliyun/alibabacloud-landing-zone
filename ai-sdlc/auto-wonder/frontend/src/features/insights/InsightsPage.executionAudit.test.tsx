@@ -48,6 +48,7 @@ function stubInsights() {
   requests.metrics.length = 0;
   requests.audit.length = 0;
   server.use(
+    http.get('/api/insights/delivery-analysis', () => ok({ status: 'COMPUTING', report: null, errorCode: null })),
     http.get('/api/dashboard/realtime', () => ok(realtimePayload)),
     http.get('/api/dashboard/overview', () => ok(overviewPayload)),
     http.get('/api/dashboard/pipeline-health', () => ok(pipelineHealthPayload)),
@@ -101,16 +102,14 @@ describe('InsightsPage execution audit handoff', () => {
     expect(screen.queryByText('数据洞察')).toBeNull();
   });
 
-  it('keeps the page-level audit and metrics summaries running once during the redirect', async () => {
+  it('redirects without fetching hidden audit and metrics summaries', async () => {
     pref('tab', 'audit');
 
     renderInsights();
 
     expect(await screen.findByText('审计日志落点')).toBeInTheDocument();
-    expect(requests.audit).toHaveLength(1);
-    expect(requests.metrics).toHaveLength(1);
-    expect(requests.audit[0]).toContain('time_range=30d');
-    expect(requests.metrics[0]).toContain('time_range=30d');
+    expect(requests.audit).toHaveLength(0);
+    expect(requests.metrics).toHaveLength(0);
   });
 
   it('omits actor filters and empty risk when only the audit tab preference exists', async () => {
@@ -140,7 +139,7 @@ describe('InsightsPage execution audit handoff', () => {
     expect(params.get('riskLevel')).toBeNull();
   });
 
-  it('shows the four remaining tabs without an audit entry and stays on insights', async () => {
+  it('shows delivery analytics alongside existing tabs without an audit entry', async () => {
     pref('tab', 'realtime');
 
     const router = renderInsights();

@@ -114,4 +114,17 @@ describe('environment variable locale boundary', () => {
     await language('en-US'); await act(async () => { finish(); });
     await waitFor(() => expect(success).toHaveBeenCalledWith({ create: 'Environment variable created', update: 'Environment variable updated', delete: 'Environment variable deleted' }[operation]));
   });
+  it('translates the PAT preset and mount status labels', async () => {
+    mount(); await screen.findByText('API_TOKEN');
+    expect(screen.getByRole('columnheader', { name: '挂载状态' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '新增环境变量' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Qoder 密钥 PAT' }));
+    expect(screen.getByRole('button', { name: '切换回自定义' })).toBeInTheDocument();
+    await language('en-US');
+    expect(screen.getByRole('columnheader', { name: 'Mount status' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Qoder API key (PAT)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Switch back to custom' })).toBeInTheDocument();
+    await language('zh-CN');
+    expect(screen.getByRole('button', { name: 'Qoder 密钥 PAT' })).toBeInTheDocument();
+  });
 });

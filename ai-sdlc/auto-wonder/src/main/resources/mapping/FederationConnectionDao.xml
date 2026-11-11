@@ -8,11 +8,13 @@
         INSERT INTO federation_connection
             (idp_id, name, protocol, enabled, issuer, saml_sso_url, saml_cert,
              oidc_authorize_url, oidc_token_url, oidc_jwks_url, client_id, client_secret,
-             scopes, subject_claim, name_claim, email_claim, allowed_tenants, sort_order)
+             scopes, subject_claim, name_claim, email_claim, auto_provision, feishu_user_id_claim,
+             allowed_tenants, sort_order)
         VALUES
             (#{idpId}, #{name}, #{protocol}, #{enabled}, #{issuer}, #{samlSsoUrl}, #{samlCert},
              #{oidcAuthorizeUrl}, #{oidcTokenUrl}, #{oidcJwksUrl}, #{clientId}, #{clientSecret},
-             #{scopes}, #{subjectClaim}, #{nameClaim}, #{emailClaim}, #{allowedTenants}, #{sortOrder})
+             #{scopes}, #{subjectClaim}, #{nameClaim}, #{emailClaim}, COALESCE(#{autoProvision,jdbcType=TINYINT}, 0), #{feishuUserIdClaim},
+             #{allowedTenants}, #{sortOrder})
     </insert>
 
     <!-- idp_id 与 protocol 不可改：改动会让已建立的绑定记录指向另一条连接语义。 -->
@@ -32,6 +34,8 @@
             subject_claim = #{subjectClaim},
             name_claim = #{nameClaim},
             email_claim = #{emailClaim},
+            auto_provision = COALESCE(#{autoProvision,jdbcType=TINYINT}, 0),
+            feishu_user_id_claim = #{feishuUserIdClaim},
             allowed_tenants = #{allowedTenants},
             sort_order = #{sortOrder},
             gmt_modified = NOW()

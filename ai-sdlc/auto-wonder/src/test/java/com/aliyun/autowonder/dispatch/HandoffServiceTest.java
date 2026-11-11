@@ -204,7 +204,59 @@ class HandoffServiceTest {
         verify(workitemDao).updateSdlcAndStep(eq(500L), eq(10000L), eq(30003L), eq(300031L), anyInt(), anyLong());
         verify(workitemDao).updateAssignee(eq(500L), eq(10000L), eq("AGENT"), eq(10002L), anyInt(), eq(0L));
         verify(dispatchService).enqueueHandoff(10000L, 500L, 300031L, 10002L, 300L, 0L);
-        verify(dispatchService).runPending(9001L);
+        verify(dispatchService).runPendingAfterCommit(9001L);
+    }
+
+    @Test
+    void agentHandoff_rejectsTargetAgentThatIsOffline() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
+        AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+
+        when(workitemDao.findByIdForUpdate(500L, 10000L)).thenReturn(workitem(500L, 10000L, 4));
+        when(roleResolver.resolveOnlineAgentId(10000L, "QA")).thenReturn(10002L);
+        when(sdlcResolver.resolveSdlcId(10000L, 10002L)).thenReturn(30003L);
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability)
+                .requireStartable(10000L, 10002L, 30003L);
+
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
+                workspaceDao, workspaceMemberDao, userDao, eventDao);
+        svc.setExecutionAvailabilityService(availability);
+        HandoffResult result = svc.handle(10000L, 500L, 300L, "QA", "AGENT");
+
+        assertEquals(HandoffResult.Status.REJECTED, result.status());
+        assertEquals(DispatchFailureReason.AGENT_OFFLINE, result.reasonCode());
+        verify(workitemDao, never()).updateSdlcAndStep(any(), any(), any(), any(), any(), any());
+        verify(workitemDao, never()).updateAssignee(any(), any(), any(), any(), any(), any());
+        verify(dispatchService, never()).enqueueHandoff(anyLong(), anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void replayOfADeliveredHandoffDoesNotScheduleAgain() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
+        AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+        when(workitemDao.findByIdForUpdate(500L, 10000L)).thenReturn(workitem(500L, 10000L, 4));
+        DispatchDO existing = new DispatchDO();
+        existing.setId(9001L);
+        existing.setAgentId(10002L);
+        existing.setStatus(DispatchStatus.DISPATCHED);
+        when(dispatchService.findHandoffBySource(10000L, 300L)).thenReturn(existing);
+
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
+                workspaceDao, workspaceMemberDao, userDao, eventDao);
+        HandoffResult result = svc.handle(10000L, 500L, 300L, "QA", "AGENT");
+
+        assertEquals(HandoffResult.Status.AGENT_DISPATCHED, result.status());
+        assertEquals(9001L, result.downstreamDispatchId());
+        verify(dispatchService, never()).runPendingAfterCommit(anyLong());
+        verify(dispatchService, never()).enqueueHandoff(anyLong(), anyLong(), anyLong(), anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -321,7 +373,7 @@ class HandoffServiceTest {
         assertEquals(HandoffResult.Status.AGENT_DISPATCHED, result.status());
         assertEquals(12L, result.targetRef());
         assertEquals(901L, result.downstreamDispatchId());
-        verify(dispatchService).runPending(901L);
+        verify(dispatchService).runPendingAfterCommit(901L);
         verifyNoInteractions(roleResolver, sdlcResolver);
         verify(workitemDao, never()).updateSdlcAndStep(anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
         verify(eventDao, never()).insert(any());

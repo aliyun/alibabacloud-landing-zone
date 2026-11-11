@@ -18,6 +18,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -185,6 +187,79 @@ class EnvironmentVariableDaoTest {
 
         assertEquals(Long.valueOf(10L), agentDao.lockByIdForUpdate(TENANT, 10L));
         assertNull(agentDao.lockByIdForUpdate(OTHER_TENANT, 10L));
+    }
+
+    @Test
+    void listActiveCountsOneAgentOnceAcrossOnlineAndDraftVersions() throws Exception {
+        seedMountMatrix();
+
+        Map<String, EnvironmentVariableDO> rows = dao.listActive(TENANT).stream()
+                .collect(Collectors.toMap(EnvironmentVariableDO::getName, row -> row));
+
+        assertEquals(7, rows.size());
+        assertCounts(rows.get("ONLINE_ONLY"), 1, 0);
+        assertCounts(rows.get("DRAFT_ONLY"), 0, 1);
+        assertCounts(rows.get("BOTH"), 1, 1);
+    }
+
+    @Test
+    void listActiveIgnoresOldVersionsOtherTenantsDeletedAgentsAndUnmountedVariables() throws Exception {
+        seedMountMatrix();
+
+        Map<String, EnvironmentVariableDO> rows = dao.listActive(TENANT).stream()
+                .collect(Collectors.toMap(EnvironmentVariableDO::getName, row -> row));
+
+        assertCounts(rows.get("OLD_VERSION_ONLY"), 0, 0);
+        assertCounts(rows.get("OTHER_TENANT_ONLY"), 0, 0);
+        assertCounts(rows.get("DELETED_AGENT_ONLY"), 0, 0);
+        assertCounts(rows.get("NEVER_MOUNTED"), 0, 0);
+    }
+
+    @Test
+    void countMountsUsesTheSameBoundaryForASingleVariable() throws Exception {
+        seedMountMatrix();
+
+        assertCounts(dao.countMounts(TENANT, 11L).get(0), 1, 1);
+        assertCounts(dao.countMounts(TENANT, 10L).get(0), 0, 1);
+        assertCounts(dao.countMounts(TENANT, 15L).get(0), 0, 0);
+        assertCounts(dao.countMounts(TENANT, 13L).get(0), 0, 0);
+        assertTrue(dao.countMounts(TENANT, 99L).isEmpty());
+        assertTrue(dao.countMounts(OTHER_TENANT, 13L).isEmpty());
+    }
+
+    private static void assertCounts(EnvironmentVariableDO row, int online, int draft) {
+        assertNotNull(row);
+        assertEquals(online, row.getOnlineMountCount().intValue());
+        assertEquals(draft, row.getDraftMountCount().intValue());
+    }
+
+    private static void seedMountMatrix() throws Exception {
+        execute("INSERT INTO environment_variable"
+                        + " (id, tenant_id, name, credential_ref, is_deleted, version) VALUES"
+                        + " (9, 41, 'ONLINE_ONLY', 'r9', 0, 0),"
+                        + " (10, 41, 'DRAFT_ONLY', 'r10', 0, 0),"
+                        + " (11, 41, 'BOTH', 'r11', 0, 0),"
+                        + " (12, 41, 'OLD_VERSION_ONLY', 'r12', 0, 0),"
+                        + " (13, 41, 'OTHER_TENANT_ONLY', 'r13', 0, 0),"
+                        + " (14, 41, 'DELETED_AGENT_ONLY', 'r14', 0, 0),"
+                        + " (15, 41, 'NEVER_MOUNTED', 'r15', 0, 0)",
+                "INSERT INTO agent"
+                        + " (id, tenant_id, name, online_version_id, editing_version_id, is_deleted) VALUES"
+                        + " (10, 41, 'OnlineOnly', 100, 101, 0),"
+                        + " (20, 41, 'DraftOnly', NULL, 111, 0),"
+                        + " (30, 41, 'Both', 120, 121, 0),"
+                        + " (40, 42, 'OtherTenant', 200, NULL, 0),"
+                        + " (50, 41, 'DeletedAgent', 150, NULL, 1)",
+                "INSERT INTO agent_version (id, tenant_id, agent_id, version_no, is_deleted) VALUES"
+                        + " (100, 41, 10, 1, 0), (101, 41, 10, 2, 0), (102, 41, 10, 0, 0),"
+                        + " (111, 41, 20, 1, 0),"
+                        + " (120, 41, 30, 1, 0), (121, 41, 30, 2, 0),"
+                        + " (200, 42, 40, 1, 0),"
+                        + " (150, 41, 50, 1, 0)",
+                "INSERT INTO agent_environment_variable_ref"
+                        + " (tenant_id, agent_version_id, environment_variable_id) VALUES"
+                        + " (41, 100, 9), (41, 111, 10), (41, 120, 11), (41, 121, 11),"
+                        + " (41, 102, 12), (42, 200, 13), (41, 150, 14)");
     }
 
     private static void executeScript(String resource) throws Exception {

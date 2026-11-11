@@ -12,6 +12,7 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,21 +28,25 @@ public class FederationRegistryService {
     private static final int ENABLED = 1;
     private static final int DISABLED = 0;
     private static final int MAX_NAME_LENGTH = 64;
+    private static final int MAX_CLAIM_LENGTH = 128;
 
     private final FederationIdpDao idpDao;
     private final FederationConnectionDao connectionDao;
     private final FederatedIdentityDao identityDao;
     private final SecretCrypto secretCrypto;
     private final List<FederationProtocolAdapter> adapters;
+    private final PlatformAuthConfigService authConfigService;
 
     public FederationRegistryService(FederationIdpDao idpDao, FederationConnectionDao connectionDao,
                                      FederatedIdentityDao identityDao, SecretCrypto secretCrypto,
-                                     List<FederationProtocolAdapter> adapters) {
+                                     List<FederationProtocolAdapter> adapters,
+                                     PlatformAuthConfigService authConfigService) {
         this.idpDao = idpDao;
         this.connectionDao = connectionDao;
         this.identityDao = identityDao;
         this.secretCrypto = secretCrypto;
         this.adapters = adapters;
+        this.authConfigService = authConfigService;
     }
 
     public FederationProtocolAdapter adapterFor(FederationProtocol protocol) {
@@ -169,9 +174,10 @@ public class FederationRegistryService {
         for (FederationIdpDO idp : idpDao.listAll()) {
             idps.put(idp.getId(), idp);
         }
+        Long defaultProviderId = authConfigService.defaultProviderId();
         List<FederationConnectionVO> result = new ArrayList<>();
         for (FederationConnectionDO connection : connectionDao.listAll()) {
-            result.add(toConnectionVO(connection, idps.get(connection.getIdpId())));
+            result.add(toConnectionVO(connection, idps.get(connection.getIdpId()), defaultProviderId));
         }
         return result;
     }
@@ -211,6 +217,7 @@ public class FederationRegistryService {
         return overview;
     }
 
+    @Transactional
     public FederationConnectionVO createConnection(CreateConnectionRequest request) {
         if (request == null) {
             throw BizException.keyed(ErrorCode.PARAM_INVALID, "federation.provider_required", null,
@@ -234,20 +241,31 @@ public class FederationRegistryService {
         connection.setSubjectClaim(trimToNull(request.getSubjectClaim()));
         connection.setNameClaim(trimToNull(request.getNameClaim()));
         connection.setEmailClaim(trimToNull(request.getEmailClaim()));
+        connection.setFeishuUserIdClaim(requireClaimName(request.getFeishuUserIdClaim()));
+        connection.setAutoProvision(normalizeAutoProvision(request.getAutoProvision()));
         connection.setAllowedTenants(trimToNull(request.getAllowedTenants()));
         connection.setSortOrder(request.getSortOrder() == null ? 0 : request.getSortOrder());
         String clientSecret = requireClientSecret(request.getClientSecret(), protocol);
         connection.setClientSecret(clientSecret == null ? null : secretCrypto.encrypt(clientSecret));
         requireCompleteConfig(connection, protocol);
         connectionDao.insert(connection);
-        return toConnectionVO(connectionDao.findById(connection.getId()), idp);
+        if (Boolean.TRUE.equals(request.getDefaultLogin())) {
+            if (!Integer.valueOf(ENABLED).equals(connection.getEnabled())) {
+                throw paramInvalid("federation.default_login_requires_enabled",
+                        "默认登录连接及其身份提供方必须处于启用状态");
+            }
+            authConfigService.setDefaultProvider(connection.getId());
+        }
+        return toConnectionVO(connectionDao.findById(connection.getId()), idp, authConfigService.defaultProviderId());
     }
 
+    @Transactional
     public FederationConnectionVO updateConnection(Long id, UpdateConnectionRequest request) {
         // 必须读原始密文行：若先解密再由 update 回写，未改密钥的更新会把明文落库。
         FederationConnectionDO connection = requireConnectionRow(id);
+        Long defaultProviderId = authConfigService.defaultProviderId();
         if (request == null) {
-            return toConnectionVO(connection, idpDao.findById(connection.getIdpId()));
+            return toConnectionVO(connection, idpDao.findById(connection.getIdpId()), defaultProviderId);
         }
         if (request.getName() != null) {
             connection.setName(requireUniqueName(request.getName(), id));
@@ -266,6 +284,11 @@ public class FederationRegistryService {
         connection.setSubjectClaim(overwrite(connection.getSubjectClaim(), request.getSubjectClaim()));
         connection.setNameClaim(overwrite(connection.getNameClaim(), request.getNameClaim()));
         connection.setEmailClaim(overwrite(connection.getEmailClaim(), request.getEmailClaim()));
+        connection.setFeishuUserIdClaim(overwriteClaimName(connection.getFeishuUserIdClaim(),
+                request.getFeishuUserIdClaim()));
+        if (request.getAutoProvision() != null) {
+            connection.setAutoProvision(normalizeAutoProvision(request.getAutoProvision()));
+        }
         connection.setAllowedTenants(overwrite(connection.getAllowedTenants(), request.getAllowedTenants()));
         if (request.getSortOrder() != null) {
             connection.setSortOrder(request.getSortOrder());
@@ -274,16 +297,33 @@ public class FederationRegistryService {
             connection.setClientSecret(secretCrypto.encrypt(request.getClientSecret().trim()));
         }
         requireCompleteConfig(connection, parseProtocol(connection.getProtocol()));
+        boolean wasDefault = id.equals(defaultProviderId);
+        boolean wantsDefault = Boolean.TRUE.equals(request.getDefaultLogin());
+        // 已生效的默认连接允许随连接一起停用并保留引用；只有「新设为默认」才要求启用态。
+        if (wantsDefault && !wasDefault && !Integer.valueOf(ENABLED).equals(connection.getEnabled())) {
+            throw paramInvalid("federation.default_login_requires_enabled",
+                    "默认登录连接及其身份提供方必须处于启用状态");
+        }
         connectionDao.update(connection);
-        return toConnectionVO(connectionDao.findById(id), idpDao.findById(connection.getIdpId()));
+        if (Boolean.FALSE.equals(request.getDefaultLogin())) {
+            authConfigService.clearDefaultProviderIfMatches(id);
+        } else if (wantsDefault && !wasDefault) {
+            // 已是默认连接时保持原引用：允许随连接停用而保留，重新启用后恢复自动发起。
+            authConfigService.setDefaultProvider(id);
+        }
+        return toConnectionVO(connectionDao.findById(id), idpDao.findById(connection.getIdpId()),
+                authConfigService.defaultProviderId());
     }
 
+    @Transactional
     public void deleteConnection(Long id) {
         FederationConnectionDO connection = requireConnectionRow(id);
         if (identityDao.countByProvider(connection.getId()) > 0) {
             throw new BizException(ErrorCode.FEDERATION_CONNECTION_IN_USE);
         }
         connectionDao.deleteById(id);
+        // 删除默认连接后清除引用，避免平台配置指向不存在的连接。
+        authConfigService.clearDefaultProviderIfMatches(id);
     }
 
     // 连接级校验：按协议要求必填项，缺一不可，避免把半配置连接暴露到登录页。
@@ -361,6 +401,23 @@ public class FederationRegistryService {
         return incoming == null ? current : trimToNull(incoming);
     }
 
+    private String overwriteClaimName(String current, String incoming) {
+        return incoming == null ? current : requireClaimName(incoming);
+    }
+
+    private String requireClaimName(String value) {
+        String trimmed = trimToNull(value);
+        if (trimmed != null && trimmed.length() > MAX_CLAIM_LENGTH) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "federation.claim_name_too_long",
+                    new Object[]{MAX_CLAIM_LENGTH}, "属性名不能超过 " + MAX_CLAIM_LENGTH + " 个字符");
+        }
+        return trimmed;
+    }
+
+    private int normalizeAutoProvision(Integer value) {
+        return value != null && value == 1 ? 1 : 0;
+    }
+
     private BizException paramInvalid(String messageKey, String diagnostic) {
         return BizException.keyed(ErrorCode.PARAM_INVALID, messageKey, null, diagnostic);
     }
@@ -385,7 +442,8 @@ public class FederationRegistryService {
         return vo;
     }
 
-    private FederationConnectionVO toConnectionVO(FederationConnectionDO connection, FederationIdpDO idp) {
+    private FederationConnectionVO toConnectionVO(FederationConnectionDO connection, FederationIdpDO idp,
+                                                 Long defaultProviderId) {
         FederationConnectionVO vo = new FederationConnectionVO();
         vo.setId(connection.getId());
         vo.setIdpId(connection.getIdpId());
@@ -407,6 +465,9 @@ public class FederationRegistryService {
         vo.setSubjectClaim(connection.getSubjectClaim());
         vo.setNameClaim(connection.getNameClaim());
         vo.setEmailClaim(connection.getEmailClaim());
+        vo.setFeishuUserIdClaim(connection.getFeishuUserIdClaim());
+        vo.setAutoProvision(Integer.valueOf(1).equals(connection.getAutoProvision()));
+        vo.setDefaultLogin(connection.getId() != null && connection.getId().equals(defaultProviderId));
         vo.setAllowedTenants(connection.getAllowedTenants());
         vo.setSortOrder(connection.getSortOrder());
         vo.setGmtCreate(connection.getGmtCreate());

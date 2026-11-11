@@ -2,6 +2,24 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aliyun.autowonder.workitem.WorkitemEventDao">
+    <select id="listWindowKeys" databaseId="autowonder-source-aware" resultType="com.aliyun.autowonder.workitem.dto.TimelineItemVO">
+        SELECT id, type FROM (
+            SELECT id, 'comment' AS type, gmt_create FROM workitem_comment
+            WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND source_type = 'WORKITEM'
+            UNION ALL
+            SELECT id, 'system' AS type, gmt_create FROM workitem_event
+            WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ) timeline ORDER BY gmt_create DESC, id DESC, type DESC LIMIT 51 OFFSET #{offset}
+    </select>
+    <select id="listWindowKeys" databaseId="autowonder-legacy" resultType="com.aliyun.autowonder.workitem.dto.TimelineItemVO">
+        SELECT id, type FROM (
+            SELECT id, 'comment' AS type, gmt_create FROM workitem_comment
+            WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+            UNION ALL
+            SELECT id, 'system' AS type, gmt_create FROM workitem_event
+            WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ) timeline ORDER BY gmt_create DESC, id DESC, type DESC LIMIT 51 OFFSET #{offset}
+    </select>
     <insert id="insert" parameterType="com.aliyun.autowonder.workitem.WorkitemEventDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO workitem_event (tenant_id, workitem_id, event_type, from_val, to_val,

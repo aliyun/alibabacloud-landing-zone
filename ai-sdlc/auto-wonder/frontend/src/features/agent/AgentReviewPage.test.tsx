@@ -172,4 +172,192 @@ describe('AgentReviewPage', () => {
 
     await waitFor(() => expect(listHits).toBe(2));
   });
+
+  const pendingAgent = {
+    id: 1, name: 'PendingBot', avatarUrl: null, status: 'PENDING_REVIEW',
+    onlineVersionId: 5, editingVersionId: 6, latestVersionNo: 6, version: 1, gmtCreate: '2026-07-01',
+  };
+
+  function versionDetail(versionNo: number, overrides: Record<string, unknown> = {}) {
+    return {
+      id: versionNo, agentId: 1, versionNo, status: 'PENDING_REVIEW',
+      roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+      businessBackground: 'soul line', responsibilities: 'agent line',
+      sdlcId: 1, identityJson: '{"evolutionMode":"ASSISTED"}',
+      submitNote: null, creatorId: 7, creatorName: '蔡何',
+      reviewerId: null, reviewComment: null, reviewedAt: null,
+      version: 0, gmtCreate: '2026-07-01',
+      repoPerms: [], skills: [], memoryRefs: [], environmentVariables: [],
+      ...overrides,
+    };
+  }
+
+  it('opens the diff against the online baseline and shows the submit note', async () => {
+    const fetched: string[] = [];
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [pendingAgent],
+      })),
+      http.get('/api/agents/1/versions', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 5, versionNo: 5, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', gmtCreate: '2026-07-01' }],
+      })),
+      http.get('/api/agents/1/versions/5', () => {
+        fetched.push('base');
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(5, { status: 'ONLINE', businessBackground: 'old soul' }) });
+      }),
+      http.get('/api/agents/1/versions/6', () => {
+        fetched.push('target');
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: versionDetail(6, { businessBackground: 'new soul', submitNote: '升级 SOUL' }),
+        });
+      }),
+    );
+
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /查看变更/ }));
+
+    expect(await screen.findByText(/提交人：蔡何/)).toBeInTheDocument();
+    expect(screen.getByText('升级 SOUL')).toBeInTheDocument();
+    expect(screen.getAllByText('在线版本 v5').length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId(/^awdiff-section-/)).toHaveLength(7);
+    expect(fetched.sort()).toEqual(['base', 'target']);
+  });
+
+  it('renders the first-version view without requesting a baseline', async () => {
+    const fetched: string[] = [];
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ ...pendingAgent, onlineVersionId: null }],
+      })),
+      http.get('/api/agents/1/versions', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/agents/1/versions/6', () => {
+        fetched.push('target');
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(6) });
+      }),
+    );
+
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /查看变更/ }));
+
+    expect(await screen.findByText(/该数字员工尚无在线版本/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '上一处' })).not.toBeInTheDocument();
+    expect(fetched).toEqual(['target']);
+  });
+
+  it('approves from inside the diff dialog after confirmation', async () => {
+    const approvals: unknown[] = [];
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [pendingAgent],
+      })),
+      http.get('/api/agents/1/versions', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 5, versionNo: 5, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', gmtCreate: '2026-07-01' }],
+      })),
+      http.get('/api/agents/1/versions/5', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(5) })),
+      http.get('/api/agents/1/versions/6', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(6) })),
+      http.post('/api/agents/1/approve', async ({ request }) => {
+        approvals.push(await request.json());
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { ...pendingAgent, status: 'ONLINE', onlineVersionId: 6, editingVersionId: null },
+        });
+      }),
+    );
+
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /查看变更/ }));
+    await userEvent.click(await screen.findByRole('button', { name: '通过并上线' }));
+    await userEvent.click(await screen.findByRole('button', { name: '确认通过' }));
+
+    await waitFor(() => expect(approvals).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByText(/提交人：蔡何/)).not.toBeInTheDocument());
+  });
+
+  it('rejects from inside the diff dialog with a required reason', async () => {
+    const rejections: unknown[] = [];
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [pendingAgent],
+      })),
+      http.get('/api/agents/1/versions', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 5, versionNo: 5, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', gmtCreate: '2026-07-01' }],
+      })),
+      http.get('/api/agents/1/versions/5', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(5) })),
+      http.get('/api/agents/1/versions/6', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(6) })),
+      http.post('/api/agents/1/reject', async ({ request }) => {
+        rejections.push(await request.json());
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { ...pendingAgent, status: 'ONLINE' },
+        });
+      }),
+    );
+
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /查看变更/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /拒\s*绝/ }));
+    await userEvent.type(await screen.findByLabelText('请输入驳回原因...'), '权限过宽');
+    await userEvent.click(screen.getByRole('button', { name: '确认驳回' }));
+
+    await waitFor(() => expect(rejections).toEqual([{ comment: '权限过宽' }]));
+    await waitFor(() => expect(screen.queryByText(/提交人：蔡何/)).not.toBeInTheDocument());
+  });
+
+  it('disables the review actions for read-only members', async () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [pendingAgent],
+      })),
+      http.get('/api/agents/1/versions', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 5, versionNo: 5, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', gmtCreate: '2026-07-01' }],
+      })),
+      http.get('/api/agents/1/versions/5', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(5) })),
+      http.get('/api/agents/1/versions/6', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(6) })),
+    );
+
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /查看变更/ }));
+
+    expect(await screen.findByRole('button', { name: '通过并上线' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /拒\s*绝/ })).toBeDisabled();
+  });
+
+  it('shows the load error with a retry when the pending version fails', async () => {
+    let attempts = 0;
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [pendingAgent],
+      })),
+      http.get('/api/agents/1/versions', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 5, versionNo: 5, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', gmtCreate: '2026-07-01' }],
+      })),
+      http.get('/api/agents/1/versions/5', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(5) })),
+      http.get('/api/agents/1/versions/6', () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return HttpResponse.json({ success: false, code: '14001', message: '版本读取失败', traceId: null, data: null }, { status: 500 });
+        }
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionDetail(6) });
+      }),
+    );
+
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /查看变更/ }));
+
+    expect(await screen.findByText('版本加载失败')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /重\s*试/ }));
+
+    expect(await screen.findByText(/提交人：蔡何/)).toBeInTheDocument();
+    expect(attempts).toBe(2);
+  });
 });

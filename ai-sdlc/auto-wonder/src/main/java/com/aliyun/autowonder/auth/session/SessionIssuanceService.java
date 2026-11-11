@@ -3,6 +3,9 @@ package com.aliyun.autowonder.auth.session;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.auth.jwt.TokenPayload;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.dto.LoginResponse;
 import com.aliyun.autowonder.user.dto.UserVO;
@@ -29,6 +32,13 @@ public class SessionIssuanceService {
     }
 
     public LoginResponse issue(UserDO user) {
+        // 所有签发路径（密码登录、联合登录、绑定后登录）共用同一守卫：待审或已注销账号不签发会话。
+        if (UserAccountStates.isPendingReview(user)) {
+            throw new BizException(ErrorCode.USER_REGISTRATION_PENDING_REVIEW);
+        }
+        if (UserAccountStates.isLegacyDeactivated(user) || UserAccountStates.isDeleted(user)) {
+            throw new BizException(ErrorCode.DEACTIVATION_ACCOUNT_DISABLED);
+        }
         String jti = UUID.randomUUID().toString();
         String accessToken = jwtService.signAccess(new TokenPayload(user.getId(), null, jti));
         String refreshToken = UUID.randomUUID().toString();

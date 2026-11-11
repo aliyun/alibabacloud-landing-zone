@@ -38,6 +38,32 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void pendingRegistrationRejectionCarriesAdministratorContacts() {
+        var contacts = java.util.List.of(new com.aliyun.autowonder.user.dto.AdministratorContactVO(
+                "周宁", "zhou@example.com"));
+
+        Result<RegistrationReviewDeniedVO> result = handler.handleRegistrationReviewPending(
+                new com.aliyun.autowonder.user.RegistrationReviewPendingException(contacts));
+
+        assertEquals("37012", result.getCode());
+        assertEquals(1, result.getData().getAdministratorContacts().size());
+        assertEquals("zhou@example.com", result.getData().getAdministratorContacts().get(0).getEmail());
+    }
+
+    @Test
+    void workspaceCreationDenialCarriesAdministratorContacts() {
+        var contacts = java.util.List.of(new com.aliyun.autowonder.user.dto.AdministratorContactVO(
+                null, "only@example.com"));
+
+        Result<RegistrationReviewDeniedVO> result = handler.handleWorkspaceCreationDenied(
+                new com.aliyun.autowonder.workspace.WorkspaceCreationDeniedException(contacts));
+
+        assertEquals("37015", result.getCode());
+        assertEquals(1, result.getData().getAdministratorContacts().size());
+        assertNull(result.getData().getAdministratorContacts().get(0).getNickname());
+    }
+
+    @Test
     void unauthorizedBizExceptionReturnsHttp401WithBody() {
         assertBizResponse(ErrorCode.UNAUTHORIZED, HttpStatus.UNAUTHORIZED);
     }

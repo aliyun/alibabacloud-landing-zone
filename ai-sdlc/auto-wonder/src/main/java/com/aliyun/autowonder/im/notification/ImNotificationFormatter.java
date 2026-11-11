@@ -2,7 +2,9 @@ package com.aliyun.autowonder.im.notification;
 
 import org.springframework.stereotype.Component;
 import com.aliyun.autowonder.common.i18n.SystemMessages;
+import com.aliyun.autowonder.notification.NotificationLink;
 import com.aliyun.autowonder.workitem.AssignmentActor;
+import java.util.List;
 import java.util.Locale;
 
 @Component
@@ -32,7 +34,27 @@ public class ImNotificationFormatter {
                     run ? scheduledTaskRunUrl(normalizedBaseUrl, task.workitemId(), context.tenantId())
                             : workitemUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()));
         }
+        if (ImNotificationTask.TYPE_DUPLICATE_INTENT.equals(task.notificationType())) {
+            List<NotificationLink> links = task.relatedLinks() == null ? List.of() : task.relatedLinks();
+            String submitted = links.stream()
+                    .filter(link -> "SUBMITTED".equals(link.kind()))
+                    .findFirst()
+                    .map(link -> markdownLink(link, normalizedBaseUrl))
+                    .orElse(null);
+            String duplicates = links.stream()
+                    .filter(link -> "DUPLICATE".equals(link.kind()))
+                    .map(link -> "- " + markdownLink(link, normalizedBaseUrl))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            if (submitted == null || duplicates.isEmpty()) {
+                return render("duplicate_intent_fallback", locale, safeText(task.commentContentMd()),
+                        workitemUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()));
+            }
+            return render("duplicate_intent", locale, submitted, duplicates);
+        }
         if (ImNotificationTask.TYPE_WORKSPACE_ACCESS_REQUEST.equals(task.notificationType())) {
+            if (ImNotificationTask.SOURCE_ACCESS_CANCELLED.equals(task.sourceType())) {
+                return render("access_cancelled", locale, workspace, actor);
+            }
             return render("access_request", locale, workspace, actor, accessLevelLabel(task.commentContentMd(), locale),
                     memberReviewUrl(normalizedBaseUrl, context.tenantId()));
         }
@@ -74,6 +96,18 @@ public class ImNotificationFormatter {
 
     private static String safeText(String value) {
         return value == null ? "" : value;
+    }
+
+    private static String markdownLink(NotificationLink link, String normalizedBaseUrl) {
+        return "[" + markdownLabel(link.title()) + "](" + normalizedBaseUrl + link.url() + ")";
+    }
+
+    /** User-authored titles must not be able to break the Markdown link or inject emphasis. */
+    private static String markdownLabel(String value) {
+        return safeText(value).replace("\\", "\\\\")
+                .replace("[", "\\[").replace("]", "\\]")
+                .replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
+                .replace("\r", " ").replace("\n", " ");
     }
 
     private static String accessLevelLabel(String accessLevel, Locale locale) {

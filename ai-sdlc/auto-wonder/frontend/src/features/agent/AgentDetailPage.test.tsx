@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -285,8 +285,8 @@ describe('AgentDetailPage', () => {
     expect(screen.getByText(/其默认拥有平台所有的仓库的读取权限，进行平台智能的管理。/)).toBeInTheDocument();
   });
 
-  it('shows the sdlc template name and evolution mode of the effective version', async () => {
-    mockAgent({ roleName: 'Frontend Dev', sdlcId: 7, evolutionMode: 'AUTO_PROPOSAL' });
+  it('shows named identity attributes with the sdlc workflow link and evolution mode', async () => {
+    mockAgent({ roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', sdlcId: 7, evolutionMode: 'AUTO_PROPOSAL' });
     server.use(
       http.get('/api/sdlcs/7', () =>
         ok({ id: 7, name: '标准需求开发流程', description: '', workType: null, status: 'ENABLED', isDefault: 0, entryStepId: null, version: 1 })),
@@ -294,11 +294,74 @@ describe('AgentDetailPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText('SDLC 模版：标准需求开发流程')).toBeInTheDocument();
-    expect(screen.getByText('自进化模式：自动生成候选')).toBeInTheDocument();
+    const attributes = await screen.findByTestId('agent-attributes');
+    expect(within(attributes).getByText('角色名称')).toBeInTheDocument();
+    expect(within(attributes).getByText('前端开发工程师')).toBeInTheDocument();
+    expect(within(attributes).getByText('角色码')).toBeInTheDocument();
+    expect(within(attributes).getByText('FRONTEND_DEV')).toBeInTheDocument();
+    expect(within(attributes).getByText('自进化模式')).toBeInTheDocument();
+    expect(within(attributes).getByText('自动生成候选')).toBeInTheDocument();
+    expect(within(attributes).getByText('SDLC流程')).toBeInTheDocument();
+    const sdlcLink = await within(attributes).findByRole('link', { name: '标准需求开发流程' });
+    expect(sdlcLink).toHaveAttribute('href', '/sdlcs/7');
+    expect(within(attributes).getByText('执行器')).toBeInTheDocument();
   });
 
-  it('falls back to the sdlc id while the template name has not resolved', async () => {
+  it('places the named attributes above SOUL.md and AGENT.md with sdlc and executor adjacent', async () => {
+    mockAgent({ roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', sdlcId: 7, executorOnlineCount: 1, executorTotalCount: 3 });
+    server.use(
+      http.get('/api/sdlcs/7', () =>
+        ok({ id: 7, name: '标准需求开发流程', description: '', workType: null, status: 'ENABLED', isDefault: 0, entryStepId: null, version: 1 })),
+    );
+
+    renderPage();
+
+    const attributes = await screen.findByTestId('agent-attributes');
+    const soulHeading = screen.getByText('SOUL.md');
+    // 属性区在文档正文之前：compareDocumentPosition 返回 DOCUMENT_POSITION_FOLLOWING。
+    expect(attributes.compareDocumentPosition(soulHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const labels = within(attributes).getAllByText(/^(角色名称|角色码|自进化模式|SDLC流程|执行器)$/).map(node => node.textContent);
+    expect(labels).toEqual(['角色名称', '角色码', '自进化模式', 'SDLC流程', '执行器']);
+  });
+
+  it('links the executor attribute to the scoped executor list only when executors exist', async () => {
+    mockAgent({ executorOnlineCount: 1, executorTotalCount: 3 });
+    renderPage();
+
+    const attributes = await screen.findByTestId('agent-attributes');
+    const link = await within(attributes).findByRole('link', { name: '1/3 在线' });
+    expect(link).toHaveAttribute('href', '/executors?agentId=1&view=agent');
+  });
+
+  it('shows zero online within a non-zero executor total when the online count is missing', async () => {
+    mockAgent({ executorOnlineCount: null, executorTotalCount: 2 });
+    renderPage();
+
+    const attributes = await screen.findByTestId('agent-attributes');
+    const link = await within(attributes).findByRole('link', { name: '0/2 在线' });
+    expect(link).toHaveAttribute('href', '/executors?agentId=1&view=agent');
+  });
+
+  it('renders a zero executor count without a link', async () => {
+    mockAgent({ executorOnlineCount: 0, executorTotalCount: 0 });
+    renderPage();
+
+    const attributes = await screen.findByTestId('agent-attributes');
+    expect(await within(attributes).findByText('0 台执行器')).toBeInTheDocument();
+    expect(within(attributes).queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('keeps an unknown executor count unknown instead of faking zero', async () => {
+    mockAgent({ executorOnlineCount: undefined, executorTotalCount: undefined });
+    renderPage();
+
+    const attributes = await screen.findByTestId('agent-attributes');
+    expect(await within(attributes).findByText('暂无信息')).toBeInTheDocument();
+    expect(within(attributes).queryByText('0 台执行器')).not.toBeInTheDocument();
+    expect(within(attributes).queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the sdlc id while keeping the link when the name is unavailable', async () => {
     mockAgent({ roleName: 'Frontend Dev', sdlcId: 7 });
     // 名称接口挂掉时退回 #id 展示，而不是空白
     server.use(
@@ -307,16 +370,19 @@ describe('AgentDetailPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText('SDLC 模版：#7')).toBeInTheDocument();
+    const attributes = await screen.findByTestId('agent-attributes');
+    expect(await within(attributes).findByRole('link', { name: '#7' })).toHaveAttribute('href', '/sdlcs/7');
   });
 
-  it('falls back to unset labels when sdlc and evolution mode are missing', async () => {
+  it('falls back to unbound when the sdlc binding is missing', async () => {
     mockAgent();
 
     renderPage();
 
-    expect(await screen.findByText('SDLC 模版：未绑定')).toBeInTheDocument();
-    expect(screen.getByText('自进化模式：未设置')).toBeInTheDocument();
+    const attributes = await screen.findByTestId('agent-attributes');
+    expect(await within(attributes).findByText('未绑定')).toBeInTheDocument();
+    expect(within(attributes).queryByRole('link')).not.toBeInTheDocument();
+    expect(within(attributes).getByText('未设置')).toBeInTheDocument();
   });
 
   it('shows repo permissions, skills and environment variables from the online version', async () => {
@@ -344,7 +410,7 @@ describe('AgentDetailPage', () => {
     renderPage();
 
     expect(await screen.findByText('交付小队')).toBeInTheDocument();
-    expect(screen.getByText(/执行器：2\/3 在线/)).toBeInTheDocument();
+    expect(screen.getByText(/2\/3 在线/)).toBeInTheDocument();
     // 版本详情查询返回后，tab 标题带上数量；tab 内容懒渲染，逐个点开后断言
     expect(await screen.findByRole('tab', { name: /仓库权限 \(2\)/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: /仓库权限 \(2\)/ }));
@@ -408,10 +474,10 @@ describe('AgentDetailPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /查看草稿差异/ }));
 
     expect(await screen.findByText('当前生效 vs 草稿 v3')).toBeInTheDocument();
-    expect(await screen.findByText('后端开发')).toBeInTheDocument();
+    expect(await screen.findByText(/后端开发/)).toBeInTheDocument();
     expect(screen.getByText('草稿业务背景')).toBeInTheDocument();
-    expect(screen.getByText('纯手动')).toBeInTheDocument();
-    expect(screen.getByText('#9')).toBeInTheDocument();
+    expect(screen.getByText(/纯手动/)).toBeInTheDocument();
+    expect(screen.getByText(/#9/)).toBeInTheDocument();
   });
 
   it('does not fetch the draft version until the comparison is opened', async () => {
@@ -444,6 +510,64 @@ describe('AgentDetailPage', () => {
     expect(screen.queryByText(/存在未发布的草稿/)).not.toBeInTheDocument();
   });
 
+  it('compares the draft with the resolved online baseline', async () => {
+    mockAgent({ hasDraft: true, draftVersionNo: 3 });
+    server.use(
+      http.get('/api/agents/1/versions', () =>
+        ok([{ id: 5, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', gmtCreate: '2026-07-01' }])),
+      http.get('/api/agents/1/versions/3', () =>
+        ok({
+          id: 13, agentId: 1, versionNo: 3, status: 'DRAFT', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+          businessBackground: 'draft soul', responsibilities: 'agent line',
+          sdlcId: null, identityJson: '{"evolutionMode":"ASSISTED"}', evolutionMode: null,
+          reviewerId: null, reviewComment: null, reviewedAt: null, version: 0, gmtCreate: '2026-07-02',
+        })),
+    );
+
+    renderPage();
+    await screen.findByText('存在未发布的草稿 v3');
+    await userEvent.click(screen.getByRole('button', { name: /查看草稿差异/ }));
+
+    expect((await screen.findAllByText('在线版本 v2')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('draft soul')).toBeInTheDocument();
+    expect(screen.queryByText(/该数字员工尚无在线版本/)).not.toBeInTheDocument();
+  });
+
+  it('uses the no-baseline view for a draft when the agent was never online', async () => {
+    mockAgent({ status: 'ONLINE', onlineVersionId: null, hasDraft: true, draftVersionNo: 3 });
+    server.use(
+      http.get('/api/agents/1/versions', () => ok([])),
+      http.get('/api/agents/1/versions/3', () =>
+        ok({
+          id: 13, agentId: 1, versionNo: 3, status: 'DRAFT', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+          businessBackground: 'first soul', responsibilities: '',
+          sdlcId: null, identityJson: null, evolutionMode: null,
+          reviewerId: null, reviewComment: null, reviewedAt: null, version: 0, gmtCreate: '2026-07-02',
+        })),
+    );
+
+    renderPage();
+    await screen.findByText('存在未发布的草稿 v3');
+    await userEvent.click(screen.getByRole('button', { name: /查看草稿差异/ }));
+
+    expect(await screen.findByText(/该数字员工尚无在线版本/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '上一处' })).not.toBeInTheDocument();
+  });
+
+  it('shows the submit note in the version history', async () => {
+    mockAgent();
+    server.use(
+      http.get('/api/agents/1/versions', () =>
+        ok([{ id: 10, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', submitNote: '补充性能预算', gmtCreate: '2026-07-01' }])),
+    );
+
+    renderPage();
+    await screen.findByText('Alpha');
+    fireEvent.click(screen.getByRole('tab', { name: /版本记录/ }));
+
+    expect(await screen.findByText('补充性能预算')).toBeInTheDocument();
+  });
+
   it('keeps the review guidance instead of the draft warning for a draft agent', async () => {
     mockAgent({ status: 'DRAFT', onlineVersionId: null, hasDraft: true, draftVersionNo: 1 });
 
@@ -451,5 +575,82 @@ describe('AgentDetailPage', () => {
 
     expect(await screen.findByText('数字员工尚未提交审核')).toBeInTheDocument();
     expect(screen.queryByText(/存在未发布的草稿/)).not.toBeInTheDocument();
+  });
+
+  it('does not report a missing baseline while the version list is still loading', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    mockAgent({ hasDraft: true, draftVersionNo: 3 });
+    server.use(
+      http.get('/api/agents/1/versions', async () => {
+        await gate;
+        return ok([{ id: 5, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', gmtCreate: '2026-07-01' }]);
+      }),
+      http.get('/api/agents/1/versions/3', () =>
+        ok({
+          id: 13, agentId: 1, versionNo: 3, status: 'DRAFT', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+          businessBackground: 'draft soul', responsibilities: 'agent line',
+          sdlcId: null, identityJson: '{"evolutionMode":"ASSISTED"}', evolutionMode: null,
+          reviewerId: null, reviewComment: null, reviewedAt: null, version: 0, gmtCreate: '2026-07-02',
+        })),
+    );
+
+    renderPage();
+    await screen.findByText('存在未发布的草稿 v3');
+    await userEvent.click(screen.getByRole('button', { name: /查看草稿差异/ }));
+
+    expect(await screen.findByText('draft soul')).toBeInTheDocument();
+    expect(screen.queryByText(/基线版本已不可用/)).not.toBeInTheDocument();
+
+    await act(async () => { release(); });
+    expect((await screen.findAllByText('在线版本 v2')).length).toBeGreaterThan(0);
+  });
+
+  it('treats a failed version list as an unavailable baseline', async () => {
+    mockAgent({ hasDraft: true, draftVersionNo: 3 });
+    server.use(
+      http.get('/api/agents/1/versions', () => HttpResponse.json(
+        { success: false, code: '14001', message: '版本列表读取失败', traceId: null, data: null },
+        { status: 500 },
+      )),
+      http.get('/api/agents/1/versions/3', () =>
+        ok({
+          id: 13, agentId: 1, versionNo: 3, status: 'DRAFT', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+          businessBackground: 'draft soul', responsibilities: 'agent line',
+          sdlcId: null, identityJson: null, evolutionMode: null,
+          reviewerId: null, reviewComment: null, reviewedAt: null, version: 0, gmtCreate: '2026-07-02',
+        })),
+    );
+
+    renderPage();
+    await screen.findByText('存在未发布的草稿 v3');
+    await userEvent.click(screen.getByRole('button', { name: /查看草稿差异/ }));
+
+    expect(await screen.findByText(/基线版本已不可用/)).toBeInTheDocument();
+  });
+
+  it('treats a failed baseline snapshot as unavailable', async () => {
+    mockAgent({ hasDraft: true, draftVersionNo: 3 });
+    server.use(
+      http.get('/api/agents/1/versions', () =>
+        ok([{ id: 5, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', gmtCreate: '2026-07-01' }])),
+      http.get('/api/agents/1/versions/2', () => HttpResponse.json(
+        { success: false, code: '14001', message: '版本读取失败', traceId: null, data: null },
+        { status: 500 },
+      )),
+      http.get('/api/agents/1/versions/3', () =>
+        ok({
+          id: 13, agentId: 1, versionNo: 3, status: 'DRAFT', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+          businessBackground: 'draft soul', responsibilities: 'agent line',
+          sdlcId: null, identityJson: null, evolutionMode: null,
+          reviewerId: null, reviewComment: null, reviewedAt: null, version: 0, gmtCreate: '2026-07-02',
+        })),
+    );
+
+    renderPage();
+    await screen.findByText('存在未发布的草稿 v3');
+    await userEvent.click(screen.getByRole('button', { name: /查看草稿差异/ }));
+
+    expect(await screen.findByText(/基线版本已不可用/)).toBeInTheDocument();
   });
 });

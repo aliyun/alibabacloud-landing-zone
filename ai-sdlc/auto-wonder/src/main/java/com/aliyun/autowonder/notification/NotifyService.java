@@ -24,19 +24,27 @@ public class NotifyService {
     private final NotifyPrefDao prefDao;
     private final List<NotifyChannel> channels;
     private final UserSettingService userSettings;
+    private final NotificationPersister persister;
 
     public NotifyService(NotificationDao notificationDao, NotifyPrefDao prefDao,
                          List<NotifyChannel> channels) {
-        this(notificationDao, prefDao, channels, null);
+        this(notificationDao, prefDao, channels, null, new NotificationPersister(notificationDao));
+    }
+
+    public NotifyService(NotificationDao notificationDao, NotifyPrefDao prefDao,
+                         List<NotifyChannel> channels, UserSettingService userSettings) {
+        this(notificationDao, prefDao, channels, userSettings, new NotificationPersister(notificationDao));
     }
 
     @Autowired
     public NotifyService(NotificationDao notificationDao, NotifyPrefDao prefDao,
-                         List<NotifyChannel> channels, UserSettingService userSettings) {
+                         List<NotifyChannel> channels, UserSettingService userSettings,
+                         NotificationPersister persister) {
         this.userSettings = userSettings;
         this.notificationDao = notificationDao;
         this.prefDao = prefDao;
         this.channels = channels;
+        this.persister = persister;
     }
 
     public void notify(NotifyEvent event) {
@@ -45,9 +53,12 @@ public class NotifyService {
         }
         for (Long recipientId : event.getRecipientIds()) {
             Locale locale = userSettings == null ? Locale.CHINA : userSettings.recipientLocale(recipientId);
+            String scope = event.getScope() == null ? NotificationScope.WORKSPACE : event.getScope();
+            boolean platformScope = NotificationScope.PLATFORM.equals(scope);
             NotificationDO n = new NotificationDO();
             n.setRecipientLocale(locale.toLanguageTag());
             n.setTenantId(event.getTenantId());
+            n.setScope(scope);
             n.setRecipientId(recipientId);
             n.setType(event.getType());
             n.setTitle(SystemMessages.render(event.getTitleKey(), event.getTitleArgs(), event.getTitle(), locale));
@@ -57,13 +68,20 @@ public class NotifyService {
             n.setLink(event.getLink());
             n.setRefType(event.getRefType());
             n.setRefId(event.getRefId());
+            n.setRelatedLinksJson(NotificationLinkJson.encode(event.getRelatedLinks()));
             n.setStatus("UNREAD");
-            notificationDao.insert(n);
+            persister.persist(n);
 
             Map<String, String> channelResults = new HashMap<>();
-            NotifyPrefDO pref = prefDao.findByUserAndType(event.getTenantId(), recipientId, event.getType());
+            // 平台级通知没有业务空间偏好可查，且按需求只走站内渠道，不扩展 IM。
+            NotifyPrefDO pref = platformScope
+                    ? null
+                    : prefDao.findByUserAndType(event.getTenantId(), recipientId, event.getType());
 
             for (NotifyChannel channel : channels) {
+                if (platformScope && !"inApp".equals(channel.name())) {
+                    continue;
+                }
                 if (!shouldDeliver(channel.name(), pref)) {
                     continue;
                 }
@@ -79,19 +97,19 @@ public class NotifyService {
         }
     }
 
-    public int unreadCount(long tenantId, long userId) {
+    public int unreadCount(Long tenantId, long userId) {
         return notificationDao.countUnread(tenantId, userId);
     }
 
-    public void markRead(long notificationId, long tenantId, long userId) {
+    public void markRead(long notificationId, Long tenantId, long userId) {
         notificationDao.markRead(notificationId, tenantId, userId);
     }
 
-    public void markAllRead(long tenantId, long userId) {
+    public void markAllRead(Long tenantId, long userId) {
         notificationDao.markAllRead(tenantId, userId);
     }
 
-    public void delete(long notificationId, long tenantId, long userId) {
+    public void delete(long notificationId, Long tenantId, long userId) {
         // 归属校验在 SQL 的 WHERE 上，0 行说明通知不存在或不属于当前用户，不能静默成功。
         if (notificationDao.delete(notificationId, tenantId, userId) == 0) {
             throw BizException.keyed(ErrorCode.NOT_FOUND, "error.notification_not_found", null, "通知不存在");

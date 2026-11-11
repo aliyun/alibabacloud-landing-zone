@@ -19,6 +19,7 @@ import com.aliyun.autowonder.artifact.ArtifactDao;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.squad.SquadMemberDO;
 import com.aliyun.autowonder.squad.SquadMemberDao;
@@ -71,6 +72,13 @@ public class ScheduledTaskTriggerService {
     private ScheduledTaskRunOrchestrator runOrchestrator;
     private ScheduledTaskMetrics metrics;
     private ScheduledTaskNotificationService notificationService;
+    private com.aliyun.autowonder.dispatch.ExecutionAvailabilityService executionAvailabilityService;
+
+    @Autowired(required = false)
+    public void setExecutionAvailabilityService(
+            com.aliyun.autowonder.dispatch.ExecutionAvailabilityService executionAvailabilityService) {
+        this.executionAvailabilityService = executionAvailabilityService;
+    }
 
     @Autowired
     public ScheduledTaskTriggerService(ScheduledTaskRunDao runDao, ArtifactDao artifactDao,
@@ -174,7 +182,14 @@ public class ScheduledTaskTriggerService {
         String skipReason = forcedSkip;
         if (!bypassOverlap && skipReason == null && hasActive(decided) && ("SKIP".equals(decided.getOverlapPolicy())
                 || "CONTINUOUS".equals(decided.getSessionMode()))) skipReason = "OVERLAP";
-        ScheduledTaskRunDO run = baseRun(decided, scheduledAt, triggerType, triggerKey, skipReason);
+        JSONObject frozen = frozenSdlc(decided);
+        // A disabled flow or an offline initial agent is a terminal admission rejection, not a
+        // retryable trigger failure: persist the Run as FAILED (or SKIPPED when already skipped)
+        // so the scanner advances and the owner sees the stable reason instead of an ERROR loop.
+        String managedFailure = managedStateFailure(decided, frozen);
+        ScheduledTaskRunDO run = managedFailure == null
+                ? baseRun(decided, scheduledAt, triggerType, triggerKey, skipReason, frozen, false)
+                : unavailableRun(decided, scheduledAt, triggerType, triggerKey, skipReason, managedFailure, frozen);
         ScheduledTaskRunDO persisted;
         try {
             runDao.insert(run);
@@ -189,7 +204,7 @@ public class ScheduledTaskTriggerService {
             metrics.status(persisted.getStatus(), persisted.getSkipReason());
         }
         if (persisted == run && notificationService != null) notificationService.status(persisted, triggerType);
-        startImmediatelyWhenEligible(decided, persisted);
+        if (managedFailure == null) startImmediatelyWhenEligible(decided, persisted);
         return persisted;
     }
 
@@ -206,7 +221,12 @@ public class ScheduledTaskTriggerService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    runOrchestrator.startAfterCommit(workspaceId, runId, actorId);
+                    com.aliyun.autowonder.dispatch.DispatchAfterCommitContext.enter();
+                    try {
+                        runOrchestrator.startAfterCommit(workspaceId, runId, actorId);
+                    } finally {
+                        com.aliyun.autowonder.dispatch.DispatchAfterCommitContext.exit();
+                    }
                 }
             });
             return;
@@ -244,7 +264,7 @@ public class ScheduledTaskTriggerService {
     }
 
     private ScheduledTaskRunDO baseRun(ScheduledTaskDO task, Instant scheduledAt, String triggerType,
-            String triggerKey, String skipReason) {
+            String triggerKey, String skipReason, JSONObject sdlc, boolean minimalSnapshot) {
         ScheduledTaskRunDO run = new ScheduledTaskRunDO();
         run.setWorkspaceId(task.getWorkspaceId()); run.setScheduledTaskId(task.getId()); run.setTriggerKey(triggerKey);
         run.setTriggerType(triggerType); run.setScheduledAt(Date.from(scheduledAt));
@@ -252,10 +272,44 @@ public class ScheduledTaskTriggerService {
         run.setSkipReason(skipReason); run.setSquadId(task.getSquadId()); run.setInitialAgentId(task.getInitialAgentId());
         run.setCurrentAgentId(task.getInitialAgentId()); run.setSessionMode(task.getSessionMode());
         run.setOwnerId(task.getCreatorId()); run.setCreatorId(task.getCreatorId()); run.setModifierId(task.getCreatorId());
-        JSONObject sdlc = frozenSdlc(task);
         if (sdlc != null) { run.setSdlcId(sdlc.getLong("id")); run.setCurrentStepId(sdlc.getLong("currentStepId")); }
-        run.setExecutionSnapshotJson(snapshot(task, scheduledAt, triggerType, sdlc));
+        run.setExecutionSnapshotJson(minimalSnapshot
+                ? minimalSnapshot(task, scheduledAt, triggerType, sdlc)
+                : snapshot(task, scheduledAt, triggerType, sdlc));
         return run;
+    }
+
+    /**
+     * The Run never executes, so it carries a valid but minimal snapshot: queueing must not
+     * depend on the initial agent still being executable, and no document IO is attempted.
+     */
+    private ScheduledTaskRunDO unavailableRun(ScheduledTaskDO task, Instant scheduledAt, String triggerType,
+            String triggerKey, String skipReason, String failure, JSONObject sdlc) {
+        ScheduledTaskRunDO run = baseRun(task, scheduledAt, triggerType, triggerKey, skipReason, sdlc, true);
+        if (skipReason == null) {
+            run.setStatus(ScheduledTaskRunStatus.FAILED.name());
+            run.setError(failure);
+            run.setFinishedAt(Date.from(clock.instant()));
+        }
+        run.setVersion(0);
+        return run;
+    }
+
+    private String managedStateFailure(ScheduledTaskDO task, JSONObject sdlc) {
+        if (executionAvailabilityService == null) {
+            return null;
+        }
+        Long sdlcId = sdlc == null ? null : sdlc.getLong("id");
+        try {
+            executionAvailabilityService.requireStartable(task.getWorkspaceId(), task.getInitialAgentId(), sdlcId);
+            return null;
+        } catch (BizException unavailable) {
+            String stable = ExecutionAvailabilityService.failureReason(unavailable);
+            if (stable == null) {
+                return null; // unrelated rejection keeps the pre-existing trigger behavior
+            }
+            return unavailable.getCode() + ": " + unavailable.getMessage();
+        }
     }
 
     private String snapshot(ScheduledTaskDO task, Instant scheduledAt, String triggerType, JSONObject sdlc) {
@@ -265,12 +319,28 @@ public class ScheduledTaskTriggerService {
         root.put("sdlc", sdlc);
         root.put("agentContexts", agentContexts(task));
         root.put("requirementDocuments", requirementDocuments(task));
-        root.put("policies", map("sessionMode", task.getSessionMode(), "overlapPolicy", task.getOverlapPolicy(),
-                "misfirePolicy", task.getMisfirePolicy(), "startDeadlineSeconds", task.getStartDeadlineSeconds(),
-                "affinityTimeoutSeconds", task.getAffinityTimeoutSeconds(), "scheduleType", task.getScheduleType(),
-                "timezone", task.getTimezone()));
+        root.put("policies", policies(task));
         root.put("trigger", map("type", triggerType, "scheduledAt", scheduledAt.toString()));
         return JSON.toJSONString(root);
+    }
+
+    private String minimalSnapshot(ScheduledTaskDO task, Instant scheduledAt, String triggerType, JSONObject sdlc) {
+        JSONObject root = new JSONObject(true); root.put("schemaVersion", SNAPSHOT_SCHEMA);
+        root.put("task", map("id", task.getId(), "name", task.getName(), "instructionMd", task.getInstructionMd()));
+        root.put("assignment", map("squadId", task.getSquadId(), "initialAgentId", task.getInitialAgentId()));
+        root.put("sdlc", sdlc);
+        root.put("agentContexts", new JSONArray());
+        root.put("requirementDocuments", new JSONArray());
+        root.put("policies", policies(task));
+        root.put("trigger", map("type", triggerType, "scheduledAt", scheduledAt.toString()));
+        return JSON.toJSONString(root);
+    }
+
+    private JSONObject policies(ScheduledTaskDO task) {
+        return map("sessionMode", task.getSessionMode(), "overlapPolicy", task.getOverlapPolicy(),
+                "misfirePolicy", task.getMisfirePolicy(), "startDeadlineSeconds", task.getStartDeadlineSeconds(),
+                "affinityTimeoutSeconds", task.getAffinityTimeoutSeconds(), "scheduleType", task.getScheduleType(),
+                "timezone", task.getTimezone());
     }
 
     private JSONArray agentContexts(ScheduledTaskDO task) {

@@ -5,10 +5,10 @@
     <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentVersionDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO agent_version (tenant_id, agent_id, version_no, status, role_name, role_code,
-            business_background, responsibilities, sdlc_id, identity_json,
+            business_background, responsibilities, sdlc_id, identity_json, submit_note,
             reviewer_id, review_comment, reviewed_at, creator_id, is_deleted, version)
         VALUES (#{tenantId}, #{agentId}, #{versionNo}, #{status}, #{roleName}, #{roleCode},
-            #{businessBackground}, #{responsibilities}, #{sdlcId}, #{identityJson},
+            #{businessBackground}, #{responsibilities}, #{sdlcId}, #{identityJson}, #{submitNote},
             #{reviewerId}, #{reviewComment}, #{reviewedAt}, #{creatorId}, 0, 0)
     </insert>
     <select id="findById" resultType="com.aliyun.autowonder.agent.AgentVersionDO">
@@ -71,6 +71,13 @@
             version = version + 1,
             modifier_id = #{modifierId}
         </set>
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <!-- The submit note belongs to the submitted version and must survive approve/reject, so the
+         status transition above never touches it; it is written once by the submitter. -->
+    <update id="updateSubmitNote">
+        UPDATE agent_version SET submit_note = #{submitNote},
+            version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>
     <select id="listByIds" resultType="com.aliyun.autowonder.agent.AgentVersionDO">

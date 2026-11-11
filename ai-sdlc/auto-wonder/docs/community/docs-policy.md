@@ -23,6 +23,8 @@ history, not in the published community tree.
 - `docs/context-material-contract.md`: runtime context material contract.
 - `docs/dispatch-runtime-authoritative-recovery.md`: dispatch recovery rollout.
 - `docs/executor-restart-controls.md`: executor restart operations.
+- `docs/dispatch-workflow-rounds.md`: frozen workflow rounds, explicit restart and external-operation receipts.
+- `docs/server-capacity-baseline.md`: connection and concurrency configuration, monitoring and rollback.
 - `docs/feishu-channel.md`: optional public Feishu integration.
 - `docs/legacy-checkpoint-compatibility.md`: checkpoint recovery compatibility.
 - `docs/mcp/runtime-trace.md`: runtime trace API operations.
@@ -37,6 +39,7 @@ history, not in the published community tree.
 - `docs/community/docker-compose.dependencies.yml`: local dependencies.
 - `docs/community/verification.md`: release verification gates.
 - `docs/community/upstream-sync-guide.md`: master-to-community sync rules.
+- `docs/community/sync-quality-contract.md`: portable sync acceptance and evidence contract.
 - `docs/community/upstream-sync-log.md`: verified upstream baselines and history.
 - `docs/community/docs-policy.md`: this retention policy.
 - `docs/community/squad-template-seed.md`: template data and deployment contract.

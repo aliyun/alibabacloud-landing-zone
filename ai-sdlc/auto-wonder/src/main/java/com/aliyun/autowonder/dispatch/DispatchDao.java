@@ -10,6 +10,8 @@ import java.util.List;
 public interface DispatchDao {
     void insert(DispatchDO d);
 
+    int activateInteractionRework(DispatchDO dispatch);
+
     DispatchDO findById(@Param("id") Long id);
 
     DispatchDO findByIdempotencyKey(@Param("tenantId") Long tenantId,

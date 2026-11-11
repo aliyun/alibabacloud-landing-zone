@@ -48,6 +48,8 @@ class WorkitemAssignEventTest {
         stepDao = mock(SdlcStepDao.class);
         agentDao = mock(AgentDao.class);
         agentVersionDao = mock(AgentVersionDao.class);
+        when(agentDao.findById(42L)).thenReturn(agent(42L, 7L, 420L));
+        when(agentVersionDao.findById(420L)).thenReturn(agentVersion(420L, 7L, 42L, 9L));
         squadMemberDao = mock(SquadMemberDao.class);
         com.aliyun.autowonder.dispatch.AgentSdlcResolver sdlcResolver =
                 new com.aliyun.autowonder.dispatch.AgentSdlcResolver(agentDao, agentVersionDao, stepDao);
@@ -149,20 +151,24 @@ class WorkitemAssignEventTest {
     }
 
     @Test
-    void skipsBindWhenAlreadyBound() {
+    void explicitAssignmentRebindsAnExistingDeliveryToTheRequestedFlow() {
         WorkitemDO bound = row();
         bound.setSdlcId(9L);
         bound.setCurrentStepId(5L);
-        when(workitemDao.findById(100L)).thenReturn(bound);
+        WorkitemDO rebound = row(); rebound.setSdlcId(99L); rebound.setCurrentStepId(500L); rebound.setVersion(3);
+        when(workitemDao.findById(100L)).thenReturn(bound, rebound);
+        when(sdlcDao.findById(99L)).thenReturn(sdlc(99L, 7L));
+        when(stepDao.listBySdlc(99L)).thenReturn(List.of(step(500L, 7L, 1)));
+        when(workitemDao.updateSdlcAndStep(100L, 7L, 99L, 500L, 2, 3L)).thenReturn(1);
         when(workitemDao.updateAssignee(eq(100L), eq(7L), eq("AGENT"), eq(42L), eq(1), eq(3L)))
                 .thenReturn(1);
 
         service.assign(100L, "AGENT", 42L, 99L, null, 7L, 3L);
 
-        verify(workitemDao, never()).updateSdlcAndStep(anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+        verify(workitemDao).updateSdlcAndStep(100L, 7L, 99L, 500L, 2, 3L);
         ArgumentCaptor<WorkitemAssignedEvent> cap = ArgumentCaptor.forClass(WorkitemAssignedEvent.class);
         verify(publisher).publishEvent(cap.capture());
-        org.junit.jupiter.api.Assertions.assertEquals(5L, cap.getValue().getSdlcStepId());
+        org.junit.jupiter.api.Assertions.assertEquals(500L, cap.getValue().getSdlcStepId());
     }
 
     @Test

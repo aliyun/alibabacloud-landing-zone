@@ -5,6 +5,12 @@ import userEvent from '@testing-library/user-event';
 import { MarkdownView } from './MarkdownView';
 
 describe('MarkdownView', () => {
+  it('keeps very large authored content intact without building a Markdown tree', () => {
+    const content = '# Large original\n' + '* unclosed '.repeat(10_000);
+    const { container } = render(<MarkdownView content={content} />);
+    expect(container.querySelector('pre')?.textContent).toBe(content);
+    expect(container.querySelector('h1')).toBeNull();
+  });
   it.each(['（head 510042516）', '，请查看', '。', '【报告】'])('keeps adjacent prose outside bare URL links: %s', suffix => {
     const url = 'https://github.com/aliyun/terraform-provider-alicloud/pull/10748';
     const { container } = render(<MarkdownView content={`PR: ${url}${suffix}`} />);
@@ -35,6 +41,16 @@ describe('MarkdownView', () => {
     );
 
     expect(screen.getByText('@有效成员')).toBeInTheDocument();
+  });
+
+  it('renders an explicit warning in bold red while sanitizing authored styles', () => {
+    const reminder = '运行 start 前，请先停止前置引导中手动启动的 Chief 等执行器进程，再由统一脚本启动，避免同一执行器重复连接。';
+    render(<MarkdownView content={`<span data-type="warning" style="position:fixed" onclick="alert(1)">${reminder}</span>`} />);
+    const warning = screen.getByText(reminder);
+    expect(warning.tagName).toBe('STRONG');
+    expect(warning).toHaveStyle({ color: '#cf1322', fontWeight: '700' });
+    expect(warning.style.position).toBe('');
+    expect(warning).not.toHaveAttribute('onclick');
   });
 
   it('renders sanitized Aone html as readable rich text', () => {

@@ -120,6 +120,12 @@ export interface RunningWorkitem {
   runningDispatchCount: number;
 }
 
+/** 今日新建明细行：与卡片的 todayCreatedWorkitems 同口径（排除已取消）。 */
+export interface TodayCreatedWorkitem {
+  workitemId: number;
+  title: string | null;
+}
+
 export interface OverviewData {
   kpi: OverviewKpi;
   inventory: Inventory;
@@ -178,6 +184,11 @@ export async function getAgentRunning(agentId: number): Promise<RunningTask[]> {
 
 export async function getTodayCompleted(): Promise<CompletedWorkitem[]> {
   const resp = await apiClient.get<CompletedWorkitem[]>('/api/dashboard/completed/today');
+  return resp.data;
+}
+
+export async function getTodayCreatedWorkitems(): Promise<TodayCreatedWorkitem[]> {
+  const resp = await apiClient.get<TodayCreatedWorkitem[]>('/api/dashboard/created/today');
   return resp.data;
 }
 

@@ -3,7 +3,7 @@ import type { OverviewKpi } from './api';
 import FlashValue from './FlashValue';
 import './KpiRow.css';
 
-export type KpiKey = 'runningWorkitems' | 'todayCompletedTasks' | 'weekCompletedTasks';
+export type KpiKey = 'todayCreatedWorkitems' | 'runningWorkitems' | 'todayCompletedTasks' | 'weekCompletedTasks';
 
 interface Props {
   kpi: OverviewKpi;
@@ -21,7 +21,7 @@ interface Cell {
 export default function KpiRow({ kpi, onKpiClick }: Props) {
   const { t } = useTranslation('insights');
   const cells: Cell[] = [
-    { id: 'todayCreatedWorkitems', label: t('kpi.todayCreatedWorkitems'), hint: t('overview.kpiHint.todayCreatedWorkitems'), value: kpi.todayCreatedWorkitems },
+    { id: 'todayCreatedWorkitems', label: t('kpi.todayCreatedWorkitems'), hint: t('overview.kpiHint.todayCreatedWorkitems'), value: kpi.todayCreatedWorkitems, detailKey: 'todayCreatedWorkitems' },
     { id: 'runningWorkitems', label: t('kpi.runningWorkitems'), hint: t('overview.kpiHint.runningWorkitems'), value: kpi.runningWorkitems, detailKey: 'runningWorkitems' },
     { id: 'todayCompletedTasks', label: t('kpi.todayCompletedTasks'), hint: t('overview.kpiHint.todayCompletedTasks'), value: kpi.todayCompletedTasks, detailKey: 'todayCompletedTasks' },
     { id: 'weekCompletedTasks', label: t('kpi.weekCompletedTasks'), hint: t('overview.kpiHint.weekCompletedTasks'), value: kpi.weekCompletedTasks, detailKey: 'weekCompletedTasks' },

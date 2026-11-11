@@ -62,12 +62,16 @@ public interface UserDao {
     List<UserDO> searchUsersForAdmin(@Param("keyword") String keyword,
                                      @Param("status") String status,
                                      @Param("type") String type,
+                                     @Param("canCreateWorkspace") Boolean canCreateWorkspace,
+                                     @Param("workspaceCreationDefaultAllowed") boolean workspaceCreationDefaultAllowed,
                                      @Param("offset") int offset,
                                      @Param("limit") int size);
 
     long countUsersForAdmin(@Param("keyword") String keyword,
                             @Param("status") String status,
-                            @Param("type") String type);
+                            @Param("type") String type,
+                            @Param("canCreateWorkspace") Boolean canCreateWorkspace,
+                            @Param("workspaceCreationDefaultAllowed") boolean workspaceCreationDefaultAllowed);
 
     /** 展示专用：可查到已删除用户，供历史数据名称解析使用；鉴权/校验路径继续用 findById。 */
     UserDO findByIdIncludingDeleted(@Param("id") Long id);
@@ -84,4 +88,23 @@ public interface UserDao {
 
     /** 恢复：由快照还原用户名/邮箱并清空删除标记；is_deleted = 1 守卫保证仅已删除用户可被恢复。 */
     int restoreUser(@Param("id") Long id);
+
+    // ---- 自助注册审核与平台级空间创建权限 ----
+
+    /** 可用平台管理员：未删除、正常、具有平台管理员标记（通知与联系人列表的唯一口径）。 */
+    List<UserDO> listAvailablePlatformAdmins();
+
+    /** 通过审核：仅未删除且待审核的记录可转换，0 行表示已被并发处理。 */
+    int approvePendingReview(@Param("id") Long id);
+
+    /**
+     * 拒绝审核：复用逻辑删除，但增加 status = 2 守卫，
+     * 使并发通过/拒绝/常规删除中只有先成功的一笔生效。
+     */
+    int logicalDeletePendingReview(@Param("id") Long id,
+                                   @Param("deletedAt") java.util.Date deletedAt,
+                                   @Param("deletedBy") Long deletedBy);
+
+    /** 个人空间创建授权位；仅正常账号可改，0 行表示账号已不可编辑。 */
+    int updateWorkspaceCreationGranted(@Param("id") Long id, @Param("granted") int granted);
 }

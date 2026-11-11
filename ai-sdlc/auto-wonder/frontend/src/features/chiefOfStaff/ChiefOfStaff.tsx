@@ -5,27 +5,37 @@ import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Input, Select, Spin, Switch, Tag, Typography, message } from 'antd';
+import { Alert, Button, Input, Spin, Switch, Tag, message } from 'antd';
 import { CloseOutlined, HistoryOutlined, CopyOutlined, PictureOutlined, StopOutlined, ArrowUpOutlined, PlusOutlined, HolderOutlined, LeftOutlined, RightOutlined, FullscreenOutlined, CompressOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/shared/auth/store';
 import { useRealtime } from '@/shared/realtime/useRealtime';
+import { useLocale } from '@/shared/i18n/LocaleProvider';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { ChiefTurnEvents } from './ChiefTurnEvents';
+import { ChiefSetupPanel } from './ChiefSetupPanel';
+import { ChiefGuidedSetup } from './ChiefGuidedSetup';
 import { ElicitationWizard } from '@/features/workitem/clarification/cards/ElicitationWizard';
 import { buildExecutorLaunchCommand } from '@/features/executor/api';
 import { formatDateTime } from '@/shared/i18n/format';
 import * as api from './api';
 import { ChiefIcon } from './ChiefIcon';
+import { ChiefWelcome } from './ChiefWelcome';
+import { ChiefActionPlan } from './ChiefActionPlan';
 import { copyTextToClipboard } from '@/shared/lib/clipboard';
 import { filesFromClipboard, validateDocumentSelection } from '@/shared/lib/documentUpload';
 import { createUuidV4 } from '@/shared/lib/uuid';
+import {
+  emitGuideEvent,
+  registerGuideSendPreparation,
+  subscribeChiefClosePanel,
+  subscribeChiefOpenPanel,
+  useGuideRuntime,
+} from '@/features/workspaceGuide/bridge';
 import './chiefOfStaff.css';
 
 interface Preference { conversationId: number | null; x: number; y: number; width: number; height: number; docked: boolean; expanded: boolean; }
 const INBOUND = 'IN';
 const PENDING = 'PENDING';
-const EXPIRED = 'EXPIRED';
-const checklist = ['agentConfigured', 'skillsConfigured', 'executorConfigured', 'launchConfigured'] as const;
 const pageKeys = {
   workitems: 'pages.workitems', agents: 'pages.agents', sdlcs: 'pages.sdlcs', repos: 'pages.repos',
   skills: 'pages.skills', memories: 'pages.memories', executors: 'pages.executors', overview: 'pages.overview',
@@ -77,14 +87,20 @@ export function wideResizeExit(
     y: Math.min(Math.max(0, Math.round(viewport.height - rect.bottom - PANEL_LAUNCH_GAP)), maxY) };
 }
 function schema(text: string | null) { try { return JSON.parse(text || '{}') as unknown; } catch { return {}; } }
+const retryableContinuationStatuses = new Set(['FAILED', 'CANCELED']);
+function planOrder(left: api.ActionPlan, right: api.ActionPlan) {
+  const a = Number(left.id); const b = Number(right.id);
+  if (Number.isFinite(a) && Number.isFinite(b) && a !== b) return a - b;
+  return left.id.localeCompare(right.id);
+}
 
-export function ChiefOfStaff() {
+export function ChiefOfStaff({ hideLauncher = false }: { hideLauncher?: boolean }) {
   const userId = useAuthStore(s => s.user?.id);
   const workspaceId = useAuthStore(s => s.currentWorkspace?.id);
   if (!userId || !workspaceId) return null;
-  return <Assistant key={`${userId}:${workspaceId}`} userId={userId} workspaceId={workspaceId} />;
+  return <Assistant key={`${userId}:${workspaceId}`} userId={userId} workspaceId={workspaceId} hideLauncher={hideLauncher} />;
 }
-function Assistant({ userId, workspaceId }: { userId: number; workspaceId: number }) {
+function Assistant({ userId, workspaceId, hideLauncher }: { userId: number; workspaceId: number; hideLauncher: boolean }) {
   const { t } = useTranslation('chiefOfStaff');
   const { t: workitemT } = useTranslation('workitem');
   const location = useLocation();
@@ -108,12 +124,33 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
   const [command, setCommand] = useState<string | null>(null);
   const [os, setOs] = useState<'posix' | 'windows'>('posix');
   const pendingMessage = useRef<{ content: string; id: string; path: string | null; imageIds: string[] } | null>(null);
+  const scenarioSending = useRef(false);
+  // 引导发送前预留的去重标识；同一次发送的重试必须复用它，成功后清空。
+  const reservedClientMessageId = useRef<string | null>(null);
+  // 引导已创建的会话：重复准备发送时复用，不新建第二个初始化对话。
+  const reservedConversationId = useRef<number | null>(null);
+  const draftRef = useRef('');
+  const imagesRef = useRef<api.ConversationImage[]>([]);
+  const prefillRef = useRef<{ defaultText: string } | null>(null);
+  const setupRef = useRef<api.SetupStatus | undefined>(undefined);
+  const guideRuntime = useGuideRuntime();
+  const guided = guideRuntime.active && guideRuntime.workspaceId === workspaceId;
+  const guideConfiguring = guided && guideRuntime.stage === 1;
+  const guidedRef = useRef(false);
+  guidedRef.current = guided;
+  const [waitEpoch, setWaitEpoch] = useState(0);
+  const [waitExpired, setWaitExpired] = useState(false);
+  const waitStartedAt = useRef<number | null>(null);
+  const guidedWaiting = guided && guideRuntime.stage === 1 && guideRuntime.substep === 5;
+  const { locale } = useLocale();
+  const { t: guideT } = useTranslation('workspaceGuide');
   const panel = useRef<HTMLDivElement>(null);
   const wideBaseline = useRef<{ width: number; height: number } | null>(null);
   const suppressResizeUntil = useRef(0);
   const pendingResize = useRef(false);
   const followLatest = useRef(true);
   const scroll = useRef<HTMLDivElement>(null);
+  const planNodes = useRef(new Map<string, HTMLElement>());
   const followContent = useCallback(() => {
     const element = scroll.current;
     if (element && followLatest.current) element.scrollTop = element.scrollHeight;
@@ -124,7 +161,12 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
   const conversationKey = [...scopedKey, 'conversation', prefs.conversationId];
   const listKey = [...scopedKey, 'list', archived, historyPage];
   const plansKey = [...scopedKey, 'plans', prefs.conversationId];
-  const setup = useQuery({ queryKey: [...scopedKey, 'setup'], queryFn: api.setupStatus, enabled: open, refetchInterval: open ? 5000 : false });
+  const setup = useQuery({
+    queryKey: [...scopedKey, 'setup'],
+    queryFn: api.setupStatus,
+    enabled: open,
+    refetchInterval: open ? (guidedWaiting && waitExpired ? false : 5000) : false,
+  });
   const conversations = useQuery({ queryKey: listKey, queryFn: () => api.listConversations(archived, historyPage), enabled: open && history });
   const conversation = useQuery({ queryKey: conversationKey, queryFn: () => api.getConversation(prefs.conversationId!), enabled: open && prefs.conversationId !== null, retry: false, refetchInterval: open ? 3000 : false });
   const plans = useQuery({ queryKey: plansKey, queryFn: () => api.getPlans(prefs.conversationId!), enabled: open && prefs.conversationId !== null, refetchInterval: open ? 2500 : false });
@@ -162,6 +204,97 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
   useEffect(() => () => { if (refreshTimer.current !== null) clearTimeout(refreshTimer.current); }, []);
   useRealtime(prefs.conversationId ? `conversation:${prefs.conversationId}` : null, { enabled: open, onEvent: scheduleRefresh, onReconnect: refresh });
   useEffect(() => { try { localStorage.setItem(preferenceKey, JSON.stringify(prefs)); } catch { /* preference storage is optional */ } }, [prefs, preferenceKey]);
+
+  useEffect(() => { draftRef.current = draft; }, [draft]);
+  useEffect(() => { imagesRef.current = images; }, [images]);
+  useEffect(() => { setupRef.current = setup.data; }, [setup.data]);
+
+  // 引导打开 Chief：同一实例，按请求切换 expanded、复用引导会话并按需预填提示词。
+  useEffect(() => subscribeChiefOpenPanel(request => {
+    setOpen(true);
+    setHistory(false);
+    if (request.expanded) setPrefs(current => ({ ...current, expanded: true }));
+    if (request.conversationId !== null) setPrefs(current => ({ ...current, conversationId: request.conversationId }));
+    else if (request.prefill !== null) setPrefs(current => ({ ...current, conversationId: null }));
+    if (request.clientMessageId !== null) reservedClientMessageId.current = request.clientMessageId;
+    if (request.prefill !== null) {
+      const accepted = draftRef.current.trim() === '' && imagesRef.current.length === 0;
+      if (accepted) {
+        setDraft(request.prefill);
+        prefillRef.current = { defaultText: request.prefill };
+      }
+      request.onPrefillResult?.(accepted);
+    }
+  }), []);
+
+  useEffect(() => subscribeChiefClosePanel(() => {
+    setOpen(false);
+    setPrefs(current => ({ ...current, expanded: false }));
+  }), []);
+
+  // 切换语言只替换尚未编辑的默认提示词；用户编辑过的草稿保持原样。
+  useEffect(() => {
+    const prefill = prefillRef.current;
+    if (!prefill || draftRef.current !== prefill.defaultText) return;
+    const next = guideT('prompt.initial');
+    if (next !== prefill.defaultText) {
+      prefillRef.current = { defaultText: next };
+      setDraft(next);
+    }
+  }, [locale, guideT]);
+
+  useEffect(() => {
+    registerGuideSendPreparation(async existingConversationId => {
+      // 刷新后直接恢复阶段 3 时 setup 查询可能尚未加载，按需现取一次再创建会话。
+      const setupData = setupRef.current ?? await api.setupStatus();
+      const agentId = setupData?.agentId;
+      if (!agentId) throw new Error('Chief is not configured');
+      let conversationId: number;
+      if (existingConversationId !== null) {
+        conversationId = existingConversationId;
+        reservedConversationId.current = conversationId;
+      } else if (reservedConversationId.current !== null) {
+        conversationId = reservedConversationId.current;
+      } else {
+        const created = await api.createConversation(agentId);
+        const current = useAuthStore.getState();
+        if (current.user?.id !== userId || current.currentWorkspace?.id !== workspaceId) {
+          throw new Error('workspace changed');
+        }
+        conversationId = created.id;
+        reservedConversationId.current = conversationId;
+      }
+      const messageId = reservedClientMessageId.current ?? createUuidV4();
+      reservedClientMessageId.current = messageId;
+      setPrefs(current => ({ ...current, conversationId }));
+      return { conversationId, clientMessageId: messageId };
+    });
+    return () => registerGuideSendPreparation(null);
+  }, [userId, workspaceId]);
+
+  // 阶段 1 只在真实 setup.ready 后通知引导进入阶段 2；点击“我已启动”本身不推进。
+  useEffect(() => {
+    if (guided && guideRuntime.stage === 1 && !guideRuntime.reviewing && setup.data?.ready) {
+      emitGuideEvent({ type: 'setup-ready' });
+    }
+  }, [guided, guideRuntime.stage, guideRuntime.reviewing, setup.data?.ready]);
+
+  // 等待在线：5 秒刷新由 setup 查询负责，2 分钟后停止自动刷新并提示手动重试。
+  useEffect(() => {
+    if (!guidedWaiting) {
+      waitStartedAt.current = null;
+      setWaitExpired(false);
+      return;
+    }
+    waitStartedAt.current = Date.now();
+    setWaitExpired(false);
+    const timer = window.setInterval(() => {
+      if (waitStartedAt.current !== null && Date.now() - waitStartedAt.current >= 120000) {
+        setWaitExpired(true);
+      }
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [guidedWaiting, waitEpoch]);
   const clampPrefs = useCallback((x: number, y: number, docked: boolean) =>
     clampPosition(x, y, docked, open ? { width: prefs.width, height: prefs.height } : null), [open, prefs.width, prefs.height]);
   useEffect(() => {
@@ -228,6 +361,8 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
     if (!open || !prefs.expanded) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+      // 引导进行中时 Escape 由引导层处理，不能顺手退出 Chief 全屏。
+      if (guidedRef.current) return;
       const inside = event.target instanceof Node && !!panel.current?.contains(event.target);
       if (!inside && document.activeElement !== document.body) return;
       setPrefs(p => ({ ...p, expanded: false }));
@@ -236,13 +371,18 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [open, prefs.expanded]);
   useLayoutEffect(() => {
+    if (open) followLatest.current = true;
+  }, [open]);
+  useLayoutEffect(() => {
     followContent();
   }, [conversation.data, plans.data, open, followContent]);
   useEffect(() => { followLatest.current = true; }, [prefs.conversationId]);
   const perform = useMutation({ mutationFn: async (action: () => Promise<unknown>) => action(), onSuccess: refresh,
     onError: (error: Error) => { void message.error(error.message); } });
-  const submit = useMutation({ mutationFn: async () => {
-    if (!setup.data?.agentId || !setup.data.ready || (!draft.trim() && !images.length)) return;
+  const submit = useMutation({ mutationFn: async (preset: string | void) => {
+    const text = preset ?? draft;
+    if (!setup.data?.agentId || !setup.data.ready || (!text.trim() && !images.length)) return;
+    if (preset !== undefined) setDraft(preset);
     let id = prefs.conversationId;
     if (id === null) {
       id = (await api.createConversation(setup.data.agentId)).id;
@@ -250,14 +390,17 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
       if (current.user?.id !== userId || current.currentWorkspace?.id !== workspaceId) return;
       setPrefs(p => ({ ...p, conversationId: id }));
     }
-    const content = draft.trim() ? draft : t('imageOnlyMessage');
-    if (!pendingMessage.current || pendingMessage.current.content !== content || JSON.stringify(pendingMessage.current.imageIds) !== JSON.stringify(images.map(image => image.id))) pendingMessage.current = { content, id: createUuidV4(), path: context ? location.pathname : null, imageIds: images.map(image => image.id) };
+    const content = text.trim() ? text : t('imageOnlyMessage');
+    if (!pendingMessage.current || pendingMessage.current.content !== content || JSON.stringify(pendingMessage.current.imageIds) !== JSON.stringify(images.map(image => image.id))) pendingMessage.current = { content, id: reservedClientMessageId.current ?? createUuidV4(), path: context ? location.pathname : null, imageIds: images.map(image => image.id) };
     followLatest.current = true;
     const pending = pendingMessage.current;
     if (pending.imageIds.length) await api.sendMessage(id, pending.content, pending.id, pending.path, pending.imageIds);
     else await api.sendMessage(id, pending.content, pending.id, pending.path);
-    pendingMessage.current = null; setDraft(''); setImages([]); setHistory(false); refresh();
-  }, onError: (error: Error) => { void message.error(error.message); } });
+    const sent = { conversationId: id, clientMessageId: pending.id };
+    pendingMessage.current = null; reservedClientMessageId.current = null; setDraft(''); setImages([]); setHistory(false); refresh();
+    emitGuideEvent({ type: 'send-succeeded', ...sent });
+  }, onError: (error: Error) => { void message.error(error.message); emitGuideEvent({ type: 'send-failed' }); },
+    onSettled: () => { scenarioSending.current = false; } });
   const upload = useMutation({ mutationFn: async (files: File[]) => {
     const verdict = validateDocumentSelection(files, { existingCount: images.length, existingNames: images.map(image => image.name), existingTotalBytes: images.reduce((sum, image) => sum + image.size, 0) });
     if (!verdict.ok) throw new Error(verdict.message);
@@ -331,19 +474,87 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
     conversationNotice(turn.display?.content, 'content', workitemT),
     conversationNotice(turn.display?.error, 'error', workitemT),
   ]]));
+  // 计划归属于产生它的入站轮次；渲染锚点取该轮次之后、下一个入站轮次之前的最后一条回复轮次。
+  const planLayout = useMemo(() => {
+    const turns = conversation.data?.turns ?? [];
+    const directionOf = new Map<number, string>();
+    const outboundAnchor = new Map<number, number>();
+    let currentInbound: number | null = null;
+    for (const turn of turns) {
+      directionOf.set(turn.id, turn.direction);
+      if (turn.direction === INBOUND) {
+        currentInbound = turn.id;
+        outboundAnchor.set(turn.id, turn.id);
+      } else if (currentInbound !== null) {
+        outboundAnchor.set(currentInbound, turn.id);
+      }
+    }
+    const anchoredPlans = new Map<number, api.ActionPlan[]>();
+    const orphanPlans: api.ActionPlan[] = [];
+    for (const plan of [...(plans.data ?? [])].sort(planOrder)) {
+      const direction = directionOf.get(plan.turnId);
+      const anchor = direction === INBOUND ? outboundAnchor.get(plan.turnId) ?? plan.turnId : direction === undefined ? null : plan.turnId;
+      if (anchor === null) { orphanPlans.push(plan); continue; }
+      const group = anchoredPlans.get(anchor);
+      if (group) group.push(plan); else anchoredPlans.set(anchor, [plan]);
+    }
+    return { anchoredPlans, orphanPlans };
+  }, [conversation.data?.turns, plans.data]);
+  const pendingPlans = useMemo(() => (plans.data ?? []).filter(plan => plan.status === PENDING).sort(planOrder), [plans.data]);
+  const composerVisible = !history && !guideConfiguring && !(guided && (guideRuntime.stage === 4 || guideRuntime.reviewing));
+  const pendingNoticeVisible = composerVisible && pendingPlans.length > 0 && !conversation.data?.archivedAt;
+  function copyMessage(content: string) {
+    void copyTextToClipboard(content).then(ok => {
+      if (ok) void message.success(t('copied'));
+      else void message.error(t('copyFailed'));
+    });
+  }
+  function revealPendingPlan() {
+    const target = pendingPlans[0];
+    const node = target ? planNodes.current.get(target.id) : undefined;
+    if (!node) return;
+    followLatest.current = false;
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    node.querySelector<HTMLElement>('.aw-chief-plan-toggle')?.focus();
+  }
+  function renderPlan(plan: api.ActionPlan) {
+    const continuation = api.initializationContinuation(plan);
+    const continuationTurn = continuation
+      ? conversation.data?.turns.filter(turn => turn.direction === INBOUND && turn.content === continuation).at(-1)
+      : undefined;
+    const canRetry = !continuationTurn || retryableContinuationStatuses.has(continuationTurn.status);
+    return <div key={plan.id} className="aw-chief-plan-anchor" data-plan-id={plan.id}
+      ref={node => { if (node) planNodes.current.set(plan.id, node); else planNodes.current.delete(plan.id); }}>
+      <ChiefActionPlan plan={plan}>
+        {plan.status === PENDING && <div className="aw-chief-actions"><Button type="primary" disabled={!canWrite || processing || !!conversation.data?.archivedAt || Date.parse(plan.expiresAt) < Date.now()} loading={perform.isPending} onClick={() => perform.mutate(async () => {
+          const id = prefs.conversationId!;
+          const completed = await api.resolvePlan(id, plan.id, plan.payloadHash, true);
+          const next = api.initializationContinuation(completed);
+          if (next) {
+            try { await api.continueInitialization(id, plan.id, next); }
+            finally { refresh(); }
+          }
+        })}>{t('confirm')}</Button><Button disabled={!canWrite || !!conversation.data?.archivedAt} onClick={() => perform.mutate(() => api.resolvePlan(prefs.conversationId!, plan.id, plan.payloadHash, false))}>{t('decline')}</Button></div>}
+        {continuation && canRetry && <Button disabled={!canWrite || processing || !!conversation.data?.archivedAt} loading={perform.isPending}
+          onClick={() => perform.mutate(() => api.continueInitialization(prefs.conversationId!, plan.id, continuation, continuationTurn?.id))}>
+          {t('retryInitializationContinuation')}
+        </Button>}
+      </ChiefActionPlan>
+    </div>;
+  }
   const error = upload.error || perform.error || setup.error || conversation.error || plans.error || conversations.error;
-  return <div className={`aw-chief${open ? ' aw-chief-open' : ''}`} style={{ right: prefs.x, bottom: prefs.y }}>
-    {open && <div ref={panel} className={`aw-chief-panel${prefs.expanded ? ' aw-chief-expanded' : ''}`} role="dialog" aria-label={t('name')}
+  return <div className={`aw-chief${open ? ' aw-chief-open' : ''}${guided ? ' aw-chief-guide' : ''}`} style={{ right: prefs.x, bottom: prefs.y }}>
+    {open && <div ref={panel} className={`aw-chief-panel${prefs.expanded ? ' aw-chief-expanded' : ''}${guided ? ' aw-chief-guide-panel' : ''}`} role="dialog" aria-label={t('name')}
       style={prefs.expanded ? undefined : { width: prefs.width, height: prefs.height }}>
       <header className="aw-chief-header" onPointerDown={event => { if (!prefs.expanded) beginDrag(event, prefs.docked ? 'vertical' : 'both'); }}>
         <ChiefIcon size={24} /><div><strong>{t('name')}</strong><div className="aw-chief-secondary">{setup.data?.ready ? t('ready') : t('notReady')}</div></div>
-        <div className="aw-chief-tools">
+        {!guided && <div className="aw-chief-tools">
           {!narrow && <Button type="text" icon={prefs.expanded ? <CompressOutlined aria-hidden="true" /> : <FullscreenOutlined aria-hidden="true" />} aria-label={prefs.expanded ? t('exitWide') : t('expandWide')} aria-pressed={prefs.expanded} onClick={() => setPrefs(p => ({ ...p, expanded: !p.expanded }))} />}
           <Button type="text" icon={<HistoryOutlined />} aria-label={t('history')} disabled={submit.isPending || upload.isPending} onClick={() => setHistory(!history)} />
           <Button type="text" icon={<PlusOutlined />} aria-label={t('newConversation')} disabled={submit.isPending || upload.isPending} onClick={() => { setPrefs(p => ({ ...p, conversationId: null })); setDraft(''); setImages([]); setRename(null); pendingMessage.current = null; setHistory(false); }} />
-          <Button type="text" icon={<CloseOutlined />} aria-label={t('collapse')} onClick={() => { setOpen(false); setCommand(null); }} /></div>
+          <Button type="text" icon={<CloseOutlined />} aria-label={t('collapse')} onClick={() => { setOpen(false); setCommand(null); }} /></div>}
       </header>
-      <div className="aw-chief-context"><span>{t('contextHeader', { page: contextLabel })}</span><Switch size="small" checked={context} onChange={setContext} aria-label={t('pageContext')} /></div>
+      {!guided && <div className="aw-chief-context"><span>{t('contextHeader', { page: contextLabel })}</span><Switch size="small" checked={context} onChange={setContext} aria-label={t('pageContext')} /></div>}
       <div ref={scroll} onScroll={() => { const el = scroll.current; if (el) followLatest.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }} className="aw-chief-body" aria-live="polite">
         <div className="aw-chief-body-inner">
         {error && <Alert type="error" message={error.message} action={<Button onClick={refresh}>{t('retry')}</Button>} />}
@@ -352,49 +563,89 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
           {conversations.data?.map(item => <Button block key={item.id} className="aw-chief-history" onClick={() => { setPrefs(p => ({ ...p, conversationId: item.id })); setHistory(false); pendingMessage.current = null; setDraft(''); setImages([]); setRename(null); }}>
             <span>{item.title || t('untitled')}</span><span className="aw-chief-secondary">{item.lastTurnAt ? formatDateTime(item.lastTurnAt) : ''}</span></Button>)}
           {conversations.data?.length === 0 && <p>{t('emptyHistory')}</p>}<div className="aw-chief-actions"><Button disabled={historyPage === 1} onClick={() => setHistoryPage(p => p - 1)}>{t('previous')}</Button><Button disabled={(conversations.data?.length || 0) < 50} onClick={() => setHistoryPage(p => p + 1)}>{t('next')}</Button></div></>
-        : <>
-          {setup.data && !setup.data.ready && <section className="aw-chief-setup"><h3>{t('setupTitle')}</h3><p>{t('setupDescription')}</p>
-            {checklist.map(field => <div className="aw-chief-check" key={field}><span>{t(field)}</span><Tag>{setup.data[field] ? t('configured') : t('missing')}</Tag></div>)}
-            {!admin ? <p>{t('contactAdmin')}</p> : <>
-              {!setup.data.executorConfigured && <Select aria-label={t('provider')} value={clientKind} onChange={setClientKind} options={[{ value: 'QODER_CLI', label: t('qoder') }, { value: 'QODER_CN_CLI', label: t('qoderCn') }]} />}
-              {(!setup.data.skillsConfigured || !setup.data.executorConfigured || !setup.data.launchConfigured) && <Button type="primary" loading={perform.isPending} onClick={() => perform.mutate(() => api.completeSetup(clientKind))}>{t('completeSetup')}</Button>}
-              {setup.data.agentId && <Button onClick={() => navigate(`/agents/${setup.data!.agentId}`)}>{t('agentConfiguration')}</Button>}
-              {setup.data.executorConfigured && <><p>{t('startHint')}</p><Select aria-label={t('os')} value={os} onChange={value => { setOs(value); setCommand(null); }} options={[{ value: 'posix', label: t('posix') }, { value: 'windows', label: t('windows') }]} />
-                <Button loading={perform.isPending} onClick={() => perform.mutate(async () => { const result = await buildExecutorLaunchCommand(setup.data!.executorId!, { os }); setCommand(result.command); })}>{t('launchCommand')}</Button>
-                {command && <Typography.Paragraph copyable={{ text: command }}><pre>{command}</pre></Typography.Paragraph>}
-                <Button onClick={() => navigate('/executors')}>{t('executors')}</Button></>}
-            </>}
-          </section>}
-          {!prefs.conversationId && setup.data?.ready && <div className="aw-chief-welcome"><ChiefIcon size={32} /><h3>{t('welcome')}</h3><p>{t('welcomeDescription')}</p></div>}
+        : guideConfiguring ? <>
+          {setup.data
+            ? <ChiefGuidedSetup setup={setup.data} substep={guideRuntime.substep}
+              reviewing={guideRuntime.reviewing}
+              clientKind={clientKind} onClientKindChange={setClientKind}
+              os={os} onOsChange={value => { setOs(value); setCommand(null); }}
+              command={command} onCommandChange={setCommand}
+              onAdvance={() => emitGuideEvent({ type: 'substep-completed' })}
+              onSetupCompleted={async updated => {
+                const queryKey = [...scopedKey, 'setup'];
+                await queryClient.cancelQueries({ queryKey, exact: true });
+                queryClient.setQueryData(queryKey, updated);
+              }}
+              onSetupError={message => emitGuideEvent({ type: 'setup-error', substep: guideRuntime.substep, message })}
+              onCheckStatus={() => { void setup.refetch(); }}
+              onResetWait={() => { setWaitEpoch(value => value + 1); void setup.refetch(); }}
+              waitExpired={waitExpired} />
+            : <Spin />}
+        </> : <>
+          {setup.data && !setup.data.ready && <ChiefSetupPanel
+            setup={setup.data}
+            admin={admin}
+            clientKind={clientKind}
+            onClientKindChange={setClientKind}
+            os={os}
+            onOsChange={value => { setOs(value); setCommand(null); }}
+            command={command}
+            busy={perform.isPending}
+            onComplete={() => perform.mutate(() => api.completeSetup(clientKind))}
+            onGenerate={() => perform.mutate(async () => { const result = await buildExecutorLaunchCommand(setup.data!.executorId!, { os }); setCommand(result.command); })}
+            onNavigateAgent={() => navigate(`/agents/${setup.data!.agentId}`)}
+            onNavigateExecutors={() => navigate('/executors')}
+          />}
+          {!prefs.conversationId && setup.data?.ready && <ChiefWelcome
+              disabled={!canContinue || !!draft.trim() || images.length > 0}
+              onOptimize={() => {
+                if (scenarioSending.current || !canContinue || draftRef.current.trim() || imagesRef.current.length) return;
+                scenarioSending.current = true;
+                submit.mutate(t('scenarios.optimizePrompt'));
+              }}
+              onInitialize={() => {
+                if (scenarioSending.current || !canContinue || draftRef.current.trim() || imagesRef.current.length) return;
+                scenarioSending.current = true;
+                submit.mutate(guideT('prompt.initial'));
+              }} />}
           {conversation.data && <div className="aw-chief-conversation-title">
             {rename === null ? <><span>{conversation.data.title || t('untitled')}</span><Button size="small" onClick={() => setRename(conversation.data?.title || '')}>{t('rename')}</Button></>
               : <><Input aria-label={t('rename')} value={rename} onChange={e => setRename(e.target.value)} maxLength={255} /><Button disabled={!rename.trim()} onClick={() => perform.mutate(async () => { await api.patchConversation(prefs.conversationId!, { title: rename }); setRename(null); })}>{t('save')}</Button></>}
             <Button size="small" onClick={() => perform.mutate(() => api.patchConversation(prefs.conversationId!, { archived: !conversation.data!.archivedAt }))}>{conversation.data.archivedAt ? t('restore') : t('archive')}</Button>
           </div>}
           {conversation.data?.turns.map(turn => <section key={turn.id} className={`aw-chief-message ${turn.direction === INBOUND ? 'aw-chief-user' : ''}`}>
-            <div className="aw-chief-secondary">{turn.direction === INBOUND ? t('you') : t('name')}</div>
+            <div className="aw-chief-message-heading">
+              {turn.direction !== INBOUND && <div className="aw-chief-secondary">{t('name')}</div>}
+              <div className="aw-chief-message-actions"><Button type="text" size="small" icon={<CopyOutlined />} aria-label={t('copyMessage')} title={t('copyMessage')} onClick={() => copyMessage(turn.content)} /></div>
+            </div>
             {turn.direction === INBOUND ? <><p>{turn.content}</p><ChiefTurnEvents key={`${prefs.conversationId}:${turn.id}`} onContentChange={followContent} onSettledQuestions={recordSettledQuestions} scope={scopedKey} conversationId={prefs.conversationId!} turnId={turn.id} processing={processing && turn.id === conversation.data?.processingTurnId}
                 questionHistory={conversation.data?.questionHistory ?? conversation.data?.answerDeliveries}
                 canContinue={canContinue} onContinue={entry => {
                   if (canContinue) setDraft(current => appendQuestionContext(current, turn.content, entry));
                 }} /></>
-              : turnNotices.get(turn.id)?.[0] ?? <MarkdownView content={turn.content} />}
+              : turnNotices.get(turn.id)?.[0] ?? <MarkdownView content={turn.content} copyCodeBlocks />}
             {!!turn.images?.length && <div className="aw-chief-images">{turn.images.map(image => <a key={image.id} href={image.url} target="_blank" rel="noreferrer"><img src={image.url} alt={image.name} /></a>)}</div>}
-            <div className="aw-chief-message-actions"><Button type="text" size="small" icon={<CopyOutlined />} aria-label={t('copyMessage')} onClick={() => { void copyTextToClipboard(turn.content).then(ok => { if (ok) void message.success(t('copied')); else void message.error(t('copyFailed')); }); }} /></div>
+            <div className="aw-chief-message-actions"><Button type="text" size="small" icon={<CopyOutlined />} aria-label={t('copyMessage')} title={t('copyMessage')} onClick={() => copyMessage(turn.content)} /></div>
             {turn.error && <Alert type="error" message={turnNotices.get(turn.id)?.[1] ?? turn.error} />}
+            {planLayout.anchoredPlans.get(turn.id)?.map(renderPlan)}
           </section>)}
           {processing && <><Tag>{t('processing')}</Tag>
 </>}
-          {plans.data?.map(plan => <section className="aw-chief-plan" key={plan.id}><strong>{t('actionPlan')}</strong><Tag>{t(plan.status === EXPIRED ? 'planExpired' : plan.status === PENDING ? 'planPending' : plan.status === 'COMPLETED' ? 'planCompleted' : plan.status === 'CANCELED' ? 'planCanceled' : plan.status === 'EXECUTING' ? 'planExecuting' : 'planFailed')}</Tag>
-            <pre>{JSON.stringify(schema(plan.actionsJson), null, 2)}</pre>{plan.resultJson && <pre>{JSON.stringify(schema(plan.resultJson), null, 2)}</pre>}
-            {plan.status === PENDING && <div className="aw-chief-actions"><Button type="primary" disabled={!canWrite || processing || !!conversation.data?.archivedAt || Date.parse(plan.expiresAt) < Date.now()} loading={perform.isPending} onClick={() => perform.mutate(() => api.resolvePlan(prefs.conversationId!, plan.id, plan.payloadHash, true))}>{t('confirm')}</Button><Button disabled={!canWrite || !!conversation.data?.archivedAt} onClick={() => perform.mutate(() => api.resolvePlan(prefs.conversationId!, plan.id, plan.payloadHash, false))}>{t('decline')}</Button></div>}</section>)}
+          {planLayout.orphanPlans.length > 0 && <div className="aw-chief-plan-orphans" data-testid="chief-orphan-plans">
+            {planLayout.orphanPlans.map(renderPlan)}
+          </div>}
           <AnswerDeliveryStatus cards={conversation.data?.answerDeliveries} currentTurnId={currentQuestionTurnId} />
           {conversation.data?.pendingElicitations?.filter(card => !settledQuestions.has(card.requestId)
             && !(liveSettledQuestions.conversationId === prefs.conversationId && liveSettledQuestions.turns.get(card.turnId)?.has(card.requestId))).map(card => <ElicitationWizard key={card.requestId} requestId={card.requestId} message={card.message || undefined} schema={schema(card.requestedSchema)} submitting={perform.isPending} onReply={reply => perform.mutate(() => api.replyElicitation(prefs.conversationId!, card.requestId, reply.action, reply.content))} />)}
         </>}
         </div>
       </div>
-      {!history && <footer className="aw-chief-composer">
+      {pendingNoticeVisible &&
+        <div className="aw-chief-pending-notice" role="status">
+          <span>{t('pendingPlansNotice', { count: pendingPlans.length })}</span>
+          <Button type="link" size="small" onClick={revealPendingPlan}>{t('pendingPlansView')}</Button>
+        </div>}
+      {composerVisible && <footer className="aw-chief-composer">
         <div className="aw-chief-composer-inner">
         <div className="aw-chief-input-shell" onPaste={event => { const files = filesFromClipboard(event.clipboardData).filter(file => file.type.startsWith('image/')); if (files.length && !upload.isPending && !submit.isPending && setup.data?.ready && !conversation.data?.archivedAt) { event.preventDefault(); upload.mutate(files); } }}>
           {!!images.length && <div className="aw-chief-images">{images.map(image => <div className="aw-chief-image-draft" key={image.id}><img src={image.url} alt={image.name} /><Button type="text" size="small" icon={<CloseOutlined />} aria-label={t('removeImage', { name: image.name })} onClick={() => setImages(current => current.filter(item => item.id !== image.id))} /></div>)}</div>}
@@ -404,13 +655,13 @@ function Assistant({ userId, workspaceId }: { userId: number; workspaceId: numbe
             <Button type="text" size="small" icon={<PictureOutlined />} aria-label={t('uploadImage')} loading={upload.isPending} disabled={!setup.data?.ready || submit.isPending || upload.isPending || !!conversation.data?.archivedAt} onClick={() => filePicker.current?.click()} />
             <span className="aw-chief-secondary">{t('privateSaved')}</span>
             {processing && conversation.data?.cancelSupported ? <Button className="aw-chief-send" type="text" shape="circle" size="small" icon={<StopOutlined />} aria-label={t('stop')} loading={perform.isPending} onClick={() => perform.mutate(() => api.cancelTurn(prefs.conversationId!, conversation.data!.processingTurnId!))} />
-              : <Button className="aw-chief-send" type="primary" shape="circle" size="small" aria-label={t('send')} icon={<ArrowUpOutlined />} loading={submit.isPending} disabled={(!draft.trim() && !images.length) || upload.isPending || processing || !setup.data?.ready || !!conversation.data?.archivedAt || !!conversation.error} onClick={() => submit.mutate()} />}
+              : <Button className="aw-chief-send" data-guide-target="send" type="primary" shape="circle" size="small" aria-label={t('send')} icon={<ArrowUpOutlined />} loading={submit.isPending} disabled={(!draft.trim() && !images.length) || upload.isPending || processing || !setup.data?.ready || !!conversation.data?.archivedAt || !!conversation.error} onClick={() => submit.mutate()} />}
           </div>
         </div>
         </div>
       </footer>}
     </div>}
-    {!(open && prefs.expanded) && <div className={`aw-chief-launch${prefs.docked && !open ? ' aw-chief-tucked' : ''}`}>
+    {!hideLauncher && !(open && prefs.expanded) && <div className={`aw-chief-launch${prefs.docked && !open ? ' aw-chief-tucked' : ''}`}>
       {!prefs.docked && <span onPointerDown={event => beginDrag(event, 'both')} className="aw-chief-grip" aria-hidden="true"><HolderOutlined /></span>}
       <button type="button" className="aw-chief-puck" aria-label={t('open')} onPointerDown={event => beginDrag(event, prefs.docked ? 'vertical' : 'both')} onClick={togglePuck}><ChiefIcon size={22} /></button>
       <button type="button" className="aw-chief-dock" aria-label={prefs.docked ? t('undock') : t('dock')} aria-expanded={!prefs.docked} onPointerDown={prefs.docked ? event => beginDrag(event, 'vertical') : undefined} onClick={toggleDock}>{prefs.docked ? <RightOutlined /> : <LeftOutlined />}</button>

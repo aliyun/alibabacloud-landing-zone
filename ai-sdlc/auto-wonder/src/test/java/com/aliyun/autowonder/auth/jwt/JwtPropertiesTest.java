@@ -16,6 +16,13 @@ class JwtPropertiesTest {
     }
 
     @Test
+    void defaultsKeepTwoHourAccessTokenAndRollingOneYearRefreshSession() {
+        JwtProperties props = newProps("daily", null);
+        assertEquals(7200L, props.getAccessTtlSeconds());
+        assertEquals(31536000L, props.getRefreshTtlSeconds());
+    }
+
+    @Test
     void dailyProfileRejectsMissingSecret() {
         JwtProperties props = newProps("daily", null);
         assertThrows(IllegalStateException.class, props::validateSecret);

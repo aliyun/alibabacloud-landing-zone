@@ -2,7 +2,7 @@ import { i18n } from '@/shared/i18n';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter, RouterProvider, MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider, MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { message } from 'antd';
 import { http, HttpResponse } from 'msw';
@@ -47,13 +47,13 @@ function unexpectedLocalStorageKeys(): string[] {
   return keys;
 }
 
-function renderPage(queryRetry: boolean | number = false) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: queryRetry, retryDelay: 0 } } });
+function renderPage(queryRetry: boolean | number = false, staleTime = 0, entry = '/') {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: queryRetry, retryDelay: 0, staleTime } } });
   return {
     queryClient,
     ...render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter><ExecutorListPage /></MemoryRouter>
+        <MemoryRouter initialEntries={[entry]}><ExecutorListPage /></MemoryRouter>
       </QueryClientProvider>,
     ),
   };
@@ -1141,6 +1141,40 @@ describe('ExecutorListPage', () => {
     await act(async () => { await user.click(option); });
   }
 
+  it.each([
+    [undefined, '@alicloud/autowonder@0.3.33'],
+    ['0.3.32', 'autowonder@0.3.32'],
+    ['0.3.33', '@alicloud/autowonder@0.3.33'],
+    ['0.4.0', '@alicloud/autowonder@0.4.0'],
+  ])('displays the server command for runtime %s without rewriting the package', async (runtimeVersion, packageSpec) => {
+    const user = userEvent.setup();
+    const writeText = mockClipboardWrite();
+    serveExecutor({ clientKind: 'QODER_CLI' }, { runtimeVersion });
+    // 包名边界（0.3.33 起改 scoped 包）由服务端决定；前端只能原样展示，不得改写包名或版本
+    server.use(http.post('/api/executors/10000/launch-command', async (info) => {
+      const payload = await (await resolveLaunchCommand(info)).json() as { data: { command: string } };
+      return HttpResponse.json({
+        ...payload,
+        data: {
+          ...payload.data,
+          command: payload.data.command.replace(/(?:@alicloud\/)?autowonder@[0-9.]+/, packageSpec),
+        },
+      });
+    }));
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await waitFor(() => expect(previewedCommand(dialog)).toContain(`npx -y ${packageSpec} connect`));
+    await user.click(within(dialog).getByRole('button', { name: '复制启动命令' }));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`npx -y ${packageSpec} connect`));
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const reopened = await findModalByTitle('启动命令 · dev-machine-01');
+    fireEvent.click(within(reopened).getByRole('button', { name: '编辑完整命令' }));
+    const input = await within(reopened).findByRole('textbox', { name: '完整启动命令' });
+    expect((input as HTMLTextAreaElement).value).toContain(`npx -y ${packageSpec} connect`);
+  });
+
   it.each(['QODER_CLI', 'QODER_CN_CLI'])('preserves edited options across model changes in %s previews without saving and discards them on cancel', async (clientKind) => {
     const user = userEvent.setup();
     serveExecutor({ clientKind }, { runtimeVersion: '0.3.9', workspaceRoot: '/data/saved tasks' });
@@ -1165,10 +1199,12 @@ describe('ExecutorListPage', () => {
     fireEvent.change(within(dialog).getByRole('spinbutton', { name: /最大并发任务数/ }), { target: { value: '7' } });
     await waitFor(() => {
       const preview = previewedCommand(dialog);
+      // 数据库里固定的 0.3.9 不进入命令：包版本恒为平台推荐版本
       for (const arg of ['--model ultimate', '--reasoning-effort low', '--context-window 1000000',
-        '--memory-mode provider-local', '--max-tasks 7', 'autowonder@0.3.9', "--workspace-root '/data/saved tasks'"]) {
+        '--memory-mode provider-local', '--max-tasks 7', '@alicloud/autowonder@0.3.43', "--workspace-root '/data/saved tasks'"]) {
         expect(preview).toContain(arg);
       }
+      expect(preview).not.toContain('autowonder@0.3.9');
     });
     expect(within(dialog).getByText('未保存')).toBeInTheDocument();
     expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
@@ -1180,6 +1216,39 @@ describe('ExecutorListPage', () => {
     expect(within(reopened).queryByText('未保存')).not.toBeInTheDocument();
     expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
   }, 15_000);
+
+  it('refetches the server-built command on reopen so a changed recommendation replaces the cached one', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI' }, { runtimeVersion: '0.3.27' });
+    let recommended = '0.3.30';
+    let builds = 0;
+    server.use(http.post('/api/executors/10000/launch-command', async (info) => {
+      builds += 1;
+      const payload = await (await resolveLaunchCommand(info)).json() as { data: Record<string, unknown> };
+      return HttpResponse.json({
+        ...payload,
+        data: {
+          ...payload.data,
+          runtimeVersion: recommended,
+          command: (payload.data.command as string).replace(/autowonder@[0-9.]+/, `autowonder@${recommended}`),
+        },
+      });
+    }));
+    // 生产环境 QueryClient 有 30s staleTime：只有打开弹窗时主动失效，重开才能拿到新的推荐版本
+    renderPage(false, 30_000);
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await waitFor(() => expect(previewedCommand(dialog)).toContain('autowonder@0.3.30'));
+
+    recommended = '0.3.31';
+    await user.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const reopened = await findModalByTitle('启动命令 · dev-machine-01');
+    await waitFor(() => expect(previewedCommand(reopened)).toContain('autowonder@0.3.31'));
+    expect(previewedCommand(reopened)).not.toContain('autowonder@0.3.30');
+    expect(builds).toBeGreaterThanOrEqual(2);
+  });
 
   it('uses unsaved values for Windows previews and full command editing without a config write', async () => {
     const user = userEvent.setup();
@@ -1246,7 +1315,7 @@ describe('ExecutorListPage', () => {
     server.use(
       http.put('/api/executors/10000/launch-command', async ({ request }) => {
         savedBody = await request.json() as typeof savedBody;
-        const config = { ...defaultLaunchConfig('QODER_CLI'), model: 'ultimate', runtimeVersion: '0.3.9', workspaceRoot: '/data/new tasks', version: savedBody!.version + 1 };
+        const config = { ...defaultLaunchConfig('QODER_CLI'), model: 'ultimate', runtimeVersion: '0.3.9', runtimeVersionPinned: true, workspaceRoot: '/data/new tasks', version: savedBody!.version + 1 };
         setExecutorLaunchConfig(10000, config);
         return HttpResponse.json({ success: true, data: config });
       }),
@@ -1267,13 +1336,15 @@ describe('ExecutorListPage', () => {
     fireEvent.click(await within(dialog).findByRole('button', { name: '编辑完整命令' }));
     expect(within(dialog).queryByRole('button', { name: '在线应用（重启）' })).not.toBeInTheDocument();
     const input = await within(dialog).findByRole('textbox', { name: '完整启动命令' });
-    const draft = (input as HTMLTextAreaElement).value.replace(/autowonder@[0-9.]+/, 'autowonder@0.3.9').replace('--model auto', '--model ultimate') + " --workspace-root '/data/new tasks'";
+    const draft = (input as HTMLTextAreaElement).value.replace(/(?:@alicloud\/)?autowonder@[0-9.]+/, 'autowonder@0.3.9').replace('--model auto', '--model ultimate') + " --workspace-root '/data/new tasks'";
+    expect(draft).toContain('npx -y autowonder@0.3.9 connect');
+    expect(draft).not.toContain('@alicloud/');
     fireEvent.change(input, { target: { value: draft } });
     fireEvent.click(within(dialog).getByRole('button', { name: '保存命令' }));
     expect(await within(dialog).findByRole('button', { name: '编辑完整命令' })).toBeEnabled();
     expect(within(dialog).queryByRole('textbox', { name: '完整启动命令' })).not.toBeInTheDocument();
     const preview = within(dialog).getByRole('region', { name: '命令预览' });
-    expect(preview).toHaveTextContent('autowonder@0.3.9');
+    expect(preview).toHaveTextContent('npx -y autowonder@0.3.9 connect');
     expect(preview).toHaveTextContent("--workspace-root '/data/new tasks'");
     expect(within(dialog).getByText('旗舰')).toBeInTheDocument();
     expect(savedBody).toEqual({ command: draft, version: 1 });
@@ -1285,7 +1356,8 @@ describe('ExecutorListPage', () => {
     await waitFor(() => expect(appliedVersion).toBe(3));
     expect(appliedMode).toBe('WHEN_IDLE');
     expect(launchConfigUpdatesFor(10000)).toEqual([expect.objectContaining({ version: 2, model: 'ultimate', maxConcurrentDispatches: 7 })]);
-    expect(preview).toHaveTextContent('autowonder@0.3.9');
+    expect(preview).toHaveTextContent('npx -y autowonder@0.3.9 connect');
+    expect(preview).not.toHaveTextContent('@alicloud/autowonder@0.3.43');
     expect(preview).toHaveTextContent("--workspace-root '/data/new tasks'");
     expect(await within(dialog).findByText('等待响应')).toBeInTheDocument();
     expect(within(dialog).queryByText('重启成功')).not.toBeInTheDocument();
@@ -1295,6 +1367,53 @@ describe('ExecutorListPage', () => {
     })] })));
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ['executors'] }); });
     expect(await within(dialog).findByText('重启成功')).toBeInTheDocument();
+  });
+
+  it('keeps the saved command preview when an older initial preview finishes after saving', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI' });
+    let releasePreview!: () => void;
+    const pendingPreview = new Promise<void>((resolve) => { releasePreview = resolve; });
+    let commandRequests = 0;
+    let saved = false;
+    server.use(
+      http.post('/api/executors/10000/launch-command', async (input) => {
+        const response = await resolveLaunchCommand(input);
+        if (++commandRequests === 1) await pendingPreview;
+        return response;
+      }),
+      http.put('/api/executors/10000/launch-command', () => {
+        const config = {
+          ...defaultLaunchConfig('QODER_CLI'), workspaceRoot: '/data/new tasks',
+          daemonName: 'new-daemon', debug: true, version: 2,
+        };
+        setExecutorLaunchConfig(10000, config);
+        saved = true;
+        return HttpResponse.json({ success: true, data: config });
+      }),
+    );
+    const { queryClient } = renderPage();
+    queryClient.setDefaultOptions({ queries: { retry: false, staleTime: 30_000 } });
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await waitFor(() => expect(commandRequests).toBe(1));
+    await user.click(within(dialog).getByRole('button', { name: '编辑完整命令' }));
+    const input = await within(dialog).findByRole('textbox', { name: '完整启动命令' });
+    const draft = (input as HTMLTextAreaElement).value
+      + " --workspace-root '/data/new tasks' --name new-daemon --debug";
+    fireEvent.change(input, { target: { value: draft } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存命令' }));
+    await waitFor(() => expect(saved).toBe(true));
+    await act(async () => { releasePreview(); });
+    await waitFor(() => {
+      const preview = within(dialog).getByRole('region', { name: '命令预览' });
+      expect(preview).toHaveTextContent("--workspace-root '/data/new tasks'");
+      expect(preview).toHaveTextContent('--name');
+      expect(preview).toHaveTextContent('new-daemon');
+      expect(preview).toHaveTextContent('--debug');
+    });
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
   });
 
   it('blocks online application in Windows command mode and restores it for macOS / Linux', async () => {
@@ -3710,5 +3829,237 @@ describe('routed squad grouping localization', () => {
 
     expect(screen.getByRole('combobox', { name: 'Filter by squad' })).toBeInTheDocument();
     await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  });
+});
+
+
+function LocationProbe() {
+  const location = useLocation();
+  return <span data-testid="location">{location.pathname + location.search}</span>;
+}
+
+describe('executor agent direct link', () => {
+  const okJson = (data: unknown) => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data });
+  const agentRow = (id: number, name: string) => ({
+    id, name, avatarUrl: null, status: 'ONLINE', onlineVersionId: null,
+    editingVersionId: null, latestVersionNo: 1, version: 1, gmtCreate: '2026-07-01', squadNames: null,
+  });
+  const executorRow = (id: number, agentIdValue: number, agentName: string | null, status = 'ONLINE') => ({
+    id, agentId: agentIdValue, agentName, name: `runner-${id}`, clientKind: 'QODER_CLI', status,
+    restartPolicySupported: true, lastConnectIp: null, lastHeartbeat: null, gmtCreate: '2026-08-24T10:00:00Z',
+  });
+
+  beforeEach(() => {
+    localStorage.setItem('aw-auth', JSON.stringify({
+      state: {
+        accessToken: null, refreshToken: null, user: null,
+        currentWorkspace: { id: 1, name: 'O', description: '' }, accessLevel: 'ADMIN',
+      },
+      version: 2,
+    }));
+    useAuthStore.getState().clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    localStorage.setItem('autowonder.executors.view', 'agent');
+    resetExecutorLaunchConfigStore();
+  });
+
+  function renderAt(entry: string) {
+    const router = createMemoryRouter(
+      [{ path: '/executors', element: <><LocationProbe /><ExecutorListPage /></> }],
+      { initialEntries: [entry] },
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
+    return {
+      router,
+      queryClient,
+      ...render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>),
+    };
+  }
+
+  it('scopes the request to the linked agent and expands its group on entry', async () => {
+    const scopedPaths: string[] = [];
+    server.use(
+      http.get('/api/agents', () => okJson([agentRow(1, 'Alpha')])),
+      http.get('/api/agents/:id/executors', ({ params, request }) => {
+        scopedPaths.push(new URL(request.url).pathname);
+        expect(params.id).toBe('1');
+        return okJson([executorRow(100, 1, 'Alpha'), executorRow(101, 1, 'Alpha', 'OFFLINE')]);
+      }),
+    );
+
+    renderAt('/executors?agentId=1&view=agent');
+
+    const header = await screen.findByRole('button', { name: /Alpha（未编队）/ });
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByRole('button', { name: 'runner-100' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'runner-101' })).toBeInTheDocument();
+    expect(scopedPaths).toEqual(['/api/agents/1/executors']);
+    expect(screen.getByTestId('location')).toHaveTextContent('/executors?agentId=1&view=agent');
+  });
+
+  it('clears the agent filter back to the full list and drops the URL params', async () => {
+    const requestedPaths: string[] = [];
+    server.use(
+      http.get('/api/agents', () => okJson([agentRow(1, 'Alpha')])),
+      http.get('/api/agents/:id/executors', ({ request }) => {
+        requestedPaths.push(new URL(request.url).pathname);
+        return okJson([executorRow(100, 1, 'Alpha')]);
+      }),
+      http.get('/api/executors', ({ request }) => {
+        requestedPaths.push(new URL(request.url).pathname);
+        return okJson([executorRow(200, 2, 'Beta')]);
+      }),
+    );
+
+    renderAt('/executors?agentId=1&view=agent');
+    expect(await screen.findByRole('button', { name: 'runner-100' })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/executors?agentId=1&view=agent');
+
+    const agentSelect = screen.getByTitle('Alpha').closest('.ant-select') as HTMLElement;
+    const clear = agentSelect.querySelector('.ant-select-clear');
+    expect(clear).not.toBeNull();
+    fireEvent.mouseDown(clear as Element);
+    fireEvent.click(clear as Element);
+
+    await waitFor(() => expect(screen.getByTestId('location')).not.toHaveTextContent('agentId'));
+    expect(screen.getByTestId('location')).not.toHaveTextContent('view=agent');
+    // 清空后必须回到全量列表（按 Agent 分组默认折叠，用分组头断言），旧直达参数不能再次生效。
+    expect(await screen.findByText(/Beta（未编队）/)).toBeInTheDocument();
+    await waitFor(() => expect(requestedPaths).toContain('/api/executors'));
+  });
+
+  it('clears invalid direct-link params and falls back to the full executor list', async () => {
+    const user = userEvent.setup();
+    const requestedPaths: string[] = [];
+    let scoped = 0;
+    server.use(
+      http.get('/api/agents', () => okJson([])),
+      http.get('/api/agents/:id/executors', () => { scoped += 1; return okJson([]); }),
+      http.get('/api/executors', ({ request }) => {
+        requestedPaths.push(new URL(request.url).pathname);
+        return okJson([executorRow(200, 2, 'Beta')]);
+      }),
+    );
+
+    renderAt('/executors?agentId=abc&view=agent');
+    expect(await screen.findByText('链接中的数字员工参数无效，已显示全部执行器。')).toBeInTheDocument();
+    expect(await screen.findByText(/Beta（未编队）/)).toBeInTheDocument();
+    expect(scoped).toBe(0);
+
+    await user.click(screen.getByRole('button', { name: '清除无效参数' }));
+
+    await waitFor(() => expect(screen.getByTestId('location')).not.toHaveTextContent('agentId'));
+    expect(screen.getByTestId('location')).not.toHaveTextContent('view=agent');
+    await waitFor(() => expect(screen.queryByText('链接中的数字员工参数无效，已显示全部执行器。')).not.toBeInTheDocument());
+    expect(scoped).toBe(0);
+    expect(requestedPaths).toContain('/api/executors');
+    expect(screen.getByText(/Beta（未编队）/)).toBeInTheDocument();
+  });
+
+  it('does not request an invalid agent id and offers a recoverable fallback', async () => {
+    let scoped = 0;
+    server.use(
+      http.get('/api/agents', () => okJson([])),
+      http.get('/api/agents/:id/executors', () => { scoped += 1; return okJson([]); }),
+      http.get('/api/executors', () => okJson([])),
+    );
+
+    renderAt('/executors?agentId=abc&view=agent');
+
+    expect(await screen.findByText('链接中的数字员工参数无效，已显示全部执行器。')).toBeInTheDocument();
+    expect(scoped).toBe(0);
+  });
+
+  it('shows a scoped empty state instead of silently listing every agent', async () => {
+    server.use(
+      http.get('/api/agents', () => okJson([agentRow(1, 'Alpha')])),
+      http.get('/api/agents/:id/executors', () => okJson([])),
+    );
+
+    renderAt('/executors?agentId=1&view=agent');
+
+    expect(await screen.findByText('该数字员工暂无执行器')).toBeInTheDocument();
+  });
+
+  it('syncs a manually selected agent into the URL', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/agents', () => okJson([agentRow(1, 'Alpha')])),
+      http.get('/api/agents/:id/executors', () => okJson([])),
+      http.get('/api/executors', () => okJson([])),
+    );
+
+    renderAt('/executors');
+    const agentSelect = (await screen.findByText('选择 Agent')).closest('.ant-select') as HTMLElement;
+    await user.click(within(agentSelect).getByRole('combobox'));
+    await user.click(await screen.findByText('Alpha', { selector: '.ant-select-item-option-content' }));
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('agentId=1'));
+    expect(screen.getByTestId('location')).not.toHaveTextContent('view=agent');
+  });
+
+  it('keeps a manually collapsed group collapsed across refetches', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/agents', () => okJson([agentRow(1, 'Alpha')])),
+      http.get('/api/agents/:id/executors', () => okJson([executorRow(100, 1, 'Alpha')])),
+    );
+
+    const { queryClient } = renderAt('/executors?agentId=1&view=agent');
+    const header = await screen.findByRole('button', { name: /Alpha（未编队）/ });
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+    await user.click(header);
+    expect(screen.getByRole('button', { name: /Alpha（未编队）/ })).toHaveAttribute('aria-expanded', 'false');
+
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['executors'] }); });
+
+    expect(screen.getByRole('button', { name: /Alpha（未编队）/ })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('resolves a target beyond the first 100 agents by id', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => agentRow(index + 1, `员工${index + 1}`));
+    server.use(
+      http.get('/api/agents', () => okJson(firstPage)),
+      http.get('/api/agents/777', () => okJson(agentRow(777, '边缘员工'))),
+      http.get('/api/agents/777/executors', () => okJson([executorRow(900, 777, null)])),
+    );
+
+    renderAt('/executors?agentId=777&view=agent');
+
+    expect(await screen.findByRole('button', { name: /边缘员工（未编队）/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'runner-900' })).toBeInTheDocument();
+    expect(screen.getAllByText('边缘员工').length).toBeGreaterThan(0);
+  });
+  it('offers a retry when the scoped executor list fails to load', async () => {
+    const user = userEvent.setup();
+    let fail = true;
+    server.use(
+      http.get('/api/agents', () => okJson([agentRow(1, 'Alpha')])),
+      http.get('/api/agents/:id/executors', () => (fail
+        ? HttpResponse.json({ success: false, code: '500', message: 'boom' }, { status: 500 })
+        : okJson([executorRow(100, 1, 'Alpha')]))),
+    );
+
+    renderAt('/executors?agentId=1&view=agent');
+    expect(await screen.findByText('执行器列表加载失败')).toBeInTheDocument();
+
+    fail = false;
+    await user.click(screen.getByRole('button', { name: /重\s*试/ }));
+
+    expect(await screen.findByRole('button', { name: 'runner-100' })).toBeInTheDocument();
+  });
+
+  it('warns when the linked agent cannot be resolved', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => agentRow(index + 1, `员工${index + 1}`));
+    server.use(
+      http.get('/api/agents', () => okJson(firstPage)),
+      http.get('/api/agents/888', () =>
+        HttpResponse.json({ success: false, code: '14001', message: 'not found' }, { status: 404 })),
+      http.get('/api/agents/888/executors', () => okJson([])),
+    );
+
+    renderAt('/executors?agentId=888&view=agent');
+
+    expect(await screen.findByText('目标数字员工不存在或无权访问，未显示其他数字员工的执行器。')).toBeInTheDocument();
   });
 });

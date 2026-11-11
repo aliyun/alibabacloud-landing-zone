@@ -10,6 +10,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { resetUserSettingStore, seedUserSetting } from '@/test/mocks/handlers';
 import { WorkitemClarificationPanel } from './WorkitemClarificationPanel';
+import { mockLatestClarificationConversation } from '@/test/mocks/clarificationLatest';
 import { clearClarificationPrefill, writeClarificationPrefill } from './prefill';
 import { CLARIFICATION_SEND_MODE_KEY, SEND_MODE_LABELS } from './sendMode';
 
@@ -74,6 +75,8 @@ function mockBackend(conversations = [conversationPayload()]) {
         return ok(null);
       }),
   );
+  // 进入面板会先解析「最近一次会话」：默认无记录，既有用例走本地预填链路。
+  mockLatestClarificationConversation();
 }
 
 interface PanelProps {

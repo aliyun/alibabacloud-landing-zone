@@ -21,6 +21,9 @@ import enSquad from './locales/en-US/squad.json';
 import zhExecutor from './locales/zh-CN/executor.json';
 import enExecutor from './locales/en-US/executor.json';
 
+import zhDeliveryInsights from './locales/zh-CN/deliveryInsights.json';
+import enDeliveryInsights from './locales/en-US/deliveryInsights.json';
+
 import zhInsights from './locales/zh-CN/insights.json';
 import enInsights from './locales/en-US/insights.json';
 
@@ -41,6 +44,9 @@ import enStatemachine from './locales/en-US/statemachine.json';
 
 import zhRepo from './locales/zh-CN/repo.json';
 import enRepo from './locales/en-US/repo.json';
+
+import zhPrd from './locales/zh-CN/prd.json';
+import enPrd from './locales/en-US/prd.json';
 
 import zhSkill from './locales/zh-CN/skill.json';
 import enSkill from './locales/en-US/skill.json';
@@ -83,6 +89,8 @@ import zhUserManagement from './locales/zh-CN/userManagement.json';
 import enUserManagement from './locales/en-US/userManagement.json';
 import zhSpaceDashboard from './locales/zh-CN/spaceDashboard.json';
 import enSpaceDashboard from './locales/en-US/spaceDashboard.json';
+import zhWorkspaceGuide from './locales/zh-CN/workspaceGuide.json';
+import enWorkspaceGuide from './locales/en-US/workspaceGuide.json';
 
 export type Locale = 'zh-CN' | 'en-US';
 export function normalizeLocale(value: unknown): Locale {
@@ -93,8 +101,8 @@ export function browserLocale(): Locale {
   return normalizeLocale(languages.find(value => /^(en|zh)(?:[-_]|$)/i.test(value)));
 }
 export const resources = {
-  'zh-CN': { chiefOfStaff: zhChiefOfStaff, common: zhCommon, shell: zhShell, auth: zhAuth, shared: zhShared, workitem: zhWorkitem, agent: zhAgent, squad: zhSquad, executor: zhExecutor, insights: zhInsights, execution: zhExecution, evolution: zhEvolution, scheduledTask: zhScheduledTask, sdlc: zhSdlc, statemachine: zhStatemachine, repo: zhRepo, skill: zhSkill, memory: zhMemory, integration: zhIntegration, settings: zhSettings, environmentVariables: zhEnvironmentVariables, audit: zhAudit, profile: zhProfile, mcp: zhMcp, platform: zhPlatform, notification: zhNotification, about: zhAbout, help: zhHelp, overview: zhOverview, userManagement: zhUserManagement, spaceDashboard: zhSpaceDashboard },
-  'en-US': { chiefOfStaff: enChiefOfStaff, common: enCommon, shell: enShell, auth: enAuth, shared: enShared, workitem: enWorkitem, agent: enAgent, squad: enSquad, executor: enExecutor, insights: enInsights, execution: enExecution, evolution: enEvolution, scheduledTask: enScheduledTask, sdlc: enSdlc, statemachine: enStatemachine, repo: enRepo, skill: enSkill, memory: enMemory, integration: enIntegration, settings: enSettings, environmentVariables: enEnvironmentVariables, audit: enAudit, profile: enProfile, mcp: enMcp, platform: enPlatform, notification: enNotification, about: enAbout, help: enHelp, overview: enOverview, userManagement: enUserManagement, spaceDashboard: enSpaceDashboard },
+  'zh-CN': { deliveryInsights: zhDeliveryInsights, chiefOfStaff: zhChiefOfStaff, common: zhCommon, shell: zhShell, auth: zhAuth, shared: zhShared, workitem: zhWorkitem, agent: zhAgent, squad: zhSquad, executor: zhExecutor, insights: zhInsights, execution: zhExecution, evolution: zhEvolution, scheduledTask: zhScheduledTask, sdlc: zhSdlc, statemachine: zhStatemachine, repo: zhRepo, prd: zhPrd, skill: zhSkill, memory: zhMemory, integration: zhIntegration, settings: zhSettings, environmentVariables: zhEnvironmentVariables, audit: zhAudit, profile: zhProfile, mcp: zhMcp, platform: zhPlatform, notification: zhNotification, about: zhAbout, help: zhHelp, overview: zhOverview, userManagement: zhUserManagement, spaceDashboard: zhSpaceDashboard, workspaceGuide: zhWorkspaceGuide },
+  'en-US': { deliveryInsights: enDeliveryInsights, chiefOfStaff: enChiefOfStaff, common: enCommon, shell: enShell, auth: enAuth, shared: enShared, workitem: enWorkitem, agent: enAgent, squad: enSquad, executor: enExecutor, insights: enInsights, execution: enExecution, evolution: enEvolution, scheduledTask: enScheduledTask, sdlc: enSdlc, statemachine: enStatemachine, repo: enRepo, prd: enPrd, skill: enSkill, memory: enMemory, integration: enIntegration, settings: enSettings, environmentVariables: enEnvironmentVariables, audit: enAudit, profile: enProfile, mcp: enMcp, platform: enPlatform, notification: enNotification, about: enAbout, help: enHelp, overview: enOverview, userManagement: enUserManagement, spaceDashboard: enSpaceDashboard, workspaceGuide: enWorkspaceGuide },
 };
 export const i18n = i18next.createInstance();
 void i18n.use(initReactI18next).init({

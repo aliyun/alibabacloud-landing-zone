@@ -300,6 +300,7 @@ public class DispatchCheckpointService {
                     storage.delete(garbage.getOssRef());
                     storage.delete(repoStateRef(garbage.getOssRef()));
                     storage.delete(LegacyCheckpointNormalizer.compatibilityRef(garbage.getOssRef()));
+                    storage.delete(LegacyCheckpointNormalizer.legacyCompatibilityRef(garbage.getOssRef()));
                     checkpointDao.deleteById(garbage.getTenantId(), garbage.getDispatchId(), garbage.getId());
                     return null;
                 });

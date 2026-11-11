@@ -58,13 +58,15 @@ public class UserAdminService {
     private final UserImIdentityService userImIdentityService;
     private final NotifyService notifyService;
     private final AuditLogService auditLogService;
+    private final WorkspaceCreationPermissionService workspaceCreationPermissionService;
 
     public UserAdminService(UserDao userDao, UserService userService,
                             UserDeletionService userDeletionService,
                             WorkspaceDao workspaceDao, WorkspaceMemberDao workspaceMemberDao,
                             WorkspaceService workspaceService, WorkspaceRoleService workspaceRoleService,
                             UserImIdentityService userImIdentityService,
-                            NotifyService notifyService, AuditLogService auditLogService) {
+                            NotifyService notifyService, AuditLogService auditLogService,
+                            WorkspaceCreationPermissionService workspaceCreationPermissionService) {
         this.userDao = userDao;
         this.userService = userService;
         this.userDeletionService = userDeletionService;
@@ -75,24 +77,28 @@ public class UserAdminService {
         this.userImIdentityService = userImIdentityService;
         this.notifyService = notifyService;
         this.auditLogService = auditLogService;
+        this.workspaceCreationPermissionService = workspaceCreationPermissionService;
     }
 
-    public UserAdminListVO page(String keyword, String status, String type, int page, int size) {
+    public UserAdminListVO page(String keyword, String status, String type, Boolean canCreateWorkspace,
+                                int page, int size) {
         int pageNum = Math.max(page, 1);
         int pageSize = Math.min(Math.max(size, 1), PAGE_SIZE_MAX);
         String kw = trimToNull(keyword);
         String statusFilter = normalizeStatus(status);
         String typeFilter = normalizeType(type);
+        boolean defaultAllowed = workspaceCreationPermissionService.globalDefaultAllowed();
 
         UserAdminListVO result = new UserAdminListVO();
         result.setPageNum(pageNum);
         result.setPageSize(pageSize);
         // 全部用户总数固定展示，不随筛选变化；筛选总数是分页器口径。
         result.setTotalAll(userDao.countAllUsers());
-        result.setTotal(userDao.countUsersForAdmin(kw, statusFilter, typeFilter));
+        result.setTotal(userDao.countUsersForAdmin(kw, statusFilter, typeFilter,
+                canCreateWorkspace, defaultAllowed));
         for (UserDO user : userDao.searchUsersForAdmin(kw, statusFilter, typeFilter,
-                (pageNum - 1) * pageSize, pageSize)) {
-            result.getList().add(toVO(user));
+                canCreateWorkspace, defaultAllowed, (pageNum - 1) * pageSize, pageSize)) {
+            result.getList().add(toVO(user, defaultAllowed));
         }
         return result;
     }
@@ -102,7 +108,7 @@ public class UserAdminService {
         if (user == null) {
             throw BizException.keyed(ErrorCode.NOT_FOUND, "user.not_found", null, "用户不存在");
         }
-        return toVO(user);
+        return toVO(user, workspaceCreationPermissionService.globalDefaultAllowed());
     }
 
     /** 编辑昵称/邮箱/手机号：校验与个人中心完全一致（复用 {@link UserService#updateProfile}）。 */
@@ -134,6 +140,43 @@ public class UserAdminService {
 
     public void restore(Long targetUserId, Long operatorId) {
         userDeletionService.restore(targetUserId, operatorId);
+    }
+
+    /**
+     * 注册审核：通过转正常状态；拒绝复用逻辑删除并释放用户名/邮箱。
+     * 仅未删除且待审核记录可转换，并发操作只有先成功的一笔生效。
+     */
+    public UserAdminUserVO reviewRegistration(Long targetUserId, String decision, Long operatorId) {
+        String normalized = decision == null ? "" : decision.trim().toUpperCase(Locale.ROOT);
+        UserDO target = requireExistingUser(targetUserId);
+        if ("APPROVE".equals(normalized)) {
+            if (userDao.approvePendingReview(targetUserId) != 1) {
+                throw new BizException(ErrorCode.USER_REGISTRATION_REVIEW_ALREADY_HANDLED);
+            }
+            audit(operatorId, "USER_REGISTRATION_APPROVE", target);
+            LOGGER.info("Registration approved targetId={} operatorId={}", targetUserId, operatorId);
+        } else if ("REJECT".equals(normalized)) {
+            userDeletionService.rejectPendingRegistration(targetUserId, operatorId);
+        } else {
+            throw new BizException(ErrorCode.USER_REGISTRATION_REVIEW_DECISION_INVALID);
+        }
+        return detail(targetUserId);
+    }
+
+    /** 平台级个人空间创建授权：全局开启时拒绝，平台管理员始终可创建且不可修改。 */
+    public UserAdminUserVO updateWorkspaceCreationPermission(Long targetUserId, Boolean allowed,
+                                                            Long operatorId) {
+        // 缺字段不能被当作撤权：显式要求 allowed 布尔值。
+        if (allowed == null) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "user.workspace_creation_allowed_required", null, "allowed 不能为空");
+        }
+        boolean grant = allowed;
+        UserDO updated = workspaceCreationPermissionService.updateGrant(targetUserId, grant);
+        audit(operatorId, grant ? "USER_WORKSPACE_CREATION_GRANT" : "USER_WORKSPACE_CREATION_REVOKE", updated);
+        LOGGER.info("Workspace creation permission changed targetId={} allowed={} operatorId={}",
+                targetUserId, grant, operatorId);
+        return detail(targetUserId);
     }
 
     public List<UserAdminWorkspaceVO> listWorkspaces(Long targetUserId) {
@@ -276,7 +319,8 @@ public class UserAdminService {
         return UserPlatformAudit.resolveTenantId(workspaceMemberDao, targetUserId, operatorId);
     }
 
-    private UserAdminUserVO toVO(UserDO user) {
+    /** 列表页把全局开关一次性算出后下传，避免逐行读取开关产生 N+1 查询。 */
+    private UserAdminUserVO toVO(UserDO user, boolean defaultAllowed) {
         String status = UserAccountStates.statusOf(user);
         UserAdminUserVO vo = new UserAdminUserVO();
         vo.setId(user.getId());
@@ -290,6 +334,12 @@ public class UserAdminService {
         vo.setLastLoginAt(user.getLastLoginAt());
         vo.setEditable(UserAccountStates.NORMAL.equals(status));
         vo.setRestorable(UserAccountStates.DELETED.equals(status));
+        boolean active = UserAccountStates.NORMAL.equals(status);
+        boolean admin = Integer.valueOf(1).equals(user.getIsAdmin());
+        vo.setCanCreateWorkspace(workspaceCreationPermissionService.canCreate(user, defaultAllowed));
+        vo.setWorkspaceCreationEditable(active && !admin && !defaultAllowed);
+        vo.setWorkspaceCreationGlobalDefaultAllowed(defaultAllowed);
+        vo.setWorkspaceCreationAdminLocked(admin);
         if (UserAccountStates.DELETED.equals(status)) {
             vo.setDeletedAt(user.getDeletedAt());
             vo.setDeletedById(user.getDeletedBy());
@@ -312,6 +362,7 @@ public class UserAdminService {
             return null;
         }
         if (UserAccountStates.NORMAL.equals(normalized)
+                || UserAccountStates.PENDING_REVIEW.equals(normalized)
                 || UserAccountStates.DEACTIVATED.equals(normalized)
                 || UserAccountStates.DELETED.equals(normalized)) {
             return normalized;

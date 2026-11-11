@@ -4,8 +4,10 @@ import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.conversation.dto.ClarificationAttachmentVO;
+import com.aliyun.autowonder.conversation.dto.ClarificationConversationVO;
 import com.aliyun.autowonder.conversation.dto.ClarificationTurnRequest;
 import com.aliyun.autowonder.conversation.dto.ElicitationReplyRequest;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -77,6 +81,33 @@ class WorkitemClarificationConversationControllerTest {
         controller.replyElicitation(10011L, 77L, "req-1", request);
 
         verify(service).replyElicitation(1L, 10011L, 77L, "req-1", "accept", "{\"q0\":\"A\"}", 42L);
+    }
+
+    /** AC-1 服务端链路：/latest 必须按当前工作空间委派给 Service，并原样返回 VO。 */
+    @Test
+    void latestDelegatesToServiceWithCurrentWorkspaceAndReturnsItsConversation() {
+        ClarificationConversationVO vo = ClarificationConversationVO.builder()
+                .id(8L)
+                .agentId(77L)
+                .status("ACTIVE")
+                .build();
+        when(service.getLatestConversation(1L, 10011L)).thenReturn(vo);
+
+        Result<ClarificationConversationVO> result = controller.latest(10011L);
+
+        verify(service).getLatestConversation(1L, 10011L);
+        assertSame(vo, result.getData());
+    }
+
+    /** 无会话时返回 data=null 而不是错误：前端据此区分「无记录」与「查询失败」。 */
+    @Test
+    void latestReturnsNullDataWhenWorkitemHasNoConversation() {
+        when(service.getLatestConversation(1L, 10011L)).thenReturn(null);
+
+        Result<ClarificationConversationVO> result = controller.latest(10011L);
+
+        assertTrue(result.isSuccess());
+        assertNull(result.getData());
     }
 
     /** S15：按轮次取事件端点返回该轮全部事件，并先校验会话归属。 */

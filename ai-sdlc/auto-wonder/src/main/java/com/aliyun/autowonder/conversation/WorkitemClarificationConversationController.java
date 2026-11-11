@@ -61,6 +61,12 @@ public class WorkitemClarificationConversationController {
         return Result.ok(service.createConversation(tenantId, workitemId, request.getAgentId()));
     }
 
+    /** 工单维度最近一次澄清会话；没有时返回 data=null（前端据此区分「无记录」与「查询失败」）。 */
+    @GetMapping("/latest")
+    public Result<ClarificationConversationVO> latest(@PathVariable Long workitemId) {
+        return Result.ok(service.getLatestConversation(currentWorkspaceId(), workitemId));
+    }
+
     @GetMapping("/{conversationId}")
     public Result<ClarificationConversationVO> get(
             @PathVariable Long workitemId,

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { message } from 'antd';
+import { MemoryRouter } from 'react-router-dom';
 import { useAuthStore } from '@/shared/auth/store';
 import { i18n } from '@/shared/i18n';
 import { ApiError } from '@/shared/types/common';
@@ -63,13 +65,15 @@ const ROSTER: UserAdminUser[] = [
   }),
 ];
 
-function renderPanel() {
+function renderPanel(initialEntries: string[] = ['/']) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const utils = render(
     <QueryClientProvider client={queryClient}>
-      <UserManagementPanel />
+      <MemoryRouter initialEntries={initialEntries}>
+        <UserManagementPanel />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return { queryClient, ...utils };
@@ -99,7 +103,7 @@ describe('UserManagementPanel', () => {
     renderPanel();
 
     expect(await screen.findByText('鲍勃')).toBeInTheDocument();
-    expect(list.mock.calls[0][0]).toEqual({ keyword: '', status: 'ALL', type: 'ALL', page: 1, size: 20 });
+    expect(list.mock.calls[0][0]).toEqual({ keyword: '', status: 'ALL', type: 'ALL', permission: 'ALL', page: 1, size: 20 });
     expect(screen.getByText('全部用户 9 人')).toBeInTheDocument();
     expect(screen.getByText('筛选结果 3 条')).toBeInTheDocument();
 
@@ -126,6 +130,8 @@ describe('UserManagementPanel', () => {
     const list = vi.spyOn(userAdminApi, 'getUserAdminList').mockResolvedValue(payload(ROSTER));
     renderPanel();
     await screen.findByText('鲍勃');
+    expect(screen.getByText('全部状态')).toBeVisible();
+    expect(screen.getByText('全部用户类型')).toBeVisible();
 
     const search = screen.getByLabelText('搜索');
     await userEvent.type(search, '  car  {enter}');
@@ -140,7 +146,7 @@ describe('UserManagementPanel', () => {
     await waitFor(() => expect(list.mock.calls.at(-1)![0]).toMatchObject({ status: 'DELETED', type: 'ADMIN', page: 1 }));
 
     await userEvent.click(screen.getByRole('button', { name: /重置筛选/ }));
-    await waitFor(() => expect(list.mock.calls.at(-1)![0]).toEqual({ keyword: '', status: 'ALL', type: 'ALL', page: 1, size: 20 }));
+    await waitFor(() => expect(list.mock.calls.at(-1)![0]).toEqual({ keyword: '', status: 'ALL', type: 'ALL', permission: 'ALL', page: 1, size: 20 }));
     expect(search).toHaveValue('');
   });
 
@@ -199,6 +205,133 @@ describe('UserManagementPanel', () => {
 
     expect(await screen.findByText('鲍勃')).toBeInTheDocument();
     expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it('reviews a pending registration through the dialog and refreshes the list', async () => {
+    const pending = user({
+      id: 11,
+      username: 'pending1',
+      nickname: '待审用户',
+      status: 'PENDING_REVIEW',
+      editable: false,
+    });
+    const list = vi.spyOn(userAdminApi, 'getUserAdminList')
+      .mockResolvedValue(payload([pending]));
+    const review = vi.spyOn(userAdminApi, 'reviewUserRegistration')
+      .mockResolvedValue({ ...pending, status: 'NORMAL' });
+    const success = vi.spyOn(message, 'success');
+    stubRelatedReads();
+    renderPanel();
+
+    const row = (await screen.findByText('待审用户')).closest('tr')!;
+    expect(within(row).getByText('待审核')).toBeInTheDocument();
+    await userEvent.click(within(row).getByRole('button', { name: '审核' }));
+
+    expect(await screen.findByText(/拒绝将删除此账号/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /通\s*过/ }));
+
+    await waitFor(() => expect(review).toHaveBeenCalledWith(11, 'APPROVE'));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    expect(success).toHaveBeenCalledWith('审核已通过');
+  });
+
+  it('reports a rejection with its own message', async () => {
+    const pending = user({
+      id: 12,
+      username: 'pending2',
+      nickname: '待拒用户',
+      status: 'PENDING_REVIEW',
+      editable: false,
+    });
+    vi.spyOn(userAdminApi, 'getUserAdminList').mockResolvedValue(payload([pending]));
+    const review = vi.spyOn(userAdminApi, 'reviewUserRegistration')
+      .mockResolvedValue({ ...pending, status: 'DELETED' });
+    const success = vi.spyOn(message, 'success');
+    stubRelatedReads();
+    renderPanel();
+
+    const row = (await screen.findByText('待拒用户')).closest('tr')!;
+    await userEvent.click(within(row).getByRole('button', { name: '审核' }));
+    await userEvent.click(await screen.findByRole('button', { name: /拒\s*绝/ }));
+
+    await waitFor(() => expect(review).toHaveBeenCalledWith(12, 'REJECT'));
+    expect(success).toHaveBeenCalledWith('已拒绝，用户可重新注册');
+  });
+
+  it('locks the permission switch and explains the global override', async () => {
+    vi.spyOn(userAdminApi, 'getUserAdminList').mockResolvedValue(payload([
+      user({
+        id: 13,
+        nickname: '全局用户',
+        canCreateWorkspace: true,
+        workspaceCreationEditable: false,
+        workspaceCreationGlobalDefaultAllowed: true,
+      }),
+    ]));
+    stubRelatedReads();
+    renderPanel();
+
+    const row = (await screen.findByText('全局用户')).closest('tr')!;
+    const toggle = within(row).getByRole('switch', { name: '允许创建空间' });
+    expect(toggle).toBeDisabled();
+    expect(screen.queryByText(/默认允许用户创建空间/)).not.toBeInTheDocument();
+    await userEvent.hover(toggle.parentElement!);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/默认允许用户创建空间/);
+  });
+
+  it('applies the pending-review deep link filter and clears the old keyword', async () => {
+    const list = vi.spyOn(userAdminApi, 'getUserAdminList').mockResolvedValue(payload([]));
+    renderPanel(['/?status=PENDING_REVIEW']);
+
+    await waitFor(() => expect(list).toHaveBeenCalledWith(
+      { keyword: '', status: 'PENDING_REVIEW', type: 'ALL', permission: 'ALL', page: 1, size: 20 },
+    ));
+  });
+
+  it('opens the applicant detail from a userId deep link', async () => {
+    vi.spyOn(userAdminApi, 'getUserAdminList').mockResolvedValue(payload([user()]));
+    vi.spyOn(userAdminApi, 'listUserAdminWorkspaces').mockResolvedValue([]);
+    vi.spyOn(userAdminApi, 'listUserAdminImIdentities').mockResolvedValue([]);
+    const detail = vi.spyOn(userAdminApi, 'getUserAdminDetail').mockResolvedValue(user());
+    renderPanel(['/?tab=user-management&userId=8']);
+
+    await waitFor(() => expect(detail).toHaveBeenCalledWith(8));
+  });
+
+  it('reports a failed review and refreshes the list', async () => {
+    const pending = user({ id: 15, nickname: '待审失败', status: 'PENDING_REVIEW', editable: false });
+    vi.spyOn(userAdminApi, 'getUserAdminList').mockResolvedValue(payload([pending]));
+    vi.spyOn(userAdminApi, 'reviewUserRegistration').mockRejectedValue(new Error('审核失败'));
+    const error = vi.spyOn(message, 'error');
+    stubRelatedReads();
+    renderPanel();
+
+    const row = (await screen.findByText('待审失败')).closest('tr')!;
+    await userEvent.click(within(row).getByRole('button', { name: '审核' }));
+    await userEvent.click(await screen.findByRole('button', { name: /通\s*过/ }));
+
+    await waitFor(() => expect(error).toHaveBeenCalledWith('审核失败'));
+  });
+
+  it('drives the permission filter and explains the administrator lock', async () => {
+    const list = vi.spyOn(userAdminApi, 'getUserAdminList').mockResolvedValue(payload([
+      user({ id: 16, nickname: '管理员甲', isAdmin: true, workspaceCreationAdminLocked: true }),
+    ]));
+    stubRelatedReads();
+    renderPanel();
+
+    const row = (await screen.findByText('管理员甲')).closest('tr')!;
+    const toggle = within(row).getByRole('switch', { name: '允许创建空间' });
+    expect(screen.queryByText('平台管理员始终可以创建空间，无需单独设置。')).not.toBeInTheDocument();
+    await userEvent.hover(toggle.parentElement!);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('平台管理员始终可以创建空间，无需单独设置。');
+    await userEvent.unhover(toggle.parentElement!);
+
+    await userEvent.click(screen.getByRole('combobox', { name: '空间创建权限' }));
+    await userEvent.click(await screen.findByText('有权限'));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(
+      { keyword: '', status: 'ALL', type: 'ALL', permission: 'ALLOWED', page: 1, size: 20 },
+    ));
   });
 
   it('renders the dedicated empty copy when no user matches the filters', async () => {

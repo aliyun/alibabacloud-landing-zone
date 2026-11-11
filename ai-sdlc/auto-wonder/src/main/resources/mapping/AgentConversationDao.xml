@@ -87,7 +87,7 @@
           AND biz_ref_type = #{bizRefType}
           AND biz_ref_id = #{bizRefId}
           AND agent_id = #{agentId}
-        ORDER BY gmt_create DESC, id DESC
+        ORDER BY COALESCE(last_turn_at, gmt_create) DESC, id DESC
     </select>
 
     <select id="findLatestByBizRef" resultMap="BaseResultMap">
@@ -99,6 +99,27 @@
           AND biz_ref_id = #{bizRefId}
           AND agent_id = #{agentId}
         ORDER BY gmt_create DESC, id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findLatestByWorkitemChannel" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation
+        WHERE tenant_id = #{tenantId} AND channel = #{channel}
+          AND biz_ref_type = 'WORKITEM' AND biz_ref_id = #{workitemId}
+        ORDER BY last_turn_at DESC, id DESC LIMIT 1
+    </select>
+
+    <!-- 默认打开哪条会话按「最近活跃」判定，且不区分数字人：last_turn_at 为空的历史行
+         用 gmt_create 兜底，同值再按 id 倒序，与 listByBizRef 保持同一口径。 -->
+    <select id="findLatestByBizRefWithoutAgent" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation
+        WHERE tenant_id = #{tenantId}
+          AND channel = #{channel}
+          AND biz_ref_type = #{bizRefType}
+          AND biz_ref_id = #{bizRefId}
+        ORDER BY COALESCE(last_turn_at, gmt_create) DESC, id DESC
         LIMIT 1
     </select>
 

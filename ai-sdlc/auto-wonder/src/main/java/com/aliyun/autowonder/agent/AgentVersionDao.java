@@ -27,6 +27,9 @@ public interface AgentVersionDao {
             @Param("reviewerId") Long reviewerId, @Param("reviewComment") String reviewComment,
             @Param("identityJson") String identityJson,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
+    int updateSubmitNote(@Param("id") Long id, @Param("tenantId") Long tenantId,
+            @Param("submitNote") String submitNote,
+            @Param("version") Integer version, @Param("modifierId") Long modifierId);
     int softDeleteByAgent(@Param("agentId") Long agentId, @Param("tenantId") Long tenantId,
             @Param("modifierId") Long modifierId);
 }

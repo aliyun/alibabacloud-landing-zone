@@ -7,6 +7,7 @@ import {
   downloadClarificationAttachment,
   fetchClarificationAttachmentPreview,
   getClarificationTurnEvents,
+  getLatestClarificationConversation,
   replyClarificationElicitation,
   submitClarificationTurn,
   uploadClarificationAttachment,
@@ -189,6 +190,26 @@ describe('clarification api', () => {
     expect(apiClient.post).toHaveBeenCalledWith(
       '/api/workitems/10011/clarification-conversations/10010/turns/77/cancel',
     );
+  });
+
+  it('requests the workitem latest conversation from the dedicated endpoint', async () => {
+    const latest = { id: 8, agentId: 42 } as never;
+    vi.mocked(apiClient.get).mockResolvedValue({ data: latest } as never);
+
+    await expect(getLatestClarificationConversation(10011)).resolves.toBe(latest);
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/api/workitems/10011/clarification-conversations/latest',
+    );
+  });
+
+  /** 服务端没有会话时 data 为 null：归一成 null 让调用方走本地记忆/选人页。 */
+  it('normalises an empty latest-conversation payload to null', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: undefined } as never);
+
+    await expect(getLatestClarificationConversation(10011)).resolves.toBeNull();
+    vi.mocked(apiClient.get).mockResolvedValue({ data: null } as never);
+    await expect(getLatestClarificationConversation('10011')).resolves.toBeNull();
   });
 });
 

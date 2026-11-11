@@ -3,16 +3,16 @@ import { PageHeading } from '@/shared/ui/PageHeading';
 import { Trans, useTranslation } from 'react-i18next';
 import { i18n } from '@/shared/i18n';
 import { formatDateTime } from '@/shared/i18n/format';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Tag, Space, Select, Card, Segmented, Popconfirm, Tooltip, Input, AutoComplete, Typography } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined, StarOutlined, StarFilled, ExclamationCircleFilled, CloseOutlined, CloseCircleFilled, SearchOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDeleteWorkitem, useWorkitemList, useWorkitemKanbanColumns, useToggleWatch, useWorkitemTagOptions } from './hooks';
 import { WorkitemTagsCell } from './components/WorkitemTagsCell';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { WorkitemKanban } from './components/WorkitemKanban';
-import { EMPTY_ADVANCED_FILTER, WorkitemAdvancedFilter, type WorkitemAdvancedFilterState } from './components/WorkitemAdvancedFilter';
+import { WorkitemAdvancedFilter, type WorkitemAdvancedFilterState } from './components/WorkitemAdvancedFilter';
 import { WorkitemHealthBadge } from './components/WorkitemHealthBadge';
 import { HumanInterventionBadge } from './components/HumanInterventionBadge';
 import { ScheduledExecutionBadge } from './components/ScheduledExecutionBadge';
@@ -21,6 +21,13 @@ import { displayNameWithoutId } from './nameDisplay';
 import { readWorkitemViewPreference, writeWorkitemViewPreference, type WorkitemViewMode } from './viewPreference';
 import { toCreatedTimeQuery } from './createdTimeFilter';
 import { serializeTagConditions } from './tagConditionFilter';
+import {
+  mergeWorkitemListFilters,
+  parseWorkitemListSearchParams,
+  toWorkitemListSearchParams,
+  type WorkitemListFilterPatch,
+  type WorkitemListScope,
+} from './listUrlState';
 import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import type { Workitem } from '@/shared/types/workitem';
 import type { WorkitemStatusCategory } from './api';
@@ -31,7 +38,7 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { useKanbanTransition } from './useKanbanTransition';
 
 type ViewMode = WorkitemViewMode;
-type Scope = 'ALL' | 'PENDING' | 'CREATED' | 'ASSIGNED' | 'WATCHED' | 'COMMENTED';
+type Scope = WorkitemListScope;
 type StatusCategory = WorkitemStatusCategory;
 
 /** 看板每列首屏加载条数，点「加载更多」按此步长递增 */
@@ -198,24 +205,83 @@ export function WorkitemListPage() {
   const user = useAuthStore(state => state.user);
   const accessCommand = useAccessCommand();
   const kanbanTransition = useKanbanTransition();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // 地址栏是筛选条件的唯一数据源：分享链接与页面结果始终一致
+  const filters = useMemo(
+    () => parseWorkitemListSearchParams(searchParams, readScopePreference()),
+    [searchParams],
+  );
+  const { scope, workType, statusCategory, keyword, tag, advancedFilter } = filters;
+  const filtersRef = useRef(filters);
   const [page, setPage] = useState(1);
   const [size, setSize] = usePageSizePreference('autowonder.workitems.pageSize', [10, 20, 50, 100, 200], 10);
-  const [workType, setWorkType] = useState<string | undefined>();
-  const [statusCategory, setStatusCategory] = useState<StatusCategory | undefined>();
   const [viewMode, setViewMode] = useState<ViewMode>(readWorkitemViewPreference);
-  const [scope, setScope] = useState<Scope>(readScopePreference);
-  const [keyword, setKeyword] = useState<string | undefined>();
-  const [tag, setTag] = useState<string | undefined>();
-  const [tagInput, setTagInput] = useState('');
-  const [advancedFilter, setAdvancedFilter] = useState<WorkitemAdvancedFilterState>(EMPTY_ADVANCED_FILTER);
+  const [keywordInput, setKeywordInput] = useState(keyword ?? '');
+  const [tagInput, setTagInput] = useState(tag ?? '');
   const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
   const { data: tagOptions, isError: tagOptionsError } = useWorkitemTagOptions();
+
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
+
+  // 筛选变更在 handler 内同步写回地址，避免依赖 Router transition 的提交时序
+  const applyFilters = useCallback((patch: WorkitemListFilterPatch) => {
+    const next = mergeWorkitemListFilters(filtersRef.current, patch);
+    filtersRef.current = next;
+    setSearchParams(toWorkitemListSearchParams(next), { replace: true });
+    setPage(1);
+    setColumnSizes({});
+  }, [setSearchParams]);
+
+  // 地址真正变化（前进/后退、手工改址或自身写回）时重置分页与列宽
+  const appliedSearchRef = useRef(searchParams.toString());
+  useEffect(() => {
+    const current = searchParams.toString();
+    if (current === appliedSearchRef.current) {
+      return;
+    }
+    appliedSearchRef.current = current;
+    setPage(1);
+    setColumnSizes({});
+  }, [searchParams]);
+
+  // 只在 URL 中对应值变化时回填输入框，避免覆盖用户尚未提交的输入；
+  // 标签按去空白后比较，保留用户输入框里的原始文本（提交时才 trim）。
+  useEffect(() => {
+    const next = keyword ?? '';
+    setKeywordInput((prev) => (prev === next ? prev : next));
+  }, [keyword]);
+  useEffect(() => {
+    const next = tag ?? '';
+    setTagInput((prev) => (prev.trim() === next ? prev : next));
+  }, [tag]);
+
+  // 首屏把地址规范化为解析后的条件：补齐缺省 scope、丢弃非法值与未知参数，
+  // 保证复制出的地址与当前结果一致且可确定还原。
+  const normalizedSearchRef = useRef(false);
+  useEffect(() => {
+    if (normalizedSearchRef.current) {
+      return;
+    }
+    normalizedSearchRef.current = true;
+    const canonical = toWorkitemListSearchParams(filtersRef.current).toString();
+    if (canonical === searchParams.toString()) {
+      return;
+    }
+    setSearchParams(new URLSearchParams(canonical), { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const isKanban = viewMode === 'kanban';
   const createdQuery = useMemo(() => toCreatedTimeQuery(advancedFilter.created), [advancedFilter.created]);
   const creatorQuery = advancedFilter.creatorIds.length
     ? { creatorIds: advancedFilter.creatorIds.join(',') }
     : {};
+  const squadQuery = advancedFilter.unassignedSquad
+    ? { unassignedSquad: true }
+    : advancedFilter.squadIds.length
+      ? { squadIds: advancedFilter.squadIds.join(',') }
+      : {};
   const tagConditionsQuery = useMemo(
     () => serializeTagConditions(advancedFilter.tagConditions),
     [advancedFilter.tagConditions],
@@ -229,6 +295,7 @@ export function WorkitemListPage() {
     ...(tagConditionsQuery ? { tagConditions: tagConditionsQuery } : {}),
     ...createdQuery,
     ...creatorQuery,
+    ...squadQuery,
   };
 
   // 表格视图用全量分页查询；看板视图下只取 total 给页面标题用
@@ -252,6 +319,7 @@ export function WorkitemListPage() {
       ...(tagConditionsQuery ? { tagConditions: tagConditionsQuery } : {}),
       ...createdQuery,
       ...creatorQuery,
+      ...squadQuery,
       pendingDecisionOnly: true,
     },
     showDecisionSummary ? ['PENDING_DECISION'] : [], {}, 1, showDecisionSummary,
@@ -372,10 +440,8 @@ export function WorkitemListPage() {
 
   const handleScopeChange = (value: string | number) => {
     const next = value as Scope;
-    setScope(next);
     writeScopePreference(next);
-    setPage(1);
-    setColumnSizes({});
+    applyFilters({ scope: next });
   };
 
   const handlePageChange = (nextPage: number, nextSize: number) => {
@@ -384,15 +450,14 @@ export function WorkitemListPage() {
   };
 
   // 应用创建者条件后顶部范围的「我的」类筛选不再有意义，统一回到「全部」；
-  // handleScopeChange 负责写偏好并重置页码与列宽。
+  // 范围偏好与筛选条件在同一次写回中更新，避免连续提交读到旧地址。
   const handleAdvancedFilterApply = (next: WorkitemAdvancedFilterState) => {
-    setAdvancedFilter(next);
     if (next.creatorIds.length > 0 && scope !== 'ALL') {
-      handleScopeChange('ALL');
-    } else {
-      setPage(1);
-      setColumnSizes({});
+      writeScopePreference('ALL');
+      applyFilters({ advancedFilter: next, scope: 'ALL' });
+      return;
     }
+    applyFilters({ advancedFilter: next });
   };
 
   return (
@@ -433,24 +498,33 @@ export function WorkitemListPage() {
           value={workType}
           allowClear
           style={{ width: 120 }}
-          onChange={(v) => { setWorkType(v); setPage(1); setColumnSizes({}); }}
+          onChange={(v) => applyFilters({ workType: v })}
           options={Object.entries(workTypeMap).map(([value, meta]) => ({ value, label: meta.label }))}
         />
-        <Button size="small" aria-label={t('list.clearType')} title={t('list.clearType')} icon={<CloseOutlined aria-hidden="true" />} disabled={!workType} onClick={() => { setWorkType(undefined); setPage(1); setColumnSizes({}); }} />
+        <Button size="small" aria-label={t('list.clearType')} title={t('list.clearType')} icon={<CloseOutlined aria-hidden="true" />} disabled={!workType} onClick={() => applyFilters({ workType: undefined })} />
         <Select
           placeholder={t('list.statusFilter')}
           allowClear
           style={{ width: 120 }}
           value={statusCategory}
-          onChange={(v) => { setStatusCategory(v); setPage(1); setColumnSizes({}); }}
-          options={STATUS_FILTER_COLUMNS.map(col => ({ value: col.key as StatusCategory, label: col.title }))}
+          onChange={(v) => applyFilters({ statusCategory: v })}
+          options={STATUS_FILTER_COLUMNS.map(col => ({ value: col.key as WorkitemStatusCategory, label: col.title }))}
         />
-        <Button size="small" aria-label={t('list.clearStatus')} title={t('list.clearStatus')} icon={<CloseOutlined aria-hidden="true" />} disabled={!statusCategory} onClick={() => { setStatusCategory(undefined); setPage(1); setColumnSizes({}); }} />
+        <Button size="small" aria-label={t('list.clearStatus')} title={t('list.clearStatus')} icon={<CloseOutlined aria-hidden="true" />} disabled={!statusCategory} onClick={() => applyFilters({ statusCategory: undefined })} />
         <Input.Search
+          value={keywordInput}
+          onChange={(event) => {
+            const next = event.target.value;
+            setKeywordInput(next);
+            // 清空输入框即撤销关键词条件，与搜索按钮提交保持同一语义
+            if (!next) {
+              applyFilters({ keyword: undefined });
+            }
+          }}
           enterButton={<Button aria-label={t('list.search')} icon={<SearchOutlined aria-hidden="true" />} />}
           allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('list.clearSearch')} /> }}
           placeholder={t('list.search')}
-          onSearch={(v) => { setKeyword(v || undefined); setPage(1); setColumnSizes({}); }}
+          onSearch={(v) => { setKeywordInput(v); applyFilters({ keyword: v || undefined }); }}
           style={{ width: 220 }}
         />
         <AutoComplete
@@ -459,16 +533,12 @@ export function WorkitemListPage() {
           onChange={(value) => {
             setTagInput(value);
             if (!value) {
-              setTag(undefined);
-              setPage(1);
-              setColumnSizes({});
+              applyFilters({ tag: undefined });
             }
           }}
           onSelect={(value) => {
             setTagInput(value);
-            setTag(value);
-            setPage(1);
-            setColumnSizes({});
+            applyFilters({ tag: value });
           }}
           style={{ width: 160 }}
         >
@@ -477,11 +547,8 @@ export function WorkitemListPage() {
             allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('list.clearTag')} /> }}
             placeholder={t('list.tagFilter')}
             onSearch={(v) => {
-              const next = v?.trim() || undefined;
-              setTag(next);
               setTagInput(v ?? '');
-              setPage(1);
-              setColumnSizes({});
+              applyFilters({ tag: v?.trim() || undefined });
             }}
           />
         </AutoComplete>

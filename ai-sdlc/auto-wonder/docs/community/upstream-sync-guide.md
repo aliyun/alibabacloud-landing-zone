@@ -98,6 +98,11 @@ required for a community build and runtime.
     selected version. Use the helper's `--print-recommended-version` to install
     the correct package; see [the Agent guide](../../e2e-tests/AGENT_GUIDE.md).
 
+14. Follow [the sync quality contract](sync-quality-contract.md) for data
+    representation/capacity, historical migration data, configuration consumers,
+    switch combinations and equivalent scenario coverage. Required coverage
+    cannot be waived by a summary PASS or an external-condition checkpoint.
+
 ## Conflict Decisions
 
 Apply this order:
@@ -137,7 +142,8 @@ After the merge:
    `e2e-tests/` is identical to `$community_before_sync`; do not review or adapt
    master E2E content for inclusion in community.
 2. Filter documentation through [docs-policy.md](docs-policy.md).
-3. Verify schema, configuration, encryption, OSS/SLS, optional integrations,
+3. Apply the [quality contract](sync-quality-contract.md), then verify schema,
+   configuration, encryption, OSS/SLS, optional integrations,
    frontend contracts, and tests.
    For every DDL change, compare the previous and target schemas and verify a new
    correctly ordered `docs/migration/V<n>__<description>.sql` exists. Treat a
@@ -154,7 +160,8 @@ After the merge:
    collection; record an explicit "no deployment update required" conclusion
    when the review finds no impact.
    Build a configuration-key checklist from every changed `application*.yml`,
-   `@ConfigurationProperties` class, XML configuration, environment template,
+   `@ConfigurationProperties` class, `@Value`, `Environment.getProperty`,
+   `System.getenv`, configuration wrappers/dynamic keys, XML configuration, environment template,
    systemd unit, and infrastructure template. For each added, removed, renamed,
    or default-changed key:
    - verify the Community runtime preserves the upstream capability, including

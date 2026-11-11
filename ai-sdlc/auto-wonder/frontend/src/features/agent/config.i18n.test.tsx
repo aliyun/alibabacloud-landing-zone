@@ -95,9 +95,9 @@ describe('routed agent configuration languages', () => {
     expect(soul).toHaveValue('<strong>业务原文</strong> 草稿');
     expect(container.querySelectorAll('.ant-form-item-explain-error')).toHaveLength(0);
     await user.click(screen.getByRole('combobox', { name: 'Evolution mode' }));
-    expect(await screen.findByText('Assisted review (recommended)', { selector: '.ant-select-item-option-content span' })).toBeInTheDocument();
+    expect(await screen.findByText('Automatic memory (recommended)', { selector: '.ant-select-item-option-content span' })).toBeInTheDocument();
     await act(async () => { await i18n.changeLanguage('zh-CN'); });
-    expect(await screen.findByText('辅助审核（推荐）', { selector: '.ant-select-item-option-content span' })).toBeInTheDocument();
+    expect(await screen.findByText('自动记忆（推荐）', { selector: '.ant-select-item-option-content span' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     await user.clear(nameInput);
     await user.click(screen.getByRole('button', { name: /保存草稿/ }));
@@ -129,7 +129,7 @@ describe('routed agent configuration languages', () => {
     expect(screen.getByText('用户技能')).toBeInTheDocument();
     expect(screen.getByText('constructor', { selector: '.ant-tag' })).toBeInTheDocument();
     expect(screen.getByText('toString', { selector: '.ant-tag' })).toBeInTheDocument();
-    await user.click(screen.getByLabelText('SDLC template'));
+    await user.click(screen.getAllByLabelText('SDLC workflow')[0]);
     expect(await screen.findByText('用户模版 (Enabled)')).toBeInTheDocument();
   });
 

@@ -3,24 +3,103 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { i18n } from '@/shared/i18n';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { LoginPage } from './LoginPage';
 import { useAuthStore } from '@/shared/auth/store';
+import { AUTH_RETURN_PATH_KEY } from '@/shared/auth/returnPath';
 
-function renderLogin() {
+function LocationProbe() {
+  const location = useLocation();
+  return <span data-testid="login-target">{location.pathname}{location.search}</span>;
+}
+
+function renderLogin(initialEntry: string | { pathname: string; state?: unknown } = '/login') {
   return render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter>
-      <LoginPage />
-    </MemoryRouter></QueryClientProvider>,
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <LoginPage />
+        <LocationProbe />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
+}
+
+function loginSuccess(accessToken: string) {
+  return http.post('/api/auth/login', () => HttpResponse.json({
+    success: true,
+    code: '0',
+    message: '',
+    data: {
+      userId: 1,
+      accessToken,
+      refreshToken: `${accessToken}-refresh`,
+      user: { id: 1, username: 'alice', nickname: '爱丽丝', email: 'alice@example.com' },
+    },
+    traceId: null,
+  }));
+}
+
+async function submitLogin() {
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText(/用户名/), 'alice');
+  await user.type(screen.getByLabelText(/密码/, { selector: 'input' }), 'pass123');
+  await user.click(screen.getByRole('button', { name: /登\s*录/ }));
 }
 
 describe('LoginPage', () => {
   afterEach(async () => { vi.restoreAllMocks(); await act(async () => { await i18n.changeLanguage('zh-CN'); }); });
   beforeEach(() => {
     useAuthStore.getState().clear();
+    window.sessionStorage.clear();
+  });
+
+  it('opens the pending review dialog with administrator contacts without signing in', async () => {
+    server.use(http.post('/api/auth/login', () => HttpResponse.json({
+      success: false,
+      code: '37012',
+      message: '新用户注册请联系管理员审核后登录',
+      data: {
+        administratorContacts: [{ nickname: '周宁', email: 'zhou@example.com' }],
+      },
+      traceId: null,
+    })));
+
+    renderLogin();
+    await submitLogin();
+
+    expect(await screen.findByText('待审核')).toBeInTheDocument();
+    expect(screen.getByText('zhou@example.com')).toBeInTheDocument();
+    expect(useAuthStore.getState().accessToken).toBeNull();
+    expect(screen.getByTestId('login-target')).toHaveTextContent('/login');
+  });
+
+  it('returns to the guarded in-site page after a successful login', async () => {
+    server.use(loginSuccess('acc-return'));
+
+    renderLogin({
+      pathname: '/login',
+      state: { from: { pathname: '/workitems/53006', search: '?tab=discussion', hash: '' } },
+    });
+    await submitLogin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('login-target')).toHaveTextContent('/workitems/53006?tab=discussion');
+    });
+  });
+
+  it('rejects a cross-site return path and lands on the workspace select page', async () => {
+    window.sessionStorage.setItem(AUTH_RETURN_PATH_KEY, '//evil.example.com/steal');
+    server.use(loginSuccess('acc-safe'));
+
+    renderLogin();
+    await submitLogin();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('login-target')).toHaveTextContent('/workspaces');
+    });
+    expect(window.sessionStorage.getItem(AUTH_RETURN_PATH_KEY)).toBeNull();
   });
 
   it('renders login form', () => {

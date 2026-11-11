@@ -375,7 +375,7 @@ public class ClarificationAttachmentService {
             throw new KeyedIllegalArgumentException("conversation.not_found", null,
                     "conversation not found");
         }
-        if (!WorkitemClarificationConversationService.CHANNEL.equals(conv.getChannel())
+        if ((!WorkitemClarificationConversationService.CHANNEL.equals(conv.getChannel()) && !"WORKITEM_PRD".equals(conv.getChannel()))
                 || !WorkitemClarificationConversationService.BIZ_REF_TYPE.equals(conv.getBizRefType())
                 || !workitemId.equals(conv.getBizRefId())) {
             throw new KeyedIllegalArgumentException("conversation.workitem_mismatch", null,

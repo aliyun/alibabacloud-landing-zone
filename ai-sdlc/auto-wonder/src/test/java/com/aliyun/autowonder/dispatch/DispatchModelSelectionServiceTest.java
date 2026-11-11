@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.dispatch;
 
 import com.aliyun.autowonder.executor.*;
+import com.aliyun.autowonder.executor.dto.SelectOptionVO;
 import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -34,6 +35,34 @@ class DispatchModelSelectionServiceTest {
         assertNull(DispatchModelSelectionService.decide(new ExecutorLaunchConfigService.LaunchConfig(), 8, 7, false).getModel());
         assertEquals("default", config().model);
     }
+    @Test void modelAvailabilityUsesTheDispatchWorkspaceAndFrozenDecisionsAreNotRecomputed() {
+        var dao = mock(DispatchModelSelectionDao.class); var dispatches = mock(DispatchDao.class);
+        var executors = mock(ExecutorDao.class); var options = mock(ExecutorLaunchOptionsService.class);
+        var saved = new AtomicReference<String>();
+        when(dao.find(10, 5)).thenAnswer(i -> saved.get());
+        when(dao.insert(eq(10L),eq(5L),anyString())).thenAnswer(i -> { saved.set(i.getArgument(2)); return 1; });
+        var executor = new ExecutorDO(); executor.setTenantId(10L); executor.setClientKind("QODER_CLI"); executor.setConfigVersion(1);
+        executor.setLaunchConfig("{\"model\":\"default\",\"modelUpgradePolicy\":{\"enabled\":true,\"levels\":[{\"entryCount\":2,\"model\":\"better\"}]}}");
+        when(executors.findById(30L)).thenReturn(executor);
+        var current = row(5,100,"handoff:4");
+        when(dispatches.listByWorkitem(10L,20L)).thenReturn(List.of(row(1,100,"assignment:root"),current));
+        // The dispatch's own workspace only offers the default model.
+        when(options.models(10L,"qoder")).thenReturn(List.of(SelectOptionVO.of("default","Default")));
+        var service = new DispatchModelSelectionService(dao,dispatches,executors,options);
+
+        var frozen = service.freeze(current);
+
+        assertEquals("default", frozen.getDefaultModel());
+        assertNull(frozen.getModel(), "an upgrade target the dispatch workspace does not offer must not be frozen");
+        assertEquals("MODEL_UNAVAILABLE", frozen.getReasonCode());
+        verify(options, times(1)).models(10L,"qoder");
+        // The stored decision is reused verbatim; a later catalog change never rewrites a frozen dispatch.
+        when(options.models(10L,"qoder")).thenReturn(List.of(SelectOptionVO.of("better","Better")));
+        assertEquals("MODEL_UNAVAILABLE", service.freeze(current).getReasonCode());
+        assertNull(service.freeze(current).getModel());
+        verify(options, times(1)).models(anyLong(),anyString());
+    }
+
     @Test void duplicateSendsReuseDecisionDespitePolicyChange() {
         var dao = mock(DispatchModelSelectionDao.class); var dispatches = mock(DispatchDao.class);
         var executors = mock(ExecutorDao.class); var options = mock(ExecutorLaunchOptionsService.class);

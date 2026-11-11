@@ -42,6 +42,9 @@ function makeConnection(overrides: Partial<FederationConnection> = {}): Federati
     subjectClaim: null,
     nameClaim: null,
     emailClaim: null,
+    feishuUserIdClaim: null,
+    autoProvision: false,
+    defaultLogin: false,
     allowedTenants: null,
     sortOrder: 0,
     ...overrides,
@@ -549,5 +552,80 @@ describe('SsoConfigPanel', () => {
     await waitFor(() => expect(message.error).toHaveBeenCalledWith('连接名称已存在'));
     expect(message.success).not.toHaveBeenCalled();
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('closes self-registration and reads the saved value back', async () => {
+    let registrationEnabled = true;
+    let savedBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/platform/federation/idps', () => HttpResponse.json(ok([makeIdp()]))),
+      http.get('/api/platform/federation/connections', () => HttpResponse.json(ok([]))),
+      http.get('/api/platform/federation/auth-config', () =>
+        HttpResponse.json(ok({ registrationEnabled, defaultProviderId: null }))),
+      http.put('/api/platform/federation/auth-config', async ({ request }) => {
+        savedBody = await request.json() as Record<string, unknown>;
+        registrationEnabled = false;
+        return HttpResponse.json(ok({ registrationEnabled, defaultProviderId: null }));
+      }),
+    );
+
+    renderPanel();
+    const toggle = await screen.findByRole('switch', { name: '允许用户自行注册' });
+    expect(toggle).toBeChecked();
+
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(savedBody).toEqual({ registrationEnabled: false }));
+    await waitFor(() => expect(message.success).toHaveBeenCalledWith('注册设置已保存'));
+    await waitFor(() => expect(screen.getByRole('switch', { name: '允许用户自行注册' })).not.toBeChecked());
+  });
+
+  it('sets a connection as the only default sign-in entry from the table', async () => {
+    let savedBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/platform/federation/idps', () => HttpResponse.json(ok([makeIdp()]))),
+      http.get('/api/platform/federation/connections', () => HttpResponse.json(ok([makeConnection()]))),
+      http.put('/api/platform/federation/connections/11', async ({ request }) => {
+        savedBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(ok(makeConnection({ defaultLogin: true })));
+      }),
+    );
+
+    renderPanel();
+    await userEvent.click(
+      await screen.findByRole('switch', { name: '切换 员工 SSO 的默认登录状态' }),
+    );
+
+    await waitFor(() => expect(savedBody).toEqual({ defaultLogin: true }));
+    await waitFor(() => expect(message.success).toHaveBeenCalledWith('已设为唯一默认登录入口'));
+  });
+
+  it('saves auto provisioning and the Feishu claim and warns when the channel is not Feishu', async () => {
+    let savedBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/platform/federation/idps', () => HttpResponse.json(ok([makeIdp()]))),
+      http.get('/api/platform/federation/connections', () => HttpResponse.json(ok([makeConnection()]))),
+      http.put('/api/platform/federation/connections/11', async ({ request }) => {
+        savedBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(ok(makeConnection({ autoProvision: true, feishuUserIdClaim: 'feishu_user_id' })));
+      }),
+    );
+
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: /配\s*置/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/当前消息通道为钉钉/)).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole('switch', { name: '首次登录自动创建账号' }));
+    await userEvent.type(within(dialog).getByLabelText('飞书用户 ID 声明'), 'feishu_user_id');
+    await userEvent.click(within(dialog).getByRole('button', { name: '保存连接' }));
+
+    await waitFor(() => expect(savedBody).not.toBeNull());
+    expect(savedBody).toMatchObject({
+      autoProvision: 1,
+      feishuUserIdClaim: 'feishu_user_id',
+      defaultLogin: false,
+    });
+    await waitFor(() => expect(message.success).toHaveBeenCalledWith('登录连接已更新'));
   });
 });

@@ -61,6 +61,9 @@ export default function PipelineHealthPanel() {
       <div>{t('pipeline.avgTooltipSource')}</div>
     </div>
   ) : null;
+  const reworkCaliberKey = range === 'today'
+    ? 'pipeline.reworkTooltipCaliber'
+    : 'pipeline.reworkTooltipCaliberRange';
   const reworkTooltip = data ? (
     <div className="insight-pl-tip">
       <div>{t('pipeline.reworkTooltipRetry', { retries: data.rework.retryCount })}</div>
@@ -71,6 +74,7 @@ export default function PipelineHealthPanel() {
           range: rangeLabel,
         })}
       </div>
+      <div>{t(reworkCaliberKey)}</div>
     </div>
   ) : null;
 

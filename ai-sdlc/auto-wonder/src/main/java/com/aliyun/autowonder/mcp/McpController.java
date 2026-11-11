@@ -2,6 +2,7 @@ package com.aliyun.autowonder.mcp;
 
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
@@ -65,8 +66,13 @@ public class McpController {
             tokenService.authenticate(authorization, resolveToken(pathToken, queryToken));
         } catch (BizException e) {
             // Force JSON before opening the stream, even for clients accepting only SSE.
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
-            response.setHeader("WWW-Authenticate", "Bearer");
+            // 只有凭据被拒绝才是 401；鉴权依赖故障不能诱导客户端重新登录。
+            boolean rejectedCredential = ErrorCode.UNAUTHORIZED.getCode().equals(e.getCode());
+            response.setStatus(rejectedCredential
+                    ? HttpStatus.UNAUTHORIZED.value() : HttpStatus.INTERNAL_SERVER_ERROR.value());
+            if (rejectedCredential) {
+                response.setHeader("WWW-Authenticate", "Bearer");
+            }
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.setCharacterEncoding("UTF-8");
             response.getWriter().write(JSON.toJSONString(Result.fail(e)));
@@ -133,7 +139,9 @@ public class McpController {
         } catch (MemoryStoreApplicationService.MemoryMaintenanceLeaseConflictException e) {
             return McpRpcResponse.error(id, -32009, "MEMORY_MAINTENANCE_LOCKED: retry later");
         } catch (BizException e) {
-            return McpRpcResponse.error(id, -32000,
+            // -32000 表示可呈现的业务失败；SYSTEM_ERROR 是服务端内部/依赖故障，按 JSON-RPC 语义报 -32603。
+            int code = ErrorCode.SYSTEM_ERROR.getCode().equals(e.getCode()) ? -32603 : -32000;
+            return McpRpcResponse.error(id, code,
                     SystemMessages.render(e.getMessageKey(), e.getMessageArgs(), e.getMessage()));
         } catch (Exception e) {
             return McpRpcResponse.error(id, -32603, e.getMessage());

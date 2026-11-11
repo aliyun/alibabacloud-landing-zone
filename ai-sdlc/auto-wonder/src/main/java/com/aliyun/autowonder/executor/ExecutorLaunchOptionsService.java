@@ -165,13 +165,14 @@ public class ExecutorLaunchOptionsService {
     }
 
     /**
-     * Every value the launch-command form offers for one client kind, with the page's defaults.
+     * Every value the launch-command form offers for one client kind, with the page's defaults. The live catalog is
+     * read for {@code tenantId} only, so a workspace never sees another workspace's quota-limited model list.
      */
-    public ExecutorLaunchOptionsVO launchOptions(String clientKind) {
+    public ExecutorLaunchOptionsVO launchOptions(long tenantId, String clientKind) {
         String canonical = requireCreatableClientKind(clientKind);
         // requireCreatableClientKind already limits the provider to the Qoder family, so a catalog always applies.
         String provider = resolveProvider(canonical);
-        ProviderModelCatalogVO catalog = liveCatalog(provider);
+        ProviderModelCatalogVO catalog = liveCatalog(tenantId, provider);
         List<SelectOptionVO> models = catalog == null ? fallbackModels() : toOptions(catalog.getModels());
         ExecutorLaunchOptionsVO vo = new ExecutorLaunchOptionsVO();
         vo.setClientKind(canonical);
@@ -193,32 +194,33 @@ public class ExecutorLaunchOptionsService {
     }
 
     /**
-     * The catalog Redis refreshes automatically for one provider, or null while no usable snapshot exists, so a
-     * caller can report "no live ids yet" instead of passing the built-in fallback list off as the current one.
+     * The catalog Redis refreshes automatically for one workspace and provider, or null while that workspace has no
+     * usable snapshot, so a caller can report "no live ids yet" instead of passing the built-in fallback list off as
+     * the current one.
      */
-    public ProviderModelCatalogVO liveCatalog(String provider) {
+    public ProviderModelCatalogVO liveCatalog(long tenantId, String provider) {
         if (!isQoderFamily(provider)) {
             return null;
         }
-        ProviderModelCatalogVO catalog = readCatalogQuietly(provider);
+        ProviderModelCatalogVO catalog = readCatalogQuietly(tenantId, provider);
         return catalog == null || toOptions(catalog.getModels()).isEmpty() ? null : catalog;
     }
 
     /**
-     * The ids Redis currently holds for one provider, in catalog order. Empty while no usable snapshot exists, so a
-     * caller can tell "no live ids yet" apart from the built-in fallback list.
+     * The ids the workspace's catalog currently holds for one provider, in catalog order. Empty while no usable
+     * snapshot exists, so a caller can tell "no live ids yet" apart from the built-in fallback list.
      */
-    public List<String> liveModelIds(String provider) {
-        ProviderModelCatalogVO catalog = liveCatalog(provider);
+    public List<String> liveModelIds(long tenantId, String provider) {
+        ProviderModelCatalogVO catalog = liveCatalog(tenantId, provider);
         return catalog == null ? List.of() : values(toOptions(catalog.getModels()));
     }
 
-    /** Live provider catalog when one exists, otherwise the fallback list the page also uses. */
-    public List<SelectOptionVO> models(String provider) {
+    /** The workspace's live provider catalog when one exists, otherwise the fallback list the page also uses. */
+    public List<SelectOptionVO> models(long tenantId, String provider) {
         if (!isQoderFamily(provider)) {
             return List.of();
         }
-        ProviderModelCatalogVO catalog = readCatalogQuietly(provider);
+        ProviderModelCatalogVO catalog = readCatalogQuietly(tenantId, provider);
         List<SelectOptionVO> models = catalog == null ? List.of() : toOptions(catalog.getModels());
         return models.isEmpty() ? fallbackModels() : models;
     }
@@ -289,15 +291,15 @@ public class ExecutorLaunchOptionsService {
         return modelValues.isEmpty() ? preferred : modelValues.get(0);
     }
 
-    private ProviderModelCatalogVO readCatalogQuietly(String provider) {
+    private ProviderModelCatalogVO readCatalogQuietly(long tenantId, String provider) {
         if (modelCatalogService == null) {
             return null;
         }
         try {
-            return modelCatalogService.read(provider);
+            return modelCatalogService.read(tenantId, provider);
         } catch (RuntimeException exception) {
-            log.warn("provider model catalog unavailable provider={}, falling back to static models", provider,
-                    exception);
+            log.warn("provider model catalog unavailable tenantId={} provider={}, falling back to static models",
+                    tenantId, provider, exception);
             return null;
         }
     }

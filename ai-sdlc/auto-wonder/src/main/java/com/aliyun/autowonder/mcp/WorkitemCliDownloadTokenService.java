@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.mcp;
 
+import com.aliyun.autowonder.common.RuntimeNpmPackage;
+
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
@@ -162,7 +164,7 @@ public class WorkitemCliDownloadTokenService {
 
     /** One-line command template used in MCP tool descriptions; carries no token. */
     public String commandTemplate() {
-        return "npx -y autowonder@" + brandingService.recommendedRuntimeVersion()
+        return "npx -y " + RuntimeNpmPackage.spec(brandingService.recommendedRuntimeVersion())
                 + " workitem download --server-url " + brandingService.effectivePublicBaseUrl()
                 + " --workitem-id <workitem-id>"
                 + " --file <name-or-id> --output-dir <dir> --json";
@@ -174,7 +176,7 @@ public class WorkitemCliDownloadTokenService {
 
     private String posixCommand(String token, long workitemId) {
         return "export " + TOKEN_ENV_NAME + "=" + posixQuote(token) + "\n\n"
-                + "npx -y autowonder@" + brandingService.recommendedRuntimeVersion() + " workitem download \\\n"
+                + "npx -y " + RuntimeNpmPackage.spec(brandingService.recommendedRuntimeVersion()) + " workitem download \\\n"
                 + "  --server-url " + posixQuote(brandingService.effectivePublicBaseUrl()) + " \\\n"
                 + "  --workitem-id " + workitemId + " \\\n"
                 + "  --file <name-or-id> \\\n"
@@ -184,7 +186,7 @@ public class WorkitemCliDownloadTokenService {
 
     private String powershellCommand(String token, long workitemId) {
         return "$env:" + TOKEN_ENV_NAME + "=" + powershellQuote(token) + "\n\n"
-                + "npx -y autowonder@" + brandingService.recommendedRuntimeVersion() + " workitem download `\n"
+                + "npx -y " + RuntimeNpmPackage.spec(brandingService.recommendedRuntimeVersion()) + " workitem download `\n"
                 + "  --server-url " + powershellQuote(brandingService.effectivePublicBaseUrl()) + " `\n"
                 + "  --workitem-id " + workitemId + " `\n"
                 + "  --file <name-or-id> `\n"

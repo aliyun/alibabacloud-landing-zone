@@ -29,6 +29,10 @@ interface InitBlob {
   conversations?: Record<string, Array<Record<string, unknown>>>;
   holdDetails?: number[];
   failListAgents?: number[];
+  /** 服务端「最近一次会话」（工单 57463）：缺省/null=该工单没有会话；'fail'=查询失败；对象=命中。 */
+  latest?: { id: number; agentId: number } | null | 'fail';
+  /** 挂起 /latest 响应，等 releaseLatest() 放行：用于断言加载态与迟到结果。 */
+  holdLatest?: boolean;
 }
 
 const WORKITEM = '200';
@@ -108,6 +112,9 @@ const holdResolvers: Record<number, (() => void) | null> = {};
 let failListAgents = new Set<number>(INIT.failListAgents ?? []);
 let failMemberSquads = new Set<number>();
 let createdConvSeq = 0;
+let latestCalls = 0;
+let latestReleased = !INIT.holdLatest;
+let latestResolver: (() => void) | null = null;
 
 const listCalls: number[] = [];
 const createCalls: Array<{ agentId: number }> = [];
@@ -140,6 +147,29 @@ function listSnapshot(conv: Record<string, unknown>): Record<string, unknown> {
   return { ...conv, pendingElicitations: [...((conv.pendingElicitations as unknown[]) ?? [])] };
 }
 
+/** 服务端「最近活跃」排序口径：last_turn_at 优先，空值用 gmt_create 兜底，同值按 id 倒序。 */
+function lastActiveAt(conv: Record<string, unknown>): string {
+  const raw = conv.lastTurnAt ?? conv.gmtCreate;
+  return raw == null ? '' : String(raw);
+}
+
+function sortedList(agentId: number): Array<Record<string, unknown>> {
+  return (conversationsByAgent[agentId] ?? [])
+    .map(listSnapshot)
+    .sort((a, b) => {
+      const byTime = lastActiveAt(b).localeCompare(lastActiveAt(a));
+      return byTime !== 0 ? byTime : Number(b.id) - Number(a.id);
+    });
+}
+
+/** 「工单最近一次会话」：缺省/null 表示该工单没有任何会话。 */
+function latestSnapshot(): Record<string, unknown> | null {
+  const spec = INIT.latest;
+  if (!spec || spec === 'fail') return null;
+  const existing = findConv(spec.id);
+  return listSnapshot(existing ?? convPayload(spec.id, spec.agentId));
+}
+
 // 与 client.ts 响应拦截器契约一致：adapter 返回 {success,code,...} 信封，拦截器解包出 data。
 apiClient.defaults.adapter = async (config) => {
   const url = (config.url || '').split('?')[0];
@@ -164,13 +194,24 @@ apiClient.defaults.adapter = async (config) => {
     if (failMemberSquads.has(squadId)) return fail();
     return ok(MEMBERS[squadId] ?? []);
   }
+  if (url === `/api/workitems/${WORKITEM}/clarification-conversations/latest` && method === 'get') {
+    latestCalls += 1;
+    if (INIT.latest === 'fail') return fail();
+    const respond = () => ok(latestSnapshot());
+    if (!latestReleased) {
+      return new Promise((resolve) => {
+        latestResolver = () => resolve(respond());
+      });
+    }
+    return respond();
+  }
   if (url === `/api/workitems/${WORKITEM}/clarification-conversations`) {
     if (method === 'get') {
       const agentId = Number((config.params as Record<string, unknown> | undefined)?.agentId);
       listCalls.push(agentId);
       listAttempts[agentId] = (listAttempts[agentId] ?? 0) + 1;
       if (failListAgents.has(agentId)) return fail();
-      return ok((conversationsByAgent[agentId] ?? []).map(listSnapshot));
+      return ok(sortedList(agentId));
     }
     if (method === 'post') {
       const body = JSON.parse(String(config.data)) as { agentId: number };
@@ -242,6 +283,7 @@ function SquadPanelHarness() {
       confirmedCount,
       contextChanges: [...contextChanges],
       prefill: readClarificationPrefill(WORKITEM),
+      latestCalls,
     }),
     failListFor: (agentIds: number[] | null) => { failListAgents = new Set(agentIds ?? []); },
     failMembersFor: (squadIds: number[] | null) => { failMemberSquads = new Set(squadIds ?? []); },
@@ -255,6 +297,12 @@ function SquadPanelHarness() {
         holdResolvers[id] = null;
         release();
       }
+    },
+    releaseLatest: () => {
+      latestReleased = true;
+      const release = latestResolver;
+      latestResolver = null;
+      release?.();
     },
   };
   return (
@@ -304,11 +352,13 @@ declare global {
         confirmedCount: number;
         contextChanges: Array<Record<string, unknown>>;
         prefill: { squadId: number; agentId: number; updatedAt: number } | null;
+        latestCalls: number;
       };
       failListFor: (agentIds: number[] | null) => void;
       failMembersFor: (squadIds: number[] | null) => void;
       setDetail: (id: number, patch: Record<string, unknown>) => void;
       releaseDetail: (id: number) => void;
+      releaseLatest: () => void;
     };
   }
 }

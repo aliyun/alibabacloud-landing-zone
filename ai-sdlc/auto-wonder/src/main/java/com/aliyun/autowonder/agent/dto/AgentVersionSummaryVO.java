@@ -12,5 +12,6 @@ public class AgentVersionSummaryVO {
     private String status;
     private String roleName;
     private String roleCode;
+    private String submitNote;
     private Date gmtCreate;
 }

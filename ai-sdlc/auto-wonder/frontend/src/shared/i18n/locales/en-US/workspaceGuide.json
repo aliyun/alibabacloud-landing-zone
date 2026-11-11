@@ -1,0 +1,94 @@
+{
+  "flowTitle": "New Workspace Setup Guide",
+  "previous": "Previous",
+  "next": "Next",
+  "sentReview": "The initialization message has been sent. Review the conversation, then continue to the next step.",
+  "entry": "Open Chief",
+  "entryChooseWorkspace": "Enter a workspace before using Chief.",
+  "entrySetupRequired": "Open the workspace to finish setting up Chief and start its executor.",
+  "entryCheckFailed": "Couldn't check Chief's status. Please try again.",
+  "entryHint": "Chief entry in the header",
+  "phaseProgress": "Phase {{stage}}/4 · Setup step {{substep}}/6",
+  "stageProgress": "Phase {{stage}}/4",
+  "stage": {
+    "configure": {
+      "title": "Configure Chief",
+      "description": "Finish Chief setup and bring the executor online before continuing."
+    },
+    "open": {
+      "title": "Open Chief",
+      "description": "Click the robot entry in the header. Chief opens in expanded mode automatically."
+    },
+    "send": {
+      "title": "Send the initialization request",
+      "description": "The prompt is filled in. Review it and click Send yourself; nothing is sent automatically."
+    },
+    "handoff": {
+      "title": "Continue with Chief",
+      "description": "Continue the workspace initialization with Chief; it will guide the remaining configuration."
+    }
+  },
+  "substep": {
+    "client": "Choose the execution client",
+    "completeSetup": "Complete Chief setup",
+    "hostOs": "Choose the OS of the computer or server running the executor",
+    "generate": "Generate the launch command",
+    "copy": "Copy the command and start it",
+    "waitOnline": "Wait for the Chief executor to come online"
+  },
+  "start": "Set up Chief",
+  "confirm": "OK",
+  "next": "Next",
+  "skip": "Skip",
+  "never": "Do not show again",
+  "retry": "Retry",
+  "manualCopied": "Copied manually",
+  "dialog": {
+    "title": "Disable future workspace guides?",
+    "body": "This guide will no longer appear for this or any future workspace you create. You can still initialize a workspace through the Chief entry at the top of the platform.",
+    "cancel": "Cancel",
+    "confirm": "Confirm and close"
+  },
+  "setup": {
+    "clientLabel": "Execution client",
+    "clientQoder": "Qoder",
+    "clientQoderCn": "Qoder CN",
+    "confirmClient": "Confirm selection",
+    "completeAction": "Complete setup",
+    "osLabel": "Executor host OS",
+    "posix": "macOS / Linux",
+    "windows": "Windows",
+    "confirmOs": "Confirm selection",
+    "generateAction": "Generate command",
+    "copyAction": "Copy command",
+    "copyIcon": "Copy full command",
+    "readyTag": "Online and ready",
+    "existingClient": "An executor already exists; the current client is reused.",
+    "existingStep": "Already available and skipped",
+    "chooseOs": "Choose the OS of the computer or server running the executor",
+    "copyFailed": "Copy failed. Select the text above and copy it manually.",
+    "copiedHint": "Open a terminal on the computer or server running your executor, paste and run the command, and keep it running. Continue once Chief is online and ready.",
+    "waiting": "Waiting for the Chief executor to come online.",
+    "checkStatus": "Check manually",
+    "autoChecking": "Checking in the background",
+    "autoCheckPaused": "Automatic checks paused",
+    "autoCheckHint": "The guide will advance automatically once the executor is online.",
+    "waitExpired": "The executor has not reported ready yet. Retry, check the command in the terminal, or skip for now.",
+    "actionFailed": "The action did not succeed. Retry; you stay on this step."
+  },
+  "prompt": {
+    "initial": "Please initialize the current workspace and guide me through the configuration required for software delivery."
+  },
+  "draftBlocked": "An existing draft was left untouched. Send or clear it, then retry.",
+  "capabilityMissing": "Workspace initialization is not available yet, so it cannot be handed off. Retry later.",
+  "sendFailed": "Sending failed. Your draft is kept; retry when ready.",
+  "reserveFailed": "Could not prepare the initialization conversation. Retry.",
+  "advanceFailed": "Could not save the guide progress. Refresh and try again.",
+  "conflict": "The guide progress changed and the latest state is shown.",
+  "skipFailed": "Could not save the skip preference. Retry.",
+  "disableFailed": "Saving the preference failed. Retry; the guide stays open.",
+  "prefReadFailed": "Could not read the workspace guide preference, so the guide is hidden.",
+  "loadFailed": "Could not load the workspace guide.",
+  "expandHint": "Chief opened in expanded mode",
+  "progressSaved": "Progress saved"
+}

@@ -13,6 +13,8 @@ import com.aliyun.autowonder.dispatch.DispatchCheckpointService;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.DispatchTransport;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
+import com.aliyun.autowonder.sdlc.SdlcDao;
 import com.aliyun.autowonder.dispatch.ExecutorSelector;
 import com.aliyun.autowonder.dispatch.PackageContextAssembler;
 import com.aliyun.autowonder.dispatch.subject.ExecutionSubjectRegistry;
@@ -745,7 +747,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
             });
             ScheduledTaskRunDO run = created.get();
             assertNotNull(run);
-            assertEquals(1, transport.count);
+            transport.awaitCount(1);
             DispatchDO dispatch = dispatchDao.listBySource(1L, "SCHEDULED_TASK_RUN", run.getId()).get(0);
             InboundFrameRouter inbound = new InboundFrameRouter(dispatchService,
                     new ArtifactService(artifactDao, new InMemoryObjectStorage()), null, null, null, null, null,
@@ -905,6 +907,44 @@ class ScheduledTaskSpringMybatisIntegrationTest {
     }
 
     @Test
+    void offlineInitialAgentFailsTheRunWithoutFallbackOrDispatch() throws Exception {
+        resetActiveDueTask();
+        seedExecutableAgent();
+        try (Connection connection = fixture.open("scheduled_spring"); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("DELETE FROM squad_member WHERE tenant_id=1 AND squad_id=30 AND agent_id=41");
+            statement.executeUpdate("DELETE FROM agent_version WHERE id=42");
+            statement.executeUpdate("DELETE FROM agent WHERE id=41");
+            statement.executeUpdate("INSERT INTO agent_version(id, tenant_id, agent_id, version_no, status, role_name, role_code, is_deleted, version) VALUES (42, 1, 41, 1, 'APPROVED', 'reviewer', 'review', 0, 0)");
+            statement.executeUpdate("INSERT INTO agent(id, tenant_id, name, status, online_version_id, is_deleted, version) VALUES (41, 1, 'reviewer', 'ONLINE', 42, 0, 0)");
+            statement.executeUpdate("INSERT INTO squad_member(tenant_id, squad_id, agent_id) VALUES (1, 30, 41)");
+            statement.executeUpdate("UPDATE agent SET status='OFFLINE', online_version_id=NULL WHERE id=40");
+        }
+        triggerService.setExecutionAvailabilityService(new ExecutionAvailabilityService(
+                agentDao, sqlSession.getMapper(SdlcDao.class)));
+        try {
+            ScheduledTaskRunDO first = triggerService.fireManual(taskDao.findById(1L, 100L), "offline-initial-1");
+            assertEquals("FAILED", first.getStatus());
+            assertTrue(first.getError().startsWith("41001"), first.getError());
+            assertEquals(Long.valueOf(40L), first.getInitialAgentId());
+            assertEquals(0, dispatchDao.listBySource(1L, "SCHEDULED_TASK_RUN", first.getId()).size());
+
+            ScheduledTaskRunDO second = triggerService.fireManual(taskDao.findById(1L, 100L), "offline-initial-2");
+            assertEquals("FAILED", second.getStatus());
+            assertTrue(second.getError().startsWith("41001"), second.getError());
+            assertEquals(Long.valueOf(40L), second.getInitialAgentId());
+            assertEquals(0, dispatchDao.listBySource(1L, "SCHEDULED_TASK_RUN", second.getId()).size());
+        } finally {
+            triggerService.setExecutionAvailabilityService(null);
+            try (Connection connection = fixture.open("scheduled_spring"); Statement statement = connection.createStatement()) {
+                statement.executeUpdate("DELETE FROM squad_member WHERE tenant_id=1 AND squad_id=30 AND agent_id=41");
+                statement.executeUpdate("DELETE FROM agent_version WHERE id=42");
+                statement.executeUpdate("DELETE FROM agent WHERE id=41");
+                statement.executeUpdate("UPDATE agent SET status='ONLINE', online_version_id=41 WHERE id=40");
+            }
+        }
+    }
+
+    @Test
     void twoScannerNodesClaimOneOccurrenceAndProduceOneRootDispatch() throws Exception {
         resetActiveDueTask();
         seedExecutableAgentAndUnreadableRequirementDocument();
@@ -946,7 +986,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
             ScheduledTaskRunDO run = runDao.listByTask(1L, 100L, 20, 0).get(0);
             assertEquals("WAITING_EXECUTOR", run.getStatus());
             assertEquals(1, dispatchDao.listBySource(1L, "SCHEDULED_TASK_RUN", run.getId()).size());
-            assertEquals(1, transport.count);
+            transport.awaitCount(1);
 
             // Exercise the durable recovery twice. It may redeliver after a lost ACK, but the
             // source key remains one row; a second compensator can never create a second root.
@@ -962,7 +1002,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
             }
             compensation.sweep();
             assertEquals(1, dispatchDao.listBySource(1L, "SCHEDULED_TASK_RUN", run.getId()).size());
-            assertEquals(2, transport.count);
+            transport.awaitCount(2);
             assertEquals("DISPATCHED", dispatchDao.findById(root.getId()).getStatus());
         } finally {
             triggerService.setRunOrchestrator(null);
@@ -1388,8 +1428,21 @@ class ScheduledTaskSpringMybatisIntegrationTest {
     }
 
     private static final class RecordingTransport implements DispatchTransport {
-        private int count;
-        @Override public void dispatch(DispatchDO dispatch, TaskPackageResult taskPackage) { count++; }
+        private volatile int count;
+        private final java.util.concurrent.CountDownLatch delivered =
+                new java.util.concurrent.CountDownLatch(1);
+        @Override public void dispatch(DispatchDO dispatch, TaskPackageResult taskPackage) {
+            count++;
+            delivered.countDown();
+        }
+        /** Delivery now happens after commit on the async pool; wait for the expected hand-offs. */
+        void awaitCount(int expected) throws InterruptedException {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+            while (count < expected && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            org.junit.jupiter.api.Assertions.assertEquals(expected, count, "dispatch delivery count");
+        }
     }
 
     private record TriggerNode(TransactionTemplate transaction, ScheduledTaskDao taskDao,

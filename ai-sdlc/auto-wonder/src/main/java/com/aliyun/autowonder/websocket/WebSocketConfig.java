@@ -30,6 +30,8 @@ public class WebSocketConfig {
     private volatile JedisPubSub scheduledRunPubSub;
     private volatile Thread dispatchSubscriberThread;
     private volatile JedisPubSub dispatchPubSub;
+    private volatile Thread notificationSubscriberThread;
+    private volatile JedisPubSub notificationPubSub;
 
     public WebSocketConfig(RedisManager redisManager, NodeMailboxListener mailboxListener,
             BrowserRealtimeSubscriberManager subscriberManager) {
@@ -142,6 +144,23 @@ public class WebSocketConfig {
             }
         }, "ws-dispatch-subscriber");
         dispatchSubscriberThread.setDaemon(true); dispatchSubscriberThread.start();
+
+        notificationPubSub = new JedisPubSub() {
+            @Override public void onPMessage(String pattern, String channel, String message) {
+                subscriberManager.deliverToChannel(channel, message);
+            }
+        };
+        notificationSubscriberThread = new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try (Jedis jedis = redisManager.getJedisPool().getResource()) {
+                    jedis.psubscribe(notificationPubSub, "notification:*");
+                } catch (Exception e) {
+                    if (!Thread.currentThread().isInterrupted()) { log.warn("Notification Redis subscriber disconnected", e);
+                        try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
+                }
+            }
+        }, "ws-notification-subscriber");
+        notificationSubscriberThread.setDaemon(true); notificationSubscriberThread.start();
     }
 
     @PreDestroy
@@ -160,6 +179,7 @@ public class WebSocketConfig {
         }
         if (scheduledRunPubSub != null) { try { scheduledRunPubSub.punsubscribe(); } catch (Exception ignore) { } }
         if (dispatchPubSub != null) { try { dispatchPubSub.punsubscribe(); } catch (Exception ignore) { } }
+        if (notificationPubSub != null) { try { notificationPubSub.punsubscribe(); } catch (Exception ignore) { } }
         if (subscriberThread != null) {
             subscriberThread.interrupt();
         }
@@ -168,5 +188,6 @@ public class WebSocketConfig {
         }
         if (scheduledRunSubscriberThread != null) scheduledRunSubscriberThread.interrupt();
         if (dispatchSubscriberThread != null) dispatchSubscriberThread.interrupt();
+        if (notificationSubscriberThread != null) notificationSubscriberThread.interrupt();
     }
 }

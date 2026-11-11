@@ -187,7 +187,16 @@ class SharedGroupChannelMySqlTest {
             assertEquals(61L, ((Number) feishu.get("platform_config_id")).longValue());
             assertEquals("oc-upgrade", feishu.get("group_id"));
             // Startup never re-adds the columns: the schema is defined without them.
-            assertFalse(readMainSchema().contains("confirmed_at"));
+            String schema = readMainSchema();
+            for (String table : List.of("dingtalk_robot_binding", "feishu_robot_binding")) {
+                var definition = java.util.regex.Pattern.compile(
+                        "CREATE TABLE IF NOT EXISTS `" + table + "`\\s*\\((.*?)\\) ENGINE=",
+                        java.util.regex.Pattern.DOTALL).matcher(schema);
+                assertTrue(definition.find(), "missing binding table " + table);
+                for (String retired : List.of("confirmed_at", "challenge_hash", "challenge_expires_at")) {
+                    assertFalse(definition.group(1).contains("`" + retired + "`"), table + "." + retired);
+                }
+            }
         } finally {
             jdbc.update("DELETE FROM dingtalk_robot_binding WHERE id = 20");
             jdbc.update("DELETE FROM feishu_robot_binding WHERE id = 21");

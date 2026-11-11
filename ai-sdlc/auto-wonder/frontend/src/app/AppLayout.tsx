@@ -12,9 +12,12 @@ import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { Sidebar } from './Sidebar';
 import { PlatformAgentStatusBanner } from './PlatformAgentStatusBanner';
 import { NotificationBell } from '@/shared/ui/NotificationBell';
+import { NotificationReminderHost } from '@/features/notification/NotificationReminderHost';
 import { PageHeader } from '@/shared/ui/PageHeader';
 import { UserMenu } from '@/shared/ui/UserMenu';
 import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
+import { ChiefEntryButton } from './ChiefEntryButton';
+import { WorkspaceGuideHost } from '@/features/workspaceGuide/WorkspaceGuideHost';
 import { useAuthStore } from '@/shared/auth/store';
 import { refreshCurrentMembership } from '@/shared/auth/refreshCurrentMembership';
 import { myWorkspacesQueryKey } from '@/features/auth/api';
@@ -263,6 +266,7 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
 
       <Layout style={{ minWidth: 0 }}>
         <PageHeader actions={<>
+            {user && (helpCenter || currentWorkspace) && <ChiefEntryButton standalone={helpCenter} />}
             {!helpCenter && <HelpCenterLink />}
             <LanguageSwitch />
             <AppearanceSwitch />
@@ -284,11 +288,14 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
           </div>
         </PageHeader>
         {!helpCenter && <PlatformAgentStatusBanner />}
-        {user && <ChiefOfStaff />}
+        {user && <ChiefOfStaff hideLauncher={helpCenter} />}
+        {!helpCenter && user && currentWorkspace && <WorkspaceGuideHost />}
         <Content style={{ padding: helpCenter ? 0 : 12, overflow: helpCenter ? 'hidden' : 'auto', background: token.colorBgLayout, minWidth: 0, minHeight: 0 }}>
           {helpCenter ? <Outlet /> : <section className="aw-content-frame" aria-label={t('navigation.content')}><Outlet /></section>}
         </Content>
       </Layout>
+      {/* 已登录且有当前空间时挂唯一提醒宿主；身份变化由宿主自行重建隔离状态。 */}
+      {!helpCenter && user && currentWorkspace && <NotificationReminderHost />}
     </Layout>
   );
 }

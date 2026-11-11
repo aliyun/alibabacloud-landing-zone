@@ -21,6 +21,8 @@ import java.util.Set;
 
 @Service
 public class DispatchMcpTokenService {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.aliyun.autowonder.dispatch.DispatchWorkflowSnapshotStore workflowSnapshots;
     static final String PREFIX = "awdispatch_";
     private static final String PURPOSE = "dispatch-mcp";
     private static final long TTL_SECONDS = 24 * 60 * 60;
@@ -114,7 +116,8 @@ public class DispatchMcpTokenService {
             if (dispatch == null || !workspaceIdEquals(dispatch, workspaceId)
                     || (!ACTIVE.contains(dispatch.getStatus())
                     && !(allowMemoryTerminal && MEMORY_TERMINAL.contains(dispatch.getStatus())))
-                    || (recovery != null && recovery.fenced(dispatch))) {
+                    || (recovery != null && recovery.fenced(dispatch))
+                    || (workflowSnapshots != null && workflowSnapshots.fenced(dispatch))) {
                 throw new IllegalArgumentException("dispatch is inactive");
             }
             long userId = ((Number) claims.get("uid")).longValue();

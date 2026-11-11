@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -154,6 +155,250 @@ class WorkitemDaoMappingTest {
             String absentConditions = mapped.getBoundSql(params).getSql();
             assertFalse(absentConditions.contains("JSON_CONTAINS"));
             assertFalse(absentConditions.contains("JSON_OVERLAPS"));
+        }
+    }
+
+    @Test
+    void squadFiltersRenderAttributionExistsOnBothListAndCount() throws Exception {
+        for (String databaseId : java.util.List.of("autowonder-source-aware", "autowonder-legacy")) {
+            var configuration = new org.apache.ibatis.session.Configuration();
+            configuration.setDatabaseId(databaseId);
+            try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+                new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                        "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+            }
+            var params = new java.util.HashMap<String, Object>();
+            params.put("tenantId", 7L);
+            params.put("currentUserId", 42L);
+            params.put("pendingDecisionOnly", false);
+            params.put("squadIds", java.util.List.of(11L, 12L));
+
+            for (String statement : java.util.List.of("list", "count")) {
+                var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+                String sql = mapped.getBoundSql(params).getSql().replaceAll("\\s+", " ");
+
+                assertTrue(sql.contains("FROM dispatch d"), databaseId + " must count workitem dispatches");
+                assertTrue(sql.contains("FROM agent_conversation c"), databaseId + " must count clarification conversations");
+                assertTrue(sql.replaceAll("\\s*([(),])\\s*", "$1").contains("sm.squad_id IN(?,?)"),
+                        databaseId + " must bind the selected squad ids");
+                assertTrue(sql.contains("sq.is_deleted = 0 AND sq.status = 0"),
+                        databaseId + " must only attribute enabled squads");
+                assertTrue(sql.contains("c.channel IN ('WORKITEM_CLARIFICATION', 'WORKITEM_PRD')"),
+                        databaseId + " must only count clarification and PRD conversations");
+                assertTrue(sql.contains("c.biz_ref_type = 'WORKITEM'"), databaseId + " must scope conversations to workitems");
+                assertTrue(sql.contains("c.biz_ref_id = w.id"), databaseId + " must match the conversation workitem");
+                assertEquals("autowonder-source-aware".equals(databaseId),
+                        sql.contains("c.deleted_at IS NULL"),
+                        databaseId + " must ignore soft-deleted conversations only where the column exists");
+                assertEquals("autowonder-source-aware".equals(databaseId),
+                        sql.contains("d.source_type = 'WORKITEM'"),
+                        databaseId + " must fence dispatches to the WORKITEM source only where the column exists");
+
+                params.put("squadIds", java.util.List.of());
+                String withoutSquads = mapped.getBoundSql(params).getSql();
+                assertFalse(withoutSquads.contains("FROM dispatch d"));
+                assertFalse(withoutSquads.contains("FROM agent_conversation c"));
+                assertFalse(withoutSquads.contains("NOT EXISTS"));
+
+                params.remove("squadIds");
+                String absent = mapped.getBoundSql(params).getSql();
+                assertFalse(absent.contains("FROM dispatch d"));
+                assertFalse(absent.contains("FROM agent_conversation c"));
+                params.put("squadIds", java.util.List.of(11L, 12L));
+            }
+        }
+    }
+
+    @Test
+    void unassignedSquadRendersTwoNotExistsWithoutSquadIds() throws Exception {
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        var params = new java.util.HashMap<String, Object>();
+        params.put("tenantId", 7L);
+        params.put("currentUserId", 42L);
+        params.put("pendingDecisionOnly", false);
+        params.put("unassignedSquad", true);
+
+        for (String statement : java.util.List.of("list", "count")) {
+            var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+            String sql = mapped.getBoundSql(params).getSql().replaceAll("\\s+", " ");
+
+            assertTrue(sql.contains("AND NOT EXISTS ("), "unassigned squad must exclude attributed workitems");
+            assertTrue(sql.contains("FROM dispatch d"));
+            assertTrue(sql.contains("FROM agent_conversation c"));
+            assertFalse(sql.contains("sm.squad_id IN"), "unassigned squad must not constrain the squad ids");
+            assertTrue(sql.contains("d.source_type = 'WORKITEM'"));
+        }
+    }
+
+    @Test
+    void squadAttributionResolvesCurrentMembershipOfEnabledSquads() throws Exception {
+        var ds = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:squad-filter;MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", "");
+        try (var connection = ds.getConnection(); var statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE workitem (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                    + "work_type VARCHAR(20), is_deleted INT DEFAULT 0, gmt_create TIMESTAMP)");
+            statement.execute("CREATE TABLE squad (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                    + "is_deleted INT DEFAULT 0, status INT DEFAULT 0)");
+            statement.execute("CREATE TABLE squad_member (id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+                    + "tenant_id BIGINT, squad_id BIGINT, agent_id BIGINT)");
+            statement.execute("CREATE TABLE agent (id BIGINT PRIMARY KEY, tenant_id BIGINT, is_deleted INT DEFAULT 0)");
+            statement.execute("CREATE TABLE dispatch (id BIGINT AUTO_INCREMENT PRIMARY KEY, tenant_id BIGINT, "
+                    + "source_type VARCHAR(32), workitem_id BIGINT, agent_id BIGINT, status VARCHAR(32), "
+                    + "is_deleted INT DEFAULT 0)");
+            statement.execute("CREATE TABLE agent_conversation (id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+                    + "tenant_id BIGINT, agent_id BIGINT, channel VARCHAR(32), biz_ref_type VARCHAR(32), "
+                    + "biz_ref_id BIGINT, archived_at TIMESTAMP, deleted_at TIMESTAMP)");
+            statement.execute("""
+                    INSERT INTO workitem (id,tenant_id,work_type,is_deleted,gmt_create) VALUES
+                    (1,7,'REQ',0,'2026-01-01 00:00:01'),(2,7,'REQ',0,'2026-01-01 00:00:02'),
+                    (3,7,'REQ',0,'2026-01-01 00:00:03'),(4,7,'REQ',0,'2026-01-01 00:00:04'),
+                    (5,7,'REQ',0,'2026-01-01 00:00:05'),(6,7,'REQ',0,'2026-01-01 00:00:06'),
+                    (7,7,'REQ',0,'2026-01-01 00:00:07'),(8,7,'REQ',0,'2026-01-01 00:00:08')
+                    """);
+            statement.execute("""
+                    INSERT INTO squad (id,tenant_id,is_deleted,status) VALUES
+                    (1,7,0,0),(2,7,0,1),(3,7,1,0),(4,8,0,0)
+                    """);
+            statement.execute("""
+                    INSERT INTO agent (id,tenant_id,is_deleted) VALUES (101,7,0),(102,7,1),(103,7,0)
+                    """);
+            statement.execute("""
+                    INSERT INTO squad_member (tenant_id,squad_id,agent_id) VALUES
+                    (7,1,101),(7,3,101),(8,4,101),(7,2,103)
+                    """);
+            statement.execute("""
+                    INSERT INTO dispatch (tenant_id,source_type,workitem_id,agent_id,status,is_deleted) VALUES
+                    (7,'WORKITEM',1,101,'PENDING',0),(7,'SCHEDULED_TASK_RUN',2,101,'SUCCEEDED',0),
+                    (7,'WORKITEM',4,102,'SUCCEEDED',0),(7,'WORKITEM',5,103,'RUNNING',0),
+                    (7,'WORKITEM',7,101,'SUCCEEDED',1),(8,'WORKITEM',8,101,'SUCCEEDED',0)
+                    """);
+            statement.execute("""
+                    INSERT INTO agent_conversation (tenant_id,agent_id,channel,biz_ref_type,biz_ref_id,archived_at,deleted_at) VALUES
+                    (7,101,'WORKITEM_CLARIFICATION','WORKITEM',3,'2026-01-02 00:00:00',NULL),
+                    (7,101,'WORKITEM_PRD','WORKITEM',8,NULL,'2026-01-02 00:00:00')
+                    """);
+        }
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                new org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory(), ds));
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        try (var session = new org.apache.ibatis.session.SqlSessionFactoryBuilder()
+                .build(configuration).openSession()) {
+            var params = new java.util.HashMap<String, Object>();
+            params.put("tenantId", 7L);
+            params.put("currentUserId", 42L);
+            params.put("pendingDecisionOnly", false);
+            params.put("offset", 0);
+            params.put("limit", 100);
+            params.put("squadIds", java.util.List.of(1L));
+
+            java.util.List<WorkitemDO> rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+            org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(3L, 1L),
+                    rows.stream().map(WorkitemDO::getId).toList(),
+                    "dispatch and clarification/PRD conversations attribute to an enabled squad by current membership");
+            org.junit.jupiter.api.Assertions.assertEquals(2L,
+                    (long) session.selectOne(WorkitemDao.class.getName() + ".count", params),
+                    "count must match the squad-filtered list");
+
+            params.remove("squadIds");
+            params.put("unassignedSquad", true);
+            rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    java.util.List.of(8L, 7L, 6L, 5L, 4L, 2L),
+                    rows.stream().map(WorkitemDO::getId).toList(),
+                    "scheduled-task dispatches, deleted agents/members, disabled squads and deleted records stay unassigned");
+            org.junit.jupiter.api.Assertions.assertEquals(6L,
+                    (long) session.selectOne(WorkitemDao.class.getName() + ".count", params),
+                    "unassigned count must match the unassigned list");
+        }
+    }
+
+    @Test
+    void squadAttributionRunsOnLegacySchemaWithoutConversationSoftDeleteColumn() throws Exception {
+        // legacy（V037 前）schema 的 agent_conversation 没有 deleted_at，dispatch 也没有 source_type；
+        // 小队筛选必须只依赖两套 schema 共有的列，否则 legacy 部署会 Unknown column。
+        var ds = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:squad-filter-legacy;MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", "");
+        try (var connection = ds.getConnection(); var statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE workitem (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                    + "work_type VARCHAR(20), is_deleted INT DEFAULT 0, gmt_create TIMESTAMP)");
+            statement.execute("CREATE TABLE squad (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                    + "is_deleted INT DEFAULT 0, status INT DEFAULT 0)");
+            statement.execute("CREATE TABLE squad_member (id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+                    + "tenant_id BIGINT, squad_id BIGINT, agent_id BIGINT)");
+            statement.execute("CREATE TABLE agent (id BIGINT PRIMARY KEY, tenant_id BIGINT, is_deleted INT DEFAULT 0)");
+            statement.execute("CREATE TABLE dispatch (id BIGINT AUTO_INCREMENT PRIMARY KEY, tenant_id BIGINT, "
+                    + "workitem_id BIGINT, agent_id BIGINT, status VARCHAR(32), is_deleted INT DEFAULT 0)");
+            statement.execute("CREATE TABLE agent_conversation (id BIGINT AUTO_INCREMENT PRIMARY KEY, "
+                    + "tenant_id BIGINT, agent_id BIGINT, channel VARCHAR(32), biz_ref_type VARCHAR(32), "
+                    + "biz_ref_id BIGINT)");
+            statement.execute("""
+                    INSERT INTO workitem (id,tenant_id,work_type,is_deleted,gmt_create) VALUES
+                    (1,7,'REQ',0,'2026-01-01 00:00:01'),(2,7,'REQ',0,'2026-01-01 00:00:02'),
+                    (3,7,'REQ',0,'2026-01-01 00:00:03'),(4,7,'REQ',0,'2026-01-01 00:00:04')
+                    """);
+            statement.execute("""
+                    INSERT INTO squad (id,tenant_id,is_deleted,status) VALUES (1,7,0,0),(2,7,0,1)
+                    """);
+            statement.execute("""
+                    INSERT INTO agent (id,tenant_id,is_deleted) VALUES (101,7,0),(102,7,1)
+                    """);
+            statement.execute("""
+                    INSERT INTO squad_member (tenant_id,squad_id,agent_id) VALUES (7,1,101),(7,2,102)
+                    """);
+            statement.execute("""
+                    INSERT INTO dispatch (tenant_id,workitem_id,agent_id,status,is_deleted) VALUES
+                    (7,1,101,'PENDING',0),(7,3,102,'SUCCEEDED',0)
+                    """);
+            statement.execute("""
+                    INSERT INTO agent_conversation (tenant_id,agent_id,channel,biz_ref_type,biz_ref_id) VALUES
+                    (7,101,'WORKITEM_CLARIFICATION','WORKITEM',2)
+                    """);
+        }
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-legacy");
+        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                new org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory(), ds));
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        try (var session = new org.apache.ibatis.session.SqlSessionFactoryBuilder()
+                .build(configuration).openSession()) {
+            var params = new java.util.HashMap<String, Object>();
+            params.put("tenantId", 7L);
+            params.put("currentUserId", 42L);
+            params.put("pendingDecisionOnly", false);
+            params.put("offset", 0);
+            params.put("limit", 100);
+            params.put("squadIds", java.util.List.of(1L));
+
+            java.util.List<WorkitemDO> rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+            org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(2L, 1L),
+                    rows.stream().map(WorkitemDO::getId).toList(),
+                    "legacy schema must still attribute dispatches and conversations without deleted_at/source_type");
+            org.junit.jupiter.api.Assertions.assertEquals(2L,
+                    (long) session.selectOne(WorkitemDao.class.getName() + ".count", params),
+                    "legacy count must match the squad-filtered list");
+
+            params.remove("squadIds");
+            params.put("unassignedSquad", true);
+            rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+            org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(4L, 3L),
+                    rows.stream().map(WorkitemDO::getId).toList(),
+                    "legacy unassigned filter must exclude deleted agents and include untouched workitems");
+            org.junit.jupiter.api.Assertions.assertEquals(2L,
+                    (long) session.selectOne(WorkitemDao.class.getName() + ".count", params),
+                    "legacy unassigned count must match the unassigned list");
         }
     }
 

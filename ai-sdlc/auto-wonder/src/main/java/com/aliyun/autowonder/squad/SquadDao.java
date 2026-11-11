@@ -20,6 +20,9 @@ public interface SquadDao {
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
     int countByTenantAndName(@Param("tenantId") Long tenantId, @Param("name") String name);
 
+    /** 按空间与名称精确查找未解散小队；引导初始化用它做中断恢复的幂等判定。 */
+    SquadDO findByTenantAndName(@Param("tenantId") Long tenantId, @Param("name") String name);
+
     /** agent 所属（未解散）小队中开启 debug 日志收集的数量；打包冻结判定用。 */
     int countDebugEnabledByAgent(@Param("tenantId") Long tenantId, @Param("agentId") Long agentId);
 }

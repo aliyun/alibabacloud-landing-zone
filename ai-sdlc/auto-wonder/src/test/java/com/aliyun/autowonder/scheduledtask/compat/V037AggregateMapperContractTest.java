@@ -42,7 +42,7 @@ class V037AggregateMapperContractTest {
         String namespace = "com.aliyun.autowonder.dashboard.DashboardDao.";
 
         for (String id : List.of("countRunningDispatches", "countQueuedDispatches",
-                "countTodayCreatedWorkitems", "countTodaySucceeded", "countTodayFailedOrTimeout", "countTodayRetries",
+                "countTodayCreatedWorkitems", "listTodayCreatedWorkitems", "countTodaySucceeded", "countTodayFailedOrTimeout", "countTodayRetries",
                 "avgTodaySuccessDurationMinutes", "countActiveSquads", "squadLineAggregates",
                 "onlineWorkstations")) {
             assertSourceNeutral(sql(legacy, namespace + id), id);

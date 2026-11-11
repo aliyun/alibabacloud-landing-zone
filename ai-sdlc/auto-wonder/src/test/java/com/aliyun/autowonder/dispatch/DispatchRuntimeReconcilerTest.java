@@ -32,6 +32,49 @@ class DispatchRuntimeReconcilerTest {
     }
 
     @Test
+    void ownedButNotRunningExecutionIsOfferedToUndeliveredCompletionHold() {
+        Fixture f = new Fixture(new ExecutorDispatchSnapshot("s1", 10, true, true,
+                Set.of(), Set.of(2L), Set.of(), Set.of(), null, System.currentTimeMillis()));
+        DispatchDO row = row(2L, DispatchStatus.RUNNING);
+        when(f.dispatchDao.listByExecutorAndStatusesAfterId(10L,
+                List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING), 0L, 200)).thenReturn(List.of(row));
+
+        f.reconciler.reconcileNow(100L, 10L, 20L, "s1");
+
+        verify(f.recovery).holdUndeliveredCompletion(row, "s1");
+        verify(f.recovery, never()).recoverAbandonedExecution(any(), anyString());
+    }
+
+    @Test
+    void heldUndeliveredExecutionCompletesTheRepairPath() {
+        Fixture f = new Fixture(new ExecutorDispatchSnapshot("s1", 10, true, true,
+                Set.of(), Set.of(2L), Set.of(), Set.of(), null, System.currentTimeMillis()));
+        DispatchDO row = row(2L, DispatchStatus.RUNNING);
+        when(f.dispatchDao.listByExecutorAndStatusesAfterId(10L,
+                List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING), 0L, 200)).thenReturn(List.of(row));
+        when(f.recovery.holdUndeliveredCompletion(row, "s1")).thenReturn(true);
+
+        f.reconciler.reconcileNow(100L, 10L, 20L, "s1");
+
+        verify(f.recovery).holdUndeliveredCompletion(row, "s1");
+        verify(f.recovery, never()).recoverAbandonedExecution(any(), anyString());
+    }
+
+    @Test
+    void stillRunningOwnedExecutionIsNeitherHeldNorRecovered() {
+        Fixture f = new Fixture(new ExecutorDispatchSnapshot("s1", 10, true, true,
+                Set.of(2L), Set.of(2L), Set.of(), Set.of(), null, System.currentTimeMillis()));
+        when(f.dispatchDao.listByExecutorAndStatusesAfterId(10L,
+                List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING), 0L, 200))
+                .thenReturn(List.of(row(2L, DispatchStatus.RUNNING)));
+
+        f.reconciler.reconcileNow(100L, 10L, 20L, "s1");
+
+        verify(f.recovery, never()).holdUndeliveredCompletion(any(), anyString());
+        verify(f.recovery, never()).recoverAbandonedExecution(any(), anyString());
+    }
+
+    @Test
     void completeInventoryAlsoChecksForAbandonedActiveDispatches() {
         Fixture f = new Fixture(snapshot("s1", true, Set.of()));
         f.reconciler.reconcileNow(100L, 10L, 20L, "s1");

@@ -13,10 +13,12 @@ import {
   removeUserAdminWorkspace,
   resetUserAdminPassword,
   restoreUserAdmin,
+  reviewUserRegistration,
   sendUserAdminImTest,
   updateUserAdminImIdentity,
   updateUserAdminProfile,
   updateUserAdminWorkspaceLevel,
+  updateUserWorkspaceCreationPermission,
   userAdminDetailQueryKey,
   userAdminImQueryKey,
   userAdminListQueryKey,
@@ -47,12 +49,42 @@ const user = {
 const listPayload = { totalAll: 12, total: 1, pageNum: 1, pageSize: 20, list: [user] };
 
 describe('userAdminApi', () => {
+  it('posts the registration review decision to the review endpoint', async () => {
+    let path = '';
+    let body: unknown;
+    server.use(http.post('/api/platform/users/8/registration-review', async ({ request }) => {
+      path = new URL(request.url).pathname;
+      body = await request.json();
+      return ok({ id: 8 });
+    }));
+
+    await reviewUserRegistration(8, 'REJECT');
+
+    expect(path).toBe('/api/platform/users/8/registration-review');
+    expect(body).toEqual({ decision: 'REJECT' });
+  });
+
+  it('puts the workspace creation permission flag', async () => {
+    let path = '';
+    let body: unknown;
+    server.use(http.put('/api/platform/users/8/workspace-creation-permission', async ({ request }) => {
+      path = new URL(request.url).pathname;
+      body = await request.json();
+      return ok({ id: 8 });
+    }));
+
+    await updateUserWorkspaceCreationPermission(8, true);
+
+    expect(path).toBe('/api/platform/users/8/workspace-creation-permission');
+    expect(body).toEqual({ allowed: true });
+  });
+
   it('pins the query keys the panel invalidates after a write', () => {
     // The panel and the detail drawer share these keys; a silent rename would leave a stale
     // row or drawer on screen after profile edits, workspace changes or restores.
     expect(USER_ADMIN_QUERY_KEY_ROOT).toEqual(['platform-users']);
-    expect(userAdminListQueryKey({ keyword: 'ali', status: 'DELETED', type: 'ADMIN', page: 2, size: 50 }))
-      .toEqual(['platform-users', 'list', 'ali', 'DELETED', 'ADMIN', 2, 50]);
+    expect(userAdminListQueryKey({ keyword: 'ali', status: 'DELETED', type: 'ADMIN', permission: 'ALL', page: 2, size: 50 }))
+      .toEqual(['platform-users', 'list', 'ali', 'DELETED', 'ADMIN', 'ALL', 2, 50]);
     expect(userAdminDetailQueryKey(7)).toEqual(['platform-users', 'detail', 7]);
     expect(userAdminWorkspacesQueryKey(7)).toEqual(['platform-users', 'workspaces', 7]);
     expect(userAdminImQueryKey(7)).toEqual(['platform-users', 'im-identity', 7]);
@@ -68,6 +100,7 @@ describe('userAdminApi', () => {
         keyword: url.searchParams.get('keyword'),
         status: url.searchParams.get('status'),
         type: url.searchParams.get('type'),
+        canCreateWorkspace: url.searchParams.get('canCreateWorkspace'),
         page: url.searchParams.get('page'),
         size: url.searchParams.get('size'),
       };
@@ -78,12 +111,15 @@ describe('userAdminApi', () => {
       keyword: '  alice  ',
       status: 'DELETED',
       type: 'ADMIN',
+      permission: 'BLOCKED',
       page: 2,
       size: 50,
     });
 
     expect(path).toBe('/api/platform/users');
-    expect(params).toEqual({ keyword: 'alice', status: 'DELETED', type: 'ADMIN', page: '2', size: '50' });
+    expect(params).toEqual({
+      keyword: 'alice', status: 'DELETED', type: 'ADMIN', canCreateWorkspace: 'false', page: '2', size: '50',
+    });
     expect(result).toEqual(listPayload);
   });
 
@@ -99,7 +135,7 @@ describe('userAdminApi', () => {
       return ok({ ...listPayload, total: 0, list: [] });
     }));
 
-    await getUserAdminList({ keyword: '   ', status: 'ALL', type: 'ALL', page: 1, size: 20 });
+    await getUserAdminList({ keyword: '   ', status: 'ALL', type: 'ALL', permission: 'ALL', page: 1, size: 20 });
 
     expect(params).toEqual({ keyword: null, status: null, type: null });
   });

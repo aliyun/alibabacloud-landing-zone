@@ -27,4 +27,6 @@ public class UserDO {
     private String deletedEmail;
     private Date deletedAt;
     private Long deletedBy;
+    /** 平台级空间创建个人授权位；缺省 0 = 未单独授权。 */
+    private Integer workspaceCreationGranted;
 }

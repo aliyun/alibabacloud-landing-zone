@@ -1,0 +1,10 @@
+.aw-chief-plan-heading { display: flex; align-items: center; gap: 8px; }
+.aw-chief-plan-toggle-group { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
+.aw-chief-plan-toggle:focus-visible { outline: 2px solid var(--aw-accent); outline-offset: 1px; }
+.aw-chief-plan-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--aw-muted); font-size: 12px; }
+.aw-chief-plan-failed { border-color: var(--ant-color-error, #ff4d4f); }
+@media (max-width: 480px) { .aw-chief-plan-heading { flex-wrap: wrap; } }
+.aw-chief-plan-preview { max-height: 240px; overflow: auto; overscroll-behavior: contain; margin-top: 8px; }
+.aw-chief-plan-detail { max-height: 70dvh; overflow: auto; overscroll-behavior: contain; }
+.aw-chief-plan-preview h4, .aw-chief-plan-detail h4 { margin: 8px 0; color: var(--aw-muted); font-size: 12px; }
+.aw-chief-plan-preview pre, .aw-chief-plan-detail pre { margin: 0 0 12px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }

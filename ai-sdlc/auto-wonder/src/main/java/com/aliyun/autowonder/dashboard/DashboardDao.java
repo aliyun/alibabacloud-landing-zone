@@ -4,6 +4,7 @@ import com.aliyun.autowonder.dashboard.dto.CompletedWorkitemVO;
 import com.aliyun.autowonder.dashboard.dto.RecentTaskVO;
 import com.aliyun.autowonder.dashboard.dto.RunningTaskVO;
 import com.aliyun.autowonder.dashboard.dto.RunningWorkitemVO;
+import com.aliyun.autowonder.dashboard.dto.TodayCreatedWorkitemVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -76,6 +77,8 @@ public interface DashboardDao {
     List<RecentTaskVO> listRecentFeed(@Param("tenantId") long tenantId, @Param("limit") int limit);
 
     // KPI detail lists
+    List<TodayCreatedWorkitemVO> listTodayCreatedWorkitems(@Param("tenantId") long tenantId);
+
     List<CompletedWorkitemVO> listTodayCompletedWorkitems(@Param("tenantId") long tenantId);
 
     List<CompletedWorkitemVO> listWeekCompletedWorkitems(@Param("tenantId") long tenantId);

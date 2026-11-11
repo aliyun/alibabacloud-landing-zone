@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -54,7 +55,7 @@ function firePointer(type: 'pointerdown' | 'pointermove' | 'pointerup', target: 
 function renderPanel(props: Partial<Parameters<typeof RightPanel>[0]> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return { queryClient, ...render(
-    <QueryClientProvider client={queryClient}>
+    <MemoryRouter><QueryClientProvider client={queryClient}>
       <RightPanel
         workitemId="1"
         participants={[]}
@@ -62,7 +63,7 @@ function renderPanel(props: Partial<Parameters<typeof RightPanel>[0]> = {}) {
         artifacts={[]}
         {...props}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider></MemoryRouter>,
   ) };
 }
 
@@ -148,9 +149,9 @@ describe('RightPanel resize handles', () => {
     // SSR preserves CSS variables before jsdom's CSSOM drops them.
     for (const initialFullscreen of [false, true]) {
       const client = new QueryClient();
-      const html = renderToStaticMarkup(<QueryClientProvider client={client}>
+      const html = renderToStaticMarkup(<MemoryRouter><QueryClientProvider client={client}>
         <RightPanel workitemId="1" participants={[]} steps={[]} artifacts={[]} initialMode="clarify" initialFullscreen={initialFullscreen} />
-      </QueryClientProvider>);
+      </QueryClientProvider></MemoryRouter>);
       const container = html.match(/<div[^>]*data-testid="clarify-resize-box"[^>]*>/)?.[0];
       expect(container).toContain('background-color:var(--aw-panel)');
       expect(container).toContain(`position:${initialFullscreen ? 'fixed' : 'relative'}`);
@@ -169,7 +170,7 @@ it('replaces recovery diagnostics rather than accumulating them while switching 
   const progress = { steps: [], executions: [301, 302].map(dispatchId => ({ dispatchId, agentId: 41,
     agentName: 'RD', executorName: null, status: 'PAUSED', startedAt: null, durationMs: null })) };
   let reads = 0;
-  server.use(http.get('/api/dispatches/:dispatchId/runtime-trace/events', () => HttpResponse.json({ success: true, code: '0', data: { events: [], changed: false } })),
+  server.use(http.get('/api/dispatches/:dispatchId/runtime-trace/events/window', () => HttpResponse.json({ success: true, code: '0', data: { events: [], changed: false } })),
   http.get('/api/workitems/1/recovery', () => { reads++; return HttpResponse.json({ success: true, code: '0', data: {
     closed: false, restarts: [], executions: [301, 302].map(dispatchId => ({ dispatchId, agentId: 41,
       attempt: 6, status: 'PAUSED', error: `recovery-${dispatchId}`, recovery: {} })),
@@ -516,9 +517,9 @@ describe('RightPanel page-driven mode switch (工单 53315)', () => {
       workitemId: '1', participants: [], steps: [], artifacts: [], ...initialProps,
     };
     const renderWith = (props: PanelProps) => (
-      <QueryClientProvider client={queryClient}>
+      <MemoryRouter><QueryClientProvider client={queryClient}>
         <RightPanel {...props} />
-      </QueryClientProvider>
+      </QueryClientProvider></MemoryRouter>
     );
     const view = render(renderWith(baseProps));
     return {

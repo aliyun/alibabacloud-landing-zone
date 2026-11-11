@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { typeComposer } from './composerTestUtils';
 import { WorkitemClarificationPanel, isNearScrollBottom } from './WorkitemClarificationPanel';
+import { mockLatestClarificationConversation } from '@/test/mocks/clarificationLatest';
 import {
   clearClarificationPrefill,
   writeClarificationPrefill,
@@ -104,6 +105,7 @@ function mockConversation(conv: MockConversation) {
       HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
     ),
   );
+  mockLatestClarificationConversation();
 }
 
 async function renderPanelWithConversation(conv: MockConversation) {
@@ -233,6 +235,7 @@ describe('WorkitemClarificationPanel 回复体验（R1/R2/R3/R4）', () => {
         }),
     );
 
+    mockLatestClarificationConversation();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>
@@ -458,6 +461,7 @@ describe('WorkitemClarificationPanel 终态先于结算与跨会话隔离（工�
         },
       ),
     );
+    mockLatestClarificationConversation();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>

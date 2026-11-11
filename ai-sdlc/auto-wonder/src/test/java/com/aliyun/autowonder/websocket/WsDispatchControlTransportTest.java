@@ -32,7 +32,7 @@ class WsDispatchControlTransportTest {
 
         verify(basic).sendText(argThat(frame -> frame.contains("\"type\":\"TASK_PAUSE\"")
                 && frame.contains("\"dispatchId\":55")
-                && frame.contains("\"executorId\":7")));
+                && frame.contains("\"executorId\":7") && !frame.contains("\"cancel\"")));
         verify(redis, never()).publish(anyString(), anyString());
     }
 
@@ -51,5 +51,19 @@ class WsDispatchControlTransportTest {
         verify(redis).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), argThat(frame ->
                 frame.contains("\"type\":\"TASK_PAUSE\"")
                         && frame.contains("\"dispatchId\":55")));
+    }
+
+    @Test
+    void terminalStopPreservesLegacyFrameAndAddsCancellationIntent() {
+        SessionRegistry registry = mock(SessionRegistry.class);
+        RedisManager redis = mock(RedisManager.class);
+        WsDispatchControlTransport transport = new WsDispatchControlTransport(registry, redis);
+        DispatchDO dispatch = new DispatchDO();
+        dispatch.setId(55L);
+        dispatch.setExecutorId(7L);
+        transport.stop(dispatch);
+        verify(redis).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), argThat(frame ->
+                frame.contains("\"type\":\"TASK_PAUSE\"") && frame.contains("\"cancel\":true")
+                        && frame.contains("\"dispatchId\":55") && frame.contains("\"executorId\":7")));
     }
 }

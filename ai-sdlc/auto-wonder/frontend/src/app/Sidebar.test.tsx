@@ -204,6 +204,32 @@ describe('Sidebar helpers', () => {
     expect(screen.getByText('审计日志')).toBeInTheDocument();
   });
 
+  it('hides the 状态模版 entry from the menu while keeping its route resolvable', () => {
+    const items = buildMenuItems();
+    const configGroup = items.find((item) => item?.key === 'config-group');
+
+    expect(items.flatMap(childKeys)).not.toContain('/status-templates');
+    expect(childKeys(configGroup)).toEqual([
+      '/integrations',
+      '/settings/members',
+      '/settings/backups',
+      '/settings/environment-variables',
+    ]);
+    expect(NAV_GROUPS.flatMap((group) => group.items).map((item) => item.key)).toContain('/status-templates');
+    expect(resolveSelectedNavKey('/status-templates')).toBe('/status-templates');
+  });
+
+  it('does not render the 状态模版 label in the rendered menu', () => {
+    render(
+      <TestWrapper>
+        <Sidebar />
+      </TestWrapper>,
+    );
+
+    expect(screen.queryByText('状态模版')).toBeNull();
+    expect(screen.getByText('平台集成')).toBeInTheDocument();
+  });
+
   it('hides 定时任务 until the capability request is ready', async () => {
     let resolveCapability: (() => void) | undefined;
     server.use(
@@ -295,7 +321,7 @@ describe('Sidebar helpers', () => {
     const workersGroup = NAV_GROUPS.find((item) => item.key === 'workers-group');
     const knowledgeGroup = NAV_GROUPS.find((item) => item.key === 'knowledge-group');
 
-    expect(workersGroup?.items.map((item) => item.key)).toEqual(['/agents', '/executors']);
+    expect(workersGroup?.items.map((item) => item.key)).toEqual(['/agents', '/sdlcs', '/executors']);
     expect(workersGroup?.items.find((item) => item.key === '/agents')?.label).toBe('管理');
     expect(knowledgeGroup?.items.map((item) => item.key)).toEqual(['/repos', '/memories', '/skills']);
     expect(knowledgeGroup?.items.find((item) => item.key === '/repos')?.label).toBe('仓库');
@@ -305,6 +331,20 @@ describe('Sidebar helpers', () => {
     expect(visibleKeys).not.toContain('/repos/map');
     expect(visibleKeys).not.toContain('/integrations/channels');
     expect(visibleKeys).not.toContain('/integrations/workitem');
+  });
+
+  it('places SDLC workflows in the workers group between 管理 and 执行器', () => {
+    const workersGroup = NAV_GROUPS.find((item) => item.key === 'workers-group');
+    const configGroup = NAV_GROUPS.find((item) => item.key === 'config-group');
+    const workersKeys = workersGroup?.items.map((item) => item.key) ?? [];
+
+    expect(workersKeys).toEqual(['/agents', '/sdlcs', '/executors']);
+    expect(workersKeys.indexOf('/sdlcs')).toBe(workersKeys.indexOf('/agents') + 1);
+    expect(workersKeys.indexOf('/executors')).toBe(workersKeys.indexOf('/sdlcs') + 1);
+    expect(workersGroup?.items.find((item) => item.key === '/sdlcs')?.label).toBe('SDLC 流程');
+    expect(configGroup?.items.map((item) => item.key)).not.toContain('/sdlcs');
+    expect(resolveSelectedNavKey('/sdlcs')).toBe('/sdlcs');
+    expect(resolveSelectedNavKey('/sdlcs/42')).toBe('/sdlcs');
   });
 
   it('renders badge count on the merged agents entry when count > 0', () => {

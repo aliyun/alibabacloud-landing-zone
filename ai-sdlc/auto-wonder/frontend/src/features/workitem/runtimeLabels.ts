@@ -30,7 +30,7 @@ export function runtimeStatusLabel(status?: string | null): string {
   const key = statusKeys[(status ?? 'UNKNOWN') as keyof typeof statusKeys];
   return key ? i18n.t(`workitem:${key}`) : status!;
 }
-const edgeKeys = { HANDOFF: 'runtime.handoff', COMMENT_REWORK: 'runtime.commentRework', CONTINUE: 'runtime.continue', HUMAN_HANDOFF: 'runtime.humanHandoff' } as const;
+const edgeKeys = { HANDOFF: 'runtime.handoff', COMMENT_REWORK: 'runtime.commentRework', CONTINUE: 'runtime.continue', HUMAN_HANDOFF: 'runtime.humanHandoff', RESTART: 'runtime.restart' } as const;
 export function runtimeEdgeLabel(edge: Pick<ProcessGraphEdge, 'type' | 'label' | 'commentId'>, sourceStatus?: string | null): string {
   if (edge.type === 'HANDOFF' && ['FAILED', 'TIMEOUT', 'CANCELED', 'PAUSE_FAILED'].includes(sourceStatus ?? '')) return i18n.t('workitem:projection.failedHandoff');
   if (edge.type === 'COMMENT_REWORK' && edge.commentId != null) return i18n.t('workitem:runtime.commentReworkId', { id: edge.commentId });

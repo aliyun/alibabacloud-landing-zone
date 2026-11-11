@@ -1,7 +1,7 @@
 import { i18n } from '@/shared/i18n';
 import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Empty, Input, Modal, Pagination, Spin, Typography, message } from 'antd';
+import { Button, Empty, Input, Modal, Pagination, Spin, Typography, message } from 'antd';
 import { ArrowRightOutlined, DeleteOutlined, EditOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -27,7 +27,12 @@ const ACCENT_COLOR = 'var(--aw-accent-text)';
 const BORDER_COLOR = 'var(--aw-border)';
 const WORKSPACE_CARD_SHADOW = '0 0 0 1px var(--aw-accent-text)';
 
-export function AllWorkspacesTab() {
+interface AllWorkspacesTabProps {
+  /** 切换成功后要恢复的站内目标；由空间选择页传入，缺省落到首页。 */
+  switchDestination?: string;
+}
+
+export function AllWorkspacesTab({ switchDestination = '/' }: AllWorkspacesTabProps) {
   const { t } = useTranslation('auth');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
@@ -53,7 +58,7 @@ export function AllWorkspacesTab() {
   const [editTarget, setEditTarget] = useState<WorkspaceInfo | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkspaceInfo | null>(null);
 
-  const { data, isLoading, isFetching } = useAllWorkspaces(
+  const { data, isLoading, isFetching, isError, refetch } = useAllWorkspaces(
     debouncedKeyword,
     page,
     PAGE_SIZE,
@@ -151,7 +156,7 @@ export function AllWorkspacesTab() {
       setAccessToken(accessToken);
       setCurrentWorkspace(workspace, accessLevel);
       await refreshTenantScopedQueries(queryClient);
-      navigate('/');
+      navigate(switchDestination);
     } catch (e) {
       if (e instanceof ApiError) {
         message.error(e.message);
@@ -191,6 +196,15 @@ export function AllWorkspacesTab() {
       {showFirstLoad ? (
         <div data-testid="all-workspaces-loading" style={{ textAlign: 'center', padding: 48 }}>
           <Spin />
+        </div>
+      ) : isError ? (
+        // 请求失败与“平台上没有空间”是两回事：失败必须给出重试入口，不能让用户误以为空。
+        <div data-testid="all-workspaces-error" style={emptyStateStyle}>
+          <Empty description={t('workspace.loadFailed')}>
+            <Button type="primary" data-testid="all-workspaces-retry" onClick={() => { void refetch(); }}>
+              {t('workspace.retry')}
+            </Button>
+          </Empty>
         </div>
       ) : workspaces.length === 0 ? (
         <div data-testid="all-workspaces-empty" style={emptyStateStyle}>

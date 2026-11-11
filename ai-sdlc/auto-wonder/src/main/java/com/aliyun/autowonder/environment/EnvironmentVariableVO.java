@@ -15,4 +15,6 @@ public class EnvironmentVariableVO {
     private final Date gmtCreate;
     private final Date gmtModified;
     private final Integer version;
+    private final Integer onlineMountCount;
+    private final Integer draftMountCount;
 }

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Date;
+import java.util.Objects;
 
 /**
  * Reassignment as an explicit delivery restart. Independent of WorkitemService so the
@@ -27,6 +28,9 @@ public class WorkitemServiceRestartHandler {
 
     @Autowired(required = false)
     private DeliveryRestartStore restartStore;
+
+    @Autowired(required = false)
+    private com.aliyun.autowonder.dispatch.DispatchWorkflowSnapshotStore workflowSnapshots;
 
     public WorkitemServiceRestartHandler(WorkitemDao workitemDao, ApplicationEventPublisher eventPublisher) {
         this.workitemDao = workitemDao;
@@ -50,6 +54,9 @@ public class WorkitemServiceRestartHandler {
         int round = restartStore == null ? 1
                 : restartStore.allocateRound(tenantId, workitemId, modifierUserId, operator,
                         restartToken, scheduledStartAt, sdlcStepId, agentId);
+        if (workflowSnapshots != null) {
+            workflowSnapshots.freezeRestart(tenantId, workitemId, round, sdlcStepId, agentId);
+        }
         String idempotencyKey = DeliveryRestartStore.restartIdempotencyKey(workitemId, round);
         WorkitemDO fresh = workitemDao.findById(workitemId);
         boolean deferred = scheduledStartAt != null && scheduledStartAt.after(new Date());
@@ -62,6 +69,24 @@ public class WorkitemServiceRestartHandler {
         eventPublisher.publishEvent(new WorkitemDeliveryRestartedEvent(
                 tenantId, workitemId, sdlcStepId, agentId, modifierUserId, idempotencyKey, scheduledStartAt));
         return fresh;
+    }
+
+    /** A retry must not rebind an old request to today's default before hitting round idempotency. */
+    public boolean replay(long tenantId, long workitemId, String token, Long agentId, Long explicitSdlcId, Date scheduledAt) {
+        if (restartStore == null || token == null || token.isBlank()) return false;
+        Integer round = restartStore.roundByToken(tenantId, workitemId, token);
+        if (round == null) return false;
+        var request = restartStore.request(tenantId, workitemId, round);
+        var snapshot = workflowSnapshots == null ? null : workflowSnapshots.restartIntent(tenantId, workitemId,
+                DeliveryRestartStore.restartIdempotencyKey(workitemId, round));
+        if (!Objects.equals(agentId, request.agentId())
+                || !Objects.equals(scheduledAt == null ? null : scheduledAt.getTime(),
+                        request.scheduledStartAt() == null ? null : request.scheduledStartAt().getTime())
+                || explicitSdlcId != null && (snapshot == null || !explicitSdlcId.equals(snapshot.sdlcId()))) {
+            throw com.aliyun.autowonder.common.error.BizException.keyed(com.aliyun.autowonder.common.error.ErrorCode.CONFLICT,
+                    "workitem.restart_token_conflict", new Object[0], "restart token already identifies a different assignment");
+        }
+        return true;
     }
 
     void bindRestartStore(DeliveryRestartStore store) {

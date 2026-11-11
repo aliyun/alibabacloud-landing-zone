@@ -110,10 +110,21 @@
         WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND status = 'ONLINE'
     </select>
 
-    <!-- 工单概况为工单级口径：今日新建含当天已取消与全部工单类型，与「今日完成」共用 CURDATE() 边界。 -->
+    <!-- 工单概况为工单级口径：今日新建含全部工单类型，与「今日完成」共用 CURDATE() 边界。
+         排除当前状态节点为已取消(CANCELED)的工单；状态节点缺失仍计入（LEFT JOIN），
+         计数与明细共用本片段，保证卡片数字与弹窗条数严格一致。 -->
+    <sql id="todayCreatedWorkitemScope">
+        FROM workitem w
+        LEFT JOIN status_node sn ON sn.id = w.status_node_id AND sn.tenant_id = w.tenant_id
+        WHERE w.tenant_id = #{tenantId}
+          AND w.is_deleted = 0
+          AND w.gmt_create &gt;= CURDATE()
+          AND (sn.category IS NULL OR sn.category &lt;&gt; 'CANCELED')
+    </sql>
+
     <select id="countTodayCreatedWorkitems" resultType="int">
-        SELECT COUNT(*) FROM workitem
-        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND gmt_create >= CURDATE()
+        SELECT COUNT(*)
+        <include refid="todayCreatedWorkitemScope"/>
     </select>
 
     <!-- 正在运行按「有运行中执行」的工单去重，仅工单来源 dispatch；定时任务/评论会话不计入。 -->
@@ -289,6 +300,14 @@
           AND d.status IN ('SUCCEEDED','FAILED','TIMEOUT','CANCELED')
         ORDER BY d.gmt_modified DESC
         LIMIT #{limit}
+    </select>
+
+    <select id="listTodayCreatedWorkitems" resultType="com.aliyun.autowonder.dashboard.dto.TodayCreatedWorkitemVO">
+        SELECT
+            w.id AS workitemId,
+            w.title AS title
+        <include refid="todayCreatedWorkitemScope"/>
+        ORDER BY w.gmt_create DESC, w.id DESC
     </select>
 
     <select id="listTodayCompletedWorkitems" resultType="com.aliyun.autowonder.dashboard.dto.CompletedWorkitemVO">

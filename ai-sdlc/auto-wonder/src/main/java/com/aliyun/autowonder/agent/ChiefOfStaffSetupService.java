@@ -100,7 +100,7 @@ public class ChiefOfStaffSetupService {
             var target=executors.listByAgent(workspaceId,agent.getId()).get(0);
             var stored=launchConfigs.readStoredConfig(target.getId(),workspaceId);
             String kind=target.getClientKind()==null || target.getClientKind().isBlank()?executor.getClientKind():target.getClientKind();
-            var defaults=launchOptions.launchOptions(kind);
+            var defaults=launchOptions.launchOptions(workspaceId,kind);
             var update=new com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest();
             update.setClientKind(kind); update.setVersion(stored.getVersion());
             update.setMemoryMode(presentOr(stored.getMemoryMode(),defaults.getDefaultMemoryMode()));

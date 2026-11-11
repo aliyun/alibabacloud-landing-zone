@@ -23,18 +23,24 @@ public class RedisConfig {
                                      @Value("${spring.redis-meta.connectTimeoutMs:2000}") int connectTimeoutMs,
                                      @Value("${spring.redis-meta.socketTimeoutMs:5000}") int socketTimeoutMs,
                                      @Value("${spring.redis-meta.poolMaxTotal}") int poolMaxTotal,
+                                     @Value("${spring.redis-meta.poolMaxIdle:100}") int poolMaxIdle,
+                                     @Value("${spring.redis-meta.poolMinIdle:8}") int poolMinIdle,
                                      @Value("${spring.redis-meta.poolMaxWaitMs:2000}") long poolMaxWaitMs,
                                      @Value("${application.env:daily}") String env) {
 
         JedisPoolConfig poolConfig = new JedisPoolConfig();
         poolConfig.setMaxTotal(poolMaxTotal);
-        poolConfig.setMaxIdle(poolMaxTotal);
-        poolConfig.setMinIdle(poolMaxTotal / 2);
+        // Keep low-load instances small; cap idle settings when maxTotal is overridden.
+        int maxIdle = Math.max(0, Math.min(poolMaxIdle, poolMaxTotal));
+        poolConfig.setMaxIdle(maxIdle);
+        poolConfig.setMinIdle(Math.max(0, Math.min(poolMinIdle, maxIdle)));
         // Fail fast when the pool is drained: a long borrow wait turns one Redis hiccup into
         // every-caller pile-up and exhausts the pool (35min worker stall incident).
         poolConfig.setMaxWaitMillis(poolMaxWaitMs > 0 ? poolMaxWaitMs : 2000L);
         poolConfig.setTestOnBorrow(true);
-        poolConfig.setTestOnReturn(true);
+        // Borrow validation still rejects stale sockets. Avoid another synchronous PING
+        // on every return: a heartbeat borrows/returns connections several times.
+        poolConfig.setTestOnReturn(false);
         poolConfig.setTestWhileIdle(true);
         poolConfig.setTimeBetweenEvictionRunsMillis(30000);
         poolConfig.setMinEvictableIdleTimeMillis(60000);

@@ -113,9 +113,28 @@ public final class ChiefEffectiveConfigResolver {
             throw new IllegalArgumentException("Chief workspace capabilities were not loaded");
         }
         var result = new ArrayList<>(official);
+        // A newly added optional skill must not invalidate pre-existing workspace skills.
+        // Alias only the platform copy; preserve custom names, packages, ids and instructions.
+        String optimizerKey = com.aliyun.autowonder.mcp.PlatformSkillCatalog.OPTIMIZER_SKILL_ID;
+        Set<String> customSkillNames = new HashSet<>();
+        for (var extension : extensions) {
+            if ("SKILL".equalsIgnoreCase(String.valueOf(extension.get("type")))
+                    && !isEquivalentOfficialCopy(extension, optimizerKey)) {
+                customSkillNames.add(requireText(extension.get("name")));
+            }
+        }
+        if (customSkillNames.contains(optimizerKey) && officialByKey.containsKey(optimizerKey)) {
+            String alias = "platform-" + optimizerKey;
+            int suffix = 2;
+            while (customSkillNames.contains(alias) || officialByKey.containsKey(alias))
+                alias = "platform-" + optimizerKey + "-" + suffix++;
+            var aliased = new LinkedHashMap<>(officialByKey.get(optimizerKey));
+            aliased.put("name", alias);
+            result.set(result.indexOf(officialByKey.get(optimizerKey)), immutableMap(aliased));
+        }
         Set<String> names = new HashSet<>();
         names.add("MCP:autowonder");
-        for (var capability : official) {
+        for (var capability : result) {
             names.add("SKILL:" + capability.get("name"));
         }
         for (var extension : extensions) {
@@ -131,7 +150,9 @@ public final class ChiefEffectiveConfigResolver {
                             || (officialByKey.containsKey(key) && officialByKey.get(key).get("config").equals(config)))) {
                     continue;
                 }
-                throw new IllegalArgumentException("Chief workspace skill uses an official key with a different definition");
+                if (!optimizerKey.equals(key)) {
+                    throw new IllegalArgumentException("Chief workspace skill uses an official key with a different definition");
+                }
             }
             if (!names.add(type + ":" + ("MCP".equals(type) ? name.toLowerCase(Locale.ROOT) : name))) {
                 throw new IllegalArgumentException("Chief workspace capability conflicts with another capability");
@@ -139,6 +160,11 @@ public final class ChiefEffectiveConfigResolver {
             result.add(immutableMap(extension));
         }
         return new EffectiveConfig(systemPrompt, fingerprint, List.copyOf(result));
+    }
+
+    private boolean isEquivalentOfficialCopy(Map<String, Object> extension, String key) {
+        return !extension.containsKey("packageOssRef") && officialByKey.containsKey(key)
+                && officialByKey.get(key).get("config").equals(extension.get("config"));
     }
 
     private static String requireText(Object value) {

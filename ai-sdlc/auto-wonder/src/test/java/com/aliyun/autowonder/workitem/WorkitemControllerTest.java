@@ -4,6 +4,7 @@ import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.PageResult;
+import com.aliyun.autowonder.common.web.GlobalExceptionHandler;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.workitem.dto.CommentVO;
@@ -12,20 +13,87 @@ import com.aliyun.autowonder.workitem.dto.WorkitemOwningWorkspaceVO;
 import com.aliyun.autowonder.workitem.dto.WorkitemVO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class WorkitemControllerTest {
+    @Test
+    void timelineWindowUsesBoundedServiceAndAttachesInteractions() {
+        WorkitemService service = mock(WorkitemService.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        WorkitemController controller = new WorkitemController(service, guidance,
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        List<TimelineItemVO> window = List.of(new TimelineItemVO());
+        when(service.getTimelineWindow(3L, 4)).thenReturn(window);
+        var response = new MockHttpServletResponse();
+        assertSame(window, controller.timelineWindow(3L, 4, response).getData());
+        assertEquals("false", response.getHeader("X-Timeline-Has-More"));
+        verify(guidance).attachInteractionStatuses(100L, 3L, window);
+        verify(service, never()).getUnifiedTimeline(anyLong());
+    }
+
+    @Test
+    void timelinePaginationUsesRawLookaheadBeforeNestingReplies() {
+        WorkitemService service = mock(WorkitemService.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        WorkitemController controller = new WorkitemController(service, guidance,
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        List<TimelineItemVO> raw = new ArrayList<>();
+        for (long id = 0; id < 51; id++) {
+            var item = new TimelineItemVO();
+            item.setId(id);
+            raw.add(item);
+        }
+        when(service.getTimelineWindow(3L, 0)).thenReturn(raw);
+        doAnswer(invocation -> {
+            List<TimelineItemVO> items = invocation.getArgument(2);
+            assertEquals(50, items.size());
+            assertEquals(49L, items.get(49).getId());
+            items.subList(0, 5).clear();
+            return null;
+        }).when(guidance).attachInteractionStatuses(anyLong(), anyLong(), any());
+        var response = new MockHttpServletResponse();
+        assertEquals(45, controller.timelineWindow(3L, 0, response).getData().size());
+        assertEquals("true", response.getHeader("X-Timeline-Has-More"));
+    }
+
+    @Test
+    void fullFinalTimelinePageHasNoMoreHistory() {
+        WorkitemService service = mock(WorkitemService.class);
+        WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        List<TimelineItemVO> items = new ArrayList<>();
+        for (int i = 0; i < 50; i++) items.add(new TimelineItemVO());
+        when(service.getTimelineWindow(3L, 1)).thenReturn(items);
+        var response = new MockHttpServletResponse();
+        assertEquals(50, controller.timelineWindow(3L, 1, response).getData().size());
+        assertEquals("false", response.getHeader("X-Timeline-Has-More"));
+    }
 
     private static final long WORKITEM_ID = 55698L;
 
@@ -150,10 +218,12 @@ class WorkitemControllerTest {
         setContext(WorkspaceAccessLevel.READ_ONLY);
         PageResult<WorkitemVO> page = new PageResult<>(List.of(), 0L, 1, 20);
         when(service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
-                "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", null, null, 1, 20)).thenReturn(page);
+                "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", null, null, null, false,
+                1, 20)).thenReturn(page);
 
         assertSame(page, controller.list(null, null, null, null, null, false, null, null, null, null,
-                "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", null, null, 1, 20).getData());
+                "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", null, null, null, false,
+                1, 20).getData());
     }
 
     @Test
@@ -165,13 +235,13 @@ class WorkitemControllerTest {
         PageResult<WorkitemVO> page = new PageResult<>(List.of(), 0L, 1, 20);
         List<Long> creatorIds = List.of(12L, 34L);
         when(service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
-                null, null, creatorIds, null, 1, 20)).thenReturn(page);
+                null, null, creatorIds, null, null, false, 1, 20)).thenReturn(page);
 
         assertSame(page, controller.list(null, null, null, null, null, false, null, null, null, null,
-                null, null, creatorIds, null, 1, 20).getData());
+                null, null, creatorIds, null, null, false, 1, 20).getData());
 
         verify(service).list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
-                null, null, creatorIds, null, 1, 20);
+                null, null, creatorIds, null, null, false, 1, 20);
     }
 
     @Test
@@ -183,13 +253,67 @@ class WorkitemControllerTest {
         PageResult<WorkitemVO> page = new PageResult<>(List.of(), 0L, 1, 20);
         String tagConditions = "[{\"op\":\"AND\",\"tags\":[\"前端\"]}]";
         when(service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
-                null, null, null, tagConditions, 1, 20)).thenReturn(page);
+                null, null, null, tagConditions, null, false, 1, 20)).thenReturn(page);
 
         assertSame(page, controller.list(null, null, null, null, null, false, null, null, null, null,
-                null, null, null, tagConditions, 1, 20).getData());
+                null, null, null, tagConditions, null, false, 1, 20).getData());
 
         verify(service).list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
-                null, null, null, tagConditions, 1, 20);
+                null, null, null, tagConditions, null, false, 1, 20);
+    }
+
+    @Test
+    void listForwardsSquadFilterToService() {
+        WorkitemService service = mock(WorkitemService.class);
+        WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        PageResult<WorkitemVO> page = new PageResult<>(List.of(), 0L, 1, 20);
+        when(service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
+                null, null, null, null, "11,12", false, 1, 20)).thenReturn(page);
+
+        assertSame(page, controller.list(null, null, null, null, null, false, null, null, null, null,
+                null, null, null, null, "11,12", false, 1, 20).getData());
+
+        verify(service).list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
+                null, null, null, null, "11,12", false, 1, 20);
+    }
+
+    @Test
+    void listForwardsUnassignedSquadToService() {
+        WorkitemService service = mock(WorkitemService.class);
+        WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        PageResult<WorkitemVO> page = new PageResult<>(List.of(), 0L, 1, 20);
+        when(service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
+                null, null, null, null, null, true, 1, 20)).thenReturn(page);
+
+        assertSame(page, controller.list(null, null, null, null, null, false, null, null, null, null,
+                null, null, null, null, null, true, 1, 20).getData());
+
+        verify(service).list(null, null, null, null, null, false, null, 100L, 7L, null, null, null,
+                null, null, null, null, null, true, 1, 20);
+    }
+
+    @Test
+    void listReturnsHttp400WhenSquadFiltersAreMutuallyExclusive() throws Exception {
+        WorkitemService service = mock(WorkitemService.class);
+        WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
+                mock(WorkitemWatcherService.class), mock(WorkitemOwningWorkspaceResolver.class));
+        setContext(WorkspaceAccessLevel.READ_ONLY);
+        when(service.list(any(), any(), any(), any(), any(), anyBoolean(), any(), anyLong(), anyLong(),
+                any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), anyInt(), anyInt()))
+                .thenThrow(BizException.keyed(ErrorCode.PARAM_INVALID, "workitem.list.squad_filter.exclusive",
+                        null, "unassignedSquad cannot combine with squadIds"));
+        MockMvc http = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new GlobalExceptionHandler()).build();
+
+        http.perform(get("/api/workitems").param("squadIds", "11").param("unassignedSquad", "true"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value(ErrorCode.PARAM_INVALID.getCode()))
+                .andExpect(jsonPath("$.message").isNotEmpty());
     }
 
     private void setContext(WorkspaceAccessLevel accessLevel) {

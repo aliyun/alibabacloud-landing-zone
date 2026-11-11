@@ -131,7 +131,8 @@ public class Saml2FederationAdapter implements FederationProtocolAdapter {
         }
         return new ExternalIdentity(connection.getId(), connection.getIssuer(), subjectValue,
                 attributeValue(assertion, connection.getNameClaim(), "displayName", "name"),
-                attributeValue(assertion, connection.getEmailClaim(), "emailaddress", "email"));
+                attributeValue(assertion, connection.getEmailClaim(), "emailaddress", "email"),
+                feishuUserId(assertion, connection.getFeishuUserIdClaim()));
     }
 
     private String authnRequest(FederationConnectionDO connection, String callbackUrl, String requestId) {
@@ -329,6 +330,14 @@ public class Saml2FederationAdapter implements FederationProtocolAdapter {
             throw invalid(connection, "subject claim " + claim.trim() + " is missing from the assertion", null);
         }
         return value;
+    }
+
+    /** 飞书用户 ID 只按配置的属性名提取，不设默认字段；未配置或缺失时返回 null。 */
+    private String feishuUserId(Element assertion, String claim) {
+        if (claim == null || claim.isBlank()) {
+            return null;
+        }
+        return attributeValue(assertion, claim);
     }
 
     private String attributeValue(Element assertion, String claim, String... fallbacks) {

@@ -25,13 +25,17 @@ import com.aliyun.autowonder.environment.EnvironmentVariableDao;
 import com.aliyun.autowonder.workspace.WorkspaceDO;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.memory.MemoryDO;
+import com.aliyun.autowonder.memory.MemoryDao;
 import com.aliyun.autowonder.memory.MemoryScopeResolver;
 import com.aliyun.autowonder.repo.RepoDO;
 import com.aliyun.autowonder.repo.RepoDao;
+import com.aliyun.autowonder.sdlc.SdlcDao;
 import com.aliyun.autowonder.skill.SkillDO;
 import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.squad.SquadAttributionService;
 import com.aliyun.autowonder.squad.SquadMemberDao;
+import com.aliyun.autowonder.user.UserDO;
+import com.aliyun.autowonder.user.UserDao;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -54,6 +58,7 @@ public class AgentService {
     private final ExecutorDao executorDao;
     private final ExecutorRegistry executorRegistry;
     private final SkillDao capabilityDao;
+    private SdlcDao sdlcDao;
     private ChiefEffectiveConfigResolver chiefConfig;
 
     @Autowired
@@ -65,6 +70,20 @@ public class AgentService {
     private MemoryScopeResolver memoryScopeResolver;
     private SquadAttributionService squadAttributionService;
     private SquadMemberDao squadMemberDao;
+    private MemoryDao memoryDao;
+    private UserDao userDao;
+    /** Maximum submit note length accepted by POST /api/agents/{id}/submit. */
+    static final int SUBMIT_NOTE_MAX_LENGTH = 500;
+
+    @Autowired(required = false)
+    public void setMemoryDao(MemoryDao memoryDao) {
+        this.memoryDao = memoryDao;
+    }
+
+    @Autowired(required = false)
+    public void setUserDao(UserDao userDao) {
+        this.userDao = userDao;
+    }
 
     @Autowired(required = false)
     public void setMemoryScopeResolver(MemoryScopeResolver memoryScopeResolver) {
@@ -92,7 +111,29 @@ public class AgentService {
                         ExecutorDao executorDao, ExecutorRegistry executorRegistry,
                         SkillDao capabilityDao) {
         this(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
-                executorDao, executorRegistry, capabilityDao, null, null);
+                executorDao, executorRegistry, capabilityDao, null, null, null);
+    }
+
+    /** Test assembly that needs SDLC reference validation without the environment-variable wiring. */
+    AgentService(AgentDao agentDao, AgentVersionDao versionDao,
+                 AgentRepoPermDao repoPermDao, AgentSkillDao skillDao,
+                 AgentMemoryRefDao memoryRefDao, WorkspaceDao workspaceDao,
+                 ExecutorDao executorDao, ExecutorRegistry executorRegistry,
+                 SkillDao capabilityDao, SdlcDao sdlcDao) {
+        this(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
+                executorDao, executorRegistry, capabilityDao, null, null, sdlcDao);
+    }
+
+    /** Test assembly with environment-variable wiring but no SDLC resolver. */
+    AgentService(AgentDao agentDao, AgentVersionDao versionDao,
+                 AgentRepoPermDao repoPermDao, AgentSkillDao skillDao,
+                 AgentMemoryRefDao memoryRefDao, WorkspaceDao workspaceDao,
+                 ExecutorDao executorDao, ExecutorRegistry executorRegistry,
+                 SkillDao capabilityDao,
+                 AgentEnvironmentVariableRefDao environmentVariableRefDao,
+                 EnvironmentVariableDao environmentVariableDao) {
+        this(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
+                executorDao, executorRegistry, capabilityDao, environmentVariableRefDao, environmentVariableDao, null);
     }
 
     @Autowired
@@ -102,7 +143,8 @@ public class AgentService {
                         ExecutorDao executorDao, ExecutorRegistry executorRegistry,
                         SkillDao capabilityDao,
                         AgentEnvironmentVariableRefDao environmentVariableRefDao,
-                        EnvironmentVariableDao environmentVariableDao) {
+                        EnvironmentVariableDao environmentVariableDao,
+                        SdlcDao sdlcDao) {
         this.agentDao = agentDao;
         this.versionDao = versionDao;
         this.repoPermDao = repoPermDao;
@@ -114,6 +156,7 @@ public class AgentService {
         this.capabilityDao = capabilityDao;
         this.environmentVariableRefDao = environmentVariableRefDao;
         this.environmentVariableDao = environmentVariableDao;
+        this.sdlcDao = sdlcDao;
     }
 
     AgentService(AgentDao agentDao, AgentVersionDao versionDao,
@@ -127,6 +170,14 @@ public class AgentService {
     public AgentVO create(CreateAgentRequest req, long tenantId, long userId) {
         if (req.getName() == null || req.getName().isBlank()) {
             throw new BizException(ErrorCode.AGENT_NAME_REQUIRED);
+        }
+        Long sdlcId = req.getSdlcId();
+        if (sdlcId != null) {
+            // Validate before the first insert so a rejected reference leaves no agent or version
+            // behind; an absent resolver rejects the binding instead of storing it unverified.
+            if (sdlcDao == null || sdlcDao.findByIdForUpdate(sdlcId, tenantId) == null) {
+                throw new BizException(ErrorCode.SDLC_NOT_FOUND);
+            }
         }
         AgentDO agent = new AgentDO();
         agent.setTenantId(tenantId);
@@ -148,6 +199,7 @@ public class AgentService {
         v.setRoleCode(req.getRoleCode());
         v.setBusinessBackground(req.getBusinessBackground());
         v.setResponsibilities(req.getResponsibilities());
+        v.setSdlcId(sdlcId);
         v.setCreatorId(userId);
         versionDao.insert(v);
 
@@ -312,6 +364,16 @@ public class AgentService {
 
     @Transactional
     public AgentVO submit(long agentId, long tenantId, long userId) {
+        return submit(agentId, tenantId, userId, null);
+    }
+
+    /**
+     * Marks the draft as pending review. The optional note is normalized (blank becomes null) and
+     * validated before any state is touched; a too-long note is a caller error, not a conflict.
+     */
+    @Transactional
+    public AgentVO submit(long agentId, long tenantId, long userId, String note) {
+        String submitNote = normalizeSubmitNote(note);
         AgentDO agent = lockAgentInTenant(agentId, tenantId);
         if (agent.getEditingVersionId() == null) {
             throw new BizException(ErrorCode.AGENT_NOT_DRAFT);
@@ -321,10 +383,18 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_NOT_DRAFT);
         }
         reconcileApplicableMemories(agentId, tenantId, draft);
+        int version = draft.getVersion() == null ? 0 : draft.getVersion();
         int rows = versionDao.updateStatus(draft.getId(), tenantId, "PENDING_REVIEW",
-                null, null, null, draft.getVersion(), userId);
+                null, null, null, version, userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
+        }
+        if (submitNote != null) {
+            rows = versionDao.updateSubmitNote(draft.getId(), tenantId, submitNote,
+                    version + 1, userId);
+            if (rows == 0) {
+                throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
+            }
         }
         rows = agentDao.updateStatus(agent.getId(), tenantId, "PENDING_REVIEW",
                 agent.getOnlineVersionId(), agent.getEditingVersionId(), agent.getLatestVersionNo(),
@@ -333,6 +403,21 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
         return toSummaryVO(agentDao.findById(agentId));
+    }
+
+    private static String normalizeSubmitNote(String note) {
+        if (note == null) {
+            return null;
+        }
+        String trimmed = note.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (trimmed.length() > SUBMIT_NOTE_MAX_LENGTH) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "agent.submit_note_too_long",
+                    new Object[]{SUBMIT_NOTE_MAX_LENGTH}, "submit note length=" + trimmed.length());
+        }
+        return trimmed;
     }
 
     @Transactional
@@ -505,6 +590,7 @@ public class AgentService {
             sv.setStatus(v.getStatus());
             sv.setRoleName(v.getRoleName());
             sv.setRoleCode(v.getRoleCode());
+            sv.setSubmitNote(v.getSubmitNote());
             sv.setGmtCreate(v.getGmtCreate());
             result.add(sv);
         }
@@ -1003,6 +1089,9 @@ public class AgentService {
         vo.setSdlcId(v.getSdlcId());
         vo.setIdentityJson(v.getIdentityJson());
         vo.setEvolutionMode(evolutionModeFromIdentityJson(v.getIdentityJson()).name());
+        vo.setSubmitNote(v.getSubmitNote());
+        vo.setCreatorId(v.getCreatorId());
+        vo.setCreatorName(creatorName(v.getCreatorId()));
         vo.setReviewerId(v.getReviewerId());
         vo.setReviewComment(v.getReviewComment());
         vo.setReviewedAt(v.getReviewedAt());
@@ -1041,6 +1130,7 @@ public class AgentService {
                 AgentVersionVO.MemoryRefItem item = new AgentVersionVO.MemoryRefItem();
                 item.setMemoryId(m.getMemoryId());
                 item.setSource(m.getSource());
+                item.setTitle(memoryTitle(m.getMemoryId(), v.getTenantId()));
                 memoryRefs.add(item);
             }
         }
@@ -1075,6 +1165,31 @@ public class AgentService {
             return null;
         }
         return repo.getName();
+    }
+
+    /** 记忆标题只用于 diff 展示：记忆已删除、跨租户或依赖缺失时返回 null，由调用方回退为 #id。 */
+    private String memoryTitle(Long memoryId, Long tenantId) {
+        if (memoryDao == null || memoryId == null || tenantId == null) {
+            return null;
+        }
+        MemoryDO memory = memoryDao.findById(memoryId);
+        if (memory == null || memory.getTenantId() == null || !memory.getTenantId().equals(tenantId)) {
+            return null;
+        }
+        return memory.getTitle();
+    }
+
+    /** 提交人展示名：优先昵称，解析不到时返回 null，由前端回退为 #id。 */
+    private String creatorName(Long creatorId) {
+        if (userDao == null || creatorId == null) {
+            return null;
+        }
+        UserDO user = userDao.findById(creatorId);
+        if (user == null) {
+            return null;
+        }
+        String nickname = user.getNickname();
+        return nickname == null || nickname.isBlank() ? user.getUsername() : nickname;
     }
 
     AgentVO toVO(AgentDO a) {

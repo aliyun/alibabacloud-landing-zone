@@ -35,7 +35,17 @@ public interface ExecutorDao {
                                          @Param("clientKind") String clientKind,
                                          @Param("expectedVersion") Integer expectedVersion,
                                          @Param("modifierId") Long modifierId);
-    List<ExecutorDO> listByClientKind(@Param("clientKind") String clientKind);
+    /**
+     * Catalog candidates for one workspace only: an executor from another workspace must never publish a model list
+     * into this workspace's snapshot.
+     */
+    List<ExecutorDO> listByClientKindAndTenant(@Param("tenantId") Long tenantId,
+                                               @Param("clientKind") String clientKind);
+    /**
+     * Distinct workspace/client-kind pairs that still have a live executor, so the daily refresh covers every
+     * workspace instead of only the providers. Identity columns only.
+     */
+    List<ExecutorDO> listActiveTenantClientKinds();
     /**
      * Scan source for automatic upgrades: identity columns only. The reported version is presence
      * state in Redis ({@code exec:version:{id}}), never a column, so it is read per executor instead.

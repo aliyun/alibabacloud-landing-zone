@@ -90,7 +90,7 @@ public class ShareController {
 
     public record PreviewMetadata(String status, String name, Long size) {}
 
-    /** Keep the public shell on the existing capability URL; page routes require BUC SSO internally. */
+    /** Keep the public shell on the existing capability URL; page routes require authentication. */
     @GetMapping(value = "/api/share/workitems/{token}/{kind:requests|artifacts}/{id}", params = {"preview", "!metadata"})
     public ResponseEntity<Resource> preview(@PathVariable String token, @PathVariable String kind,
                                             @PathVariable long id) {

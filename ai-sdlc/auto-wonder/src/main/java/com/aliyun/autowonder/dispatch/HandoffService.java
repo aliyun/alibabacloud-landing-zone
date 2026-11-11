@@ -50,10 +50,16 @@ public class HandoffService {
     private final ApplicationEventPublisher eventPublisher;
     private ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator;
     private DispatchRecoveryService recoveryService;
+    private ExecutionAvailabilityService executionAvailabilityService;
 
     @Autowired
     public void setRecoveryService(DispatchRecoveryService recoveryService) {
         this.recoveryService = recoveryService;
+    }
+
+    @Autowired(required = false)
+    public void setExecutionAvailabilityService(ExecutionAvailabilityService service) {
+        this.executionAvailabilityService = service;
     }
 
 
@@ -131,7 +137,7 @@ public class HandoffService {
             // Replaying the source result must actively drain that PENDING row;
             // merely returning the id leaves a valid handoff stranded forever.
             if (DispatchStatus.PENDING.equals(existing.getStatus())) {
-                dispatchService.runPending(existing.getId());
+                dispatchService.runPendingAfterCommit(existing.getId());
             }
             return HandoffResult.agent(existing.getAgentId(), existing.getId());
         }
@@ -164,6 +170,16 @@ public class HandoffService {
             log.info("handoff target agent has no sdlc tenantId={} agentId={}", tenantId, targetAgentId);
             return HandoffResult.rejected("TARGET_AGENT_HAS_NO_SDLC", "target agent has no SDLC");
         }
+        if (executionAvailabilityService != null) {
+            try {
+                executionAvailabilityService.requireStartable(tenantId, targetAgentId, targetSdlcId);
+            } catch (BizException unavailable) {
+                String reason = ExecutionAvailabilityService.failureReason(unavailable);
+                log.info("handoff target rejected by management state workitemId={} targetAgentId={} reason={}",
+                        workitemId, targetAgentId, reason);
+                return HandoffResult.rejected(reason, unavailable.getMessage());
+            }
+        }
         SdlcStepDO first = sdlcResolver.firstStep(tenantId, targetSdlcId);
         if (first == null) {
             log.info("handoff target sdlc has no steps sdlcId={}", targetSdlcId);
@@ -182,7 +198,7 @@ public class HandoffService {
                 workitemId, to, targetAgentId, targetSdlcId, first.getId());
         DispatchDO d = dispatchService.enqueueHandoff(tenantId, workitemId,
                 first.getId(), targetAgentId, dispatchId, SYSTEM_USER_ID);
-        dispatchService.runPending(d.getId());
+        dispatchService.runPendingAfterCommit(d.getId());
         return HandoffResult.agent(targetAgentId, d.getId());
     }
 

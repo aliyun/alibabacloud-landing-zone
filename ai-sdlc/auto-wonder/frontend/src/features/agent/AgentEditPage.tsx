@@ -8,7 +8,7 @@ import { type FocusEvent, useRef, type KeyboardEvent } from 'react';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import {
   Alert, AutoComplete, Button, Card, Divider, Form, Input, Modal, Popconfirm, Result, Select,
-  Empty, Space, Spin, Tag, message} from 'antd';
+  Empty, Space, Spin, Tag, Typography, message} from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { SaveOutlined, SendOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -16,11 +16,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   useAgent, useAgentVersion, useEditConfig, useSubmitForReview, useUpdateAgent,
   useAddRepoPerm, useRemoveRepoPerm, useAddSkill, useRemoveSkill,
-  useAddEnvironmentVariableRef, useRemoveEnvironmentVariableRef,
+  useAddEnvironmentVariableRef, useRemoveEnvironmentVariableRef, useAgentSdlcOptions,
 } from './hooks';
 import { listRepos } from '@/features/repo/api';
 import { listSkills } from '@/features/skill/api';
-import { listSdlcTemplates } from '@/features/sdlc/api';
 import { getAgentRoleCodeOptions, getAgentRoleNameOptions, getEvolutionModeOptions, getRoleCodeByName, getRoleNameByCode } from './constants';
 import type { ColumnsType } from 'antd/es/table';
 import type { EvolutionMode, UpdateAgentRequest, UpdateConfigRequest } from './api';
@@ -175,6 +174,8 @@ export function AgentEditPage() {
   const [editingBranchPatterns, setEditingBranchPatterns] = useState<string[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([]);
   const [environmentModalOpen, setEnvironmentModalOpen] = useState(false);
+  const [submitNoteOpen, setSubmitNoteOpen] = useState(false);
+  const [submitNote, setSubmitNote] = useState('');
   const [selectedEnvironmentVariableId, setSelectedEnvironmentVariableId] = useState<number>();
   const [environmentBindingError, setEnvironmentBindingError] = useState<{ error: unknown }>();
   const [environmentMountError, setEnvironmentMountError] = useState<{ error: unknown }>();
@@ -231,11 +232,11 @@ export function AgentEditPage() {
   // Reference data — backend returns raw arrays; API types say PageResult but runtime is T[]
   const { data: reposRaw } = useQuery({ queryKey: ['repos', 1, 100], queryFn: () => listRepos({ page: 1, size: 100 }) });
   const { data: skillsRaw } = useQuery({ queryKey: ['skills', 1, 100], queryFn: () => listSkills({ page: 1, size: 100 }) });
-  const { data: sdlcsRaw } = useQuery({ queryKey: ['sdlcs', 1, 100], queryFn: () => listSdlcTemplates({ page: 1, size: 100 }) });
+  // 与创建页共用全量流程选项，避免只能看到前 100 条而在编辑时丢失已有绑定。
+  const sdlcOptions = useAgentSdlcOptions();
   // Safe extract: handle both PageResult and raw array
   const reposList = useMemo(() => extractList(reposRaw), [reposRaw]);
   const skillsList = useMemo(() => extractList(skillsRaw), [skillsRaw]);
-  const sdlcsList = useMemo(() => extractList(sdlcsRaw), [sdlcsRaw]);
   const mountedEnvironmentVariables = useMemo(
     () => uniqueBy(versionDetail?.environmentVariables ?? [], variable => variable.id),
     [versionDetail],
@@ -377,16 +378,28 @@ export function AgentEditPage() {
     }
     accessCommand('READ_WRITE', t('actions.submitReview'), async () => {
       try {
-        const values: AgentFormValues = await form.validateFields();
-        await persistForm(values);
-        await submitForReview.mutateAsync(agentId);
-        message.success(i18n.t('edit.submitted', { ns: 'agent' }));
-        navigate(`/agents/${agentId}`);
-      } catch (e: unknown) {
-        const msg = errorMessage(e, i18n.t('errors.submit', { ns: 'agent' }));
-        message.error(msg);
+        await form.validateFields();
+        setSubmitNoteOpen(true);
+      } catch {
+        // antd renders the field-level errors; the note dialog only opens for a valid form.
       }
     });
+  };
+
+  const handleConfirmSubmit = async () => {
+    try {
+      const values: AgentFormValues = await form.validateFields();
+      await persistForm(values);
+      const note = submitNote.trim();
+      await submitForReview.mutateAsync({ agentId, note: note || undefined });
+      setSubmitNoteOpen(false);
+      setSubmitNote('');
+      message.success(i18n.t('edit.submitted', { ns: 'agent' }));
+      navigate(`/agents/${agentId}`);
+    } catch (e: unknown) {
+      const msg = errorMessage(e, i18n.t('errors.submit', { ns: 'agent' }));
+      message.error(msg);
+    }
   };
 
   const handleRoleNameSelect = (value: string) => {
@@ -664,9 +677,6 @@ export function AgentEditPage() {
     ['SKILL', t('capabilityTypes.SKILL')], ['MCP', t('capabilityTypes.MCP')],
     ['PLUGIN', t('capabilityTypes.PLUGIN')], ['HOOK', t('capabilityTypes.HOOK')],
   ]);
-  const sdlcStatusLabels = new Map<string, string>([
-    ['DRAFT', t('sdlcStatus.DRAFT')], ['ENABLED', t('sdlcStatus.ENABLED')], ['DISABLED', t('sdlcStatus.DISABLED')],
-  ]);
   const repoColumns: ColumnsType<RepoPermRow> = [
     { title: t('fields.repository'), dataIndex: 'repoName' },
     { title: t('fields.permission'), dataIndex: 'permLevel', width: 100, render: (v: string) => <Tag>{permissionLabels.get(v) || v}</Tag> },
@@ -802,24 +812,29 @@ export function AgentEditPage() {
               onKeyDown={handleRoleCodeKeyDown}
             />
           </Form.Item>
-          <Form.Item label="SOUL.md" name={isPlatform ? undefined : "businessBackground"}>
-            <TextArea
-              readOnly={isPlatform}
-              value={isPlatform ? agent?.officialConfiguration?.businessBackground ?? versionDetail?.businessBackground : undefined}
-              ref={businessBackgroundRef}
-              rows={4}
-              placeholder={t('placeholders.background')}
-            />
-          </Form.Item>
-          <Form.Item label="AGENT.md" name={isPlatform ? undefined : "responsibilities"}>
-            <TextArea readOnly={isPlatform} value={isPlatform ? agent?.officialConfiguration?.responsibilities ?? versionDetail?.responsibilities : undefined} rows={4} placeholder={t('placeholders.responsibilities')} />
-          </Form.Item>
           {!isPlatform && (
-            <Form.Item label={t('fields.sdlc')} name="sdlcId">
-              <Select allowClear placeholder={t('placeholders.sdlc')}
-                options={sdlcsList.map(s => ({ value: s.id, label: t('namedLabel', { name: s.name, label: sdlcStatusLabels.get(s.status) || s.status }) })) || []}
-              />
-            </Form.Item>
+            <>
+              <Form.Item label={t('fields.sdlc')} name="sdlcId">
+                <Select allowClear showSearch optionFilterProp="label"
+                  placeholder={t('placeholders.sdlc')}
+                  loading={sdlcOptions.isLoading}
+                  options={sdlcOptions.options}
+                  aria-label={t('fields.sdlc')}
+                />
+              </Form.Item>
+              {sdlcOptions.isError && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={t('edit.sdlcLoadFailed')}
+                  action={
+                    <Button size="small" onClick={() => { void sdlcOptions.refetch(); }}>
+                      {t('actions.retry')}
+                    </Button>
+                  }
+                />
+              )}
+            </>
           )}
           <Form.Item
             label={t('fields.evolution')}
@@ -843,6 +858,18 @@ export function AgentEditPage() {
                 );
               }}
             />
+          </Form.Item>
+          <Form.Item label="SOUL.md" name={isPlatform ? undefined : "businessBackground"}>
+            <TextArea
+              readOnly={isPlatform}
+              value={isPlatform ? agent?.officialConfiguration?.businessBackground ?? versionDetail?.businessBackground : undefined}
+              ref={businessBackgroundRef}
+              rows={10}
+              placeholder={t('placeholders.background')}
+            />
+          </Form.Item>
+          <Form.Item label="AGENT.md" name={isPlatform ? undefined : "responsibilities"}>
+            <TextArea readOnly={isPlatform} value={isPlatform ? agent?.officialConfiguration?.responsibilities ?? versionDetail?.responsibilities : undefined} rows={10} placeholder={t('placeholders.responsibilities')} />
           </Form.Item>
         </Form>
       </Card>
@@ -1056,6 +1083,31 @@ export function AgentEditPage() {
             }))}
           />
         )}
+      </Modal>
+
+      <Modal
+        title={t('submit.title')}
+        open={submitNoteOpen}
+        destroyOnClose
+        okText={t('submit.confirm')}
+        cancelText={t('actions.cancel')}
+        confirmLoading={submitForReview.isPending}
+        onOk={handleConfirmSubmit}
+        onCancel={() => setSubmitNoteOpen(false)}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <span>{t('submit.noteLabel')}</span>
+          <Input.TextArea
+            rows={3}
+            maxLength={500}
+            showCount
+            aria-label={t('submit.noteLabel')}
+            placeholder={t('submit.notePlaceholder')}
+            value={submitNote}
+            onChange={(event) => setSubmitNote(event.target.value)}
+          />
+          <Typography.Text type="secondary">{t('submit.noteHint')}</Typography.Text>
+        </Space>
       </Modal>
     </div>
   );

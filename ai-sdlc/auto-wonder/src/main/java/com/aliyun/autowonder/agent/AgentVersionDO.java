@@ -18,6 +18,7 @@ public class AgentVersionDO {
     private String responsibilities;
     private Long sdlcId;
     private String identityJson;
+    private String submitNote;
     private Long reviewerId;
     private String reviewComment;
     private Date reviewedAt;

@@ -16,9 +16,22 @@ class ExecutorLaunchCommandParserTest {
             + " --token 'raw secret' --executor-id 7 --provider qoder --memory-mode platform --max-tasks 5"
             + " --model auto --reasoning-effort medium --context-window 260000 --token-aware-enable";
 
+    @Test void acceptsScopedCommandsAndHistoricalCommandsAgainstScopedBaseline() {
+        String scoped = COMMAND.replace("autowonder@0.3.8", "@alicloud/autowonder@0.3.33");
+        assertEquals("0.3.33", ExecutorLaunchCommandParser.parse(scoped, COMMAND, 1).getRuntimeVersion());
+        assertEquals("0.3.8", ExecutorLaunchCommandParser.parse(COMMAND, scoped, 1).getRuntimeVersion());
+        assertNull(ExecutorLaunchCommandParser.parse(scoped.replace("@alicloud/", ""), scoped, 1).getRuntimeVersion());
+        for (String spec : List.of("@other/autowonder@0.3.33", "@alicloud/other@0.3.33",
+                "autowonder@evil@0.3.33", "@alicloud/autowonder@evil@0.3.33",
+                "@alicloud/autowonder@latest", "@alicloud/autowonder@0.3.33-beta.1")) {
+            assertThrows(BizException.class, () -> ExecutorLaunchCommandParser.parse(
+                    COMMAND.replace("autowonder@0.3.8", spec), scoped, 1));
+        }
+    }
+
     @AfterEach void clearLocale() { LocaleContextHolder.resetLocaleContext(); }
 
-    @Test void parsesVersionWorkspaceAndExistingOptionsWithoutLosingQuotedValues() {
+    @Test void parsesExplicitVersionChangesAndOtherLaunchOptions() {
         var config = ExecutorLaunchCommandParser.parse(COMMAND.replace("@0.3.8", "@0.3.9")
                 .replace("--max-tasks 5", "--max-tasks=3")
                 + " --workspace-root '/data/任务 a' --name 'owner'\\''s machine' --debug", COMMAND, 9);
@@ -29,6 +42,14 @@ class ExecutorLaunchCommandParserTest {
         assertEquals("auto", config.getModel());
         assertEquals(9, config.getVersion());
         assertTrue(config.getDebug());
+    }
+
+    @Test void onlyAnExplicitVersionChangePinsTheVersion() {
+        var pinned = ExecutorLaunchCommandParser.parse(COMMAND, COMMAND, 1);
+        var recommended = ExecutorLaunchCommandParser.parse(COMMAND.replace("@0.3.8", "@0.3.30"), COMMAND, 1);
+        assertNull(pinned.getRuntimeVersion());
+        assertEquals("0.3.30", recommended.getRuntimeVersion());
+        assertEquals(pinned.getModel(), recommended.getModel());
     }
 
     @Test void absentOptionalFlagsExplicitlyClearPreviousOverrides() {
@@ -42,7 +63,7 @@ class ExecutorLaunchCommandParserTest {
         String continuation = " " + '\\' + '\n' + "  ";
         var config = ExecutorLaunchCommandParser.parse(COMMAND.replace(" connect ", " connect" + continuation), COMMAND, 1);
         assertEquals("auto", config.getModel());
-        assertEquals("0.3.8", config.getRuntimeVersion());
+        assertNull(config.getRuntimeVersion());
     }
 
     @Test void rejectsShellExecutionUnknownFlagsAndAmbiguousCommandsWithoutEchoingSecrets() {

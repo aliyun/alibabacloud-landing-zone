@@ -197,7 +197,11 @@
     "offline": " (Offline, delivered later)",
     "placeholder": "Comment on this run; type @ to select members...",
     "send": "Send",
-    "disabledReason": " ({{reason}})"
+    "disabledReason": " ({{reason}})",
+    "mentionSquadName": " ({{squad}})",
+    "mentionGroupCurrentSquad": "Current delivery squad: {{squad}}",
+    "mentionGroupCurrentSquadUnknown": "Current delivery squad",
+    "mentionGroupOthers": "Other squad members"
   },
   "workitems": {
     "doneReason": "The work item is complete; its schedule cannot be changed",

@@ -33,19 +33,22 @@ public class FederatedIdentityService {
     private final UserDao userDao;
     private final FederationStateStore stateStore;
     private final SessionIssuanceService sessionIssuanceService;
+    private final SsoIdentityAttributeSyncService attributeSyncService;
 
     public FederatedIdentityService(FederatedIdentityDao identityDao,
                                     FederationConnectionDao connectionDao,
                                     FederationRegistryService registryService,
                                     UserDao userDao,
                                     FederationStateStore stateStore,
-                                    SessionIssuanceService sessionIssuanceService) {
+                                    SessionIssuanceService sessionIssuanceService,
+                                    SsoIdentityAttributeSyncService attributeSyncService) {
         this.identityDao = identityDao;
         this.connectionDao = connectionDao;
         this.registryService = registryService;
         this.userDao = userDao;
         this.stateStore = stateStore;
         this.sessionIssuanceService = sessionIssuanceService;
+        this.attributeSyncService = attributeSyncService;
     }
 
     public List<FederatedIdentityVO> listMine(Long userId) {
@@ -118,6 +121,9 @@ public class FederatedIdentityService {
         requireActiveUser(user);
         createBinding(toIdentity(data), user.getId());
         stateStore.deleteTicket(ticket);
+        // 手动绑定路径同样按规则同步飞书身份；同步失败不影响绑定与登录。
+        attributeSyncService.syncFeishu(user.getId(),
+                connectionDao.findById(data.getProviderId()), toIdentity(data));
         return sessionIssuanceService.issue(user);
     }
 
@@ -128,7 +134,10 @@ public class FederatedIdentityService {
         requireActiveUser(userDao.findById(userId));
         FederatedIdentityDO binding = createBinding(toIdentity(data), userId);
         stateStore.deleteTicket(ticket);
-        return toVO(binding, connectionDao.findById(binding.getProviderId()));
+        FederationConnectionDO connection = connectionDao.findById(binding.getProviderId());
+        // 与其他绑定路径一致：核心绑定成功后按飞书通道同步，失败不影响认领结果。
+        attributeSyncService.syncFeishu(userId, connection, toIdentity(data));
+        return toVO(binding, connection);
     }
 
     public void unbind(Long userId, Long identityId) {
@@ -146,10 +155,13 @@ public class FederatedIdentityService {
         identityDao.deleteById(identity.getId());
     }
 
-    /** 停用状态与密码字段解耦：纯 SSO 账号（无 password_hash）同样被拦下。 */
+    /** 停用/待审状态与密码字段解耦：纯 SSO 账号（无 password_hash）同样被拦下。 */
     static void requireActiveUser(UserDO user) {
         if (user == null || Integer.valueOf(1).equals(user.getStatus())) {
             throw new BizException(ErrorCode.FEDERATION_ACCOUNT_DISABLED);
+        }
+        if (Integer.valueOf(2).equals(user.getStatus())) {
+            throw new BizException(ErrorCode.USER_REGISTRATION_PENDING_REVIEW);
         }
     }
 
@@ -163,7 +175,7 @@ public class FederatedIdentityService {
 
     private static ExternalIdentity toIdentity(FederationTicket ticket) {
         return new ExternalIdentity(ticket.getProviderId(), ticket.getIssuer(), ticket.getSubject(),
-                ticket.getDisplayName(), ticket.getEmail());
+                ticket.getDisplayName(), ticket.getEmail(), ticket.getFeishuUserId());
     }
 
     private static FederatedIdentityVO toVO(FederatedIdentityDO identity, FederationConnectionDO connection) {

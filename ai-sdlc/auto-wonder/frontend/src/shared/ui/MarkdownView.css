@@ -2,6 +2,9 @@
 .aw-markdown pre { background: var(--aw-raised); border: 1px solid var(--aw-border); border-radius: 8px; padding: 12px; }
 .aw-markdown code { background: var(--aw-raised); border-radius: 4px; padding: 1px 4px; }
 .aw-markdown pre code { background: transparent; padding: 0; }
+.aw-markdown-copy-block { position: relative; }
+.aw-markdown-copy-block pre { padding-top: 36px; }
+.aw-markdown-copy-button { position: absolute; top: 6px; right: 6px; }
 .aw-markdown blockquote { border-left: 3px solid var(--aw-border); color: var(--aw-muted); padding-left: 12px; }
 .aw-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .aw-markdown th, .aw-markdown td { border: 1px solid var(--aw-border); padding: 6px 10px; }

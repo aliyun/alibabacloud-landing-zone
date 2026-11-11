@@ -12,6 +12,9 @@ public class PackageContext {
     private Long dispatchId;
     /** Direct predecessor selected by handoff/continue idempotency; null for root dispatches. */
     private Long sourceDispatchId;
+    private Long deliveryRoundId;
+    private String workflowSnapshotSha256;
+    private java.util.List<java.util.Map<String, Object>> externalOperations;
     private Long workitemId;
     private Long agentId;
     private Long sdlcStepId;
@@ -50,6 +53,13 @@ public class PackageContext {
 
     /** Workitem-level Markdown requirement/design documents uploaded by users or MCP. */
     private List<TaskArtifactRef> requirementDocuments;
+
+    /**
+     * Frozen PRD inputs for PRD-driven delivery, or null when the workitem keeps its original
+     * delivery path. Resolved and digest-verified before packaging, so this can never point at a
+     * version the user did not confirm.
+     */
+    private PrdDesignPackage prdDesign;
 
     private Integer attempt;
     private String workType;

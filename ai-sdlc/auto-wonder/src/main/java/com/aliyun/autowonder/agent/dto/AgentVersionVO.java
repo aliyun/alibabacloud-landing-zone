@@ -22,6 +22,11 @@ public class AgentVersionVO {
     private Long sdlcId;
     private String identityJson;
     private String evolutionMode;
+    /** Optional submitter note captured when the version entered review. */
+    private String submitNote;
+    private Long creatorId;
+    /** Submitter display name for the review header; null when it cannot be resolved. */
+    private String creatorName;
     private Long reviewerId;
     private String reviewComment;
     private Date reviewedAt;
@@ -55,5 +60,7 @@ public class AgentVersionVO {
     public static class MemoryRefItem {
         private Long memoryId;
         private String source;
+        /** Memory title for diff display; null when the memory was removed or is not resolvable. */
+        private String title;
     }
 }

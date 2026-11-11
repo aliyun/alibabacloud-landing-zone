@@ -204,6 +204,7 @@ class ExecutorUpdateServiceTest {
         assertEquals(7L, frame.getLongValue("executorId"));
         assertEquals(vo.getRequestId(), frame.getString("requestId"));
         assertEquals(TARGET, frame.getString("targetVersion"));
+        assertEquals(Boolean.TRUE, frame.get("resultReceiptAck"));
         assertNotNull(frame.getString("issuedAt"), "the client expires commands by this timestamp");
 
         ExecutorUpdateTaskDO task = stored();
@@ -365,12 +366,28 @@ class ExecutorUpdateServiceTest {
 
     @Test void heartbeatAutomaticUpdatesRespectAnExplicitVersionInTheSavedCommand() {
         ExecutorDO pinned = executor(7, 1, "pinned");
-        pinned.setLaunchConfig("{\"runtimeVersion\":\"0.2.150\"}");
+        pinned.setLaunchConfig("{\"runtimeVersion\":\"0.2.150\",\"runtimeVersionPinned\":true}");
         when(executorDao.findById(7L)).thenReturn(pinned);
         when(presence.currentVersion(7L)).thenReturn(BEHIND);
         service.onHeartbeat(session, versionFrame(BEHIND));
         assertEquals(0, taskDao.size());
         verify(redis, never()).publish(anyString(), anyString());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "{\"runtimeVersion\":\"0.2.150\"}",
+            "{\"runtimeVersion\":\"0.2.150\",\"runtimeVersionPinned\":null}",
+            "{\"runtimeVersion\":\"0.2.150\",\"runtimeVersionPinned\":false}",
+            "{\"runtimeVersion\":null,\"runtimeVersionPinned\":true}"
+    })
+    void heartbeatAutomaticUpdatesIgnoreLegacyVersionsWithoutAnExplicitPin(String config) {
+        ExecutorDO legacy = executor(7, 1, "legacy");
+        legacy.setLaunchConfig(config);
+        when(executorDao.findById(7L)).thenReturn(legacy);
+        service.onHeartbeat(session, versionFrame(BEHIND));
+        assertEquals("AUTO", stored().getSource());
+        assertEquals(TARGET, stored().getTargetVersion());
     }
 
     /**
@@ -645,6 +662,160 @@ class ExecutorUpdateServiceTest {
     }
 
     // ------------------------------------------------------------ phase reports
+
+    @Test
+    void receiptProbeNegotiatesSupportWithoutAcknowledgingOrChangingActiveAndTerminalTasks() throws Exception {
+        service.updateOne(7, 1, 3L);
+        Session socket = mock(Session.class);
+        RemoteEndpoint.Basic remote = mock(RemoteEndpoint.Basic.class);
+        when(socket.getBasicRemote()).thenReturn(remote);
+        ExecutorSession connected = new ExecutorSession(7, 8, 1, socket);
+        JSONObject probe = phase(stored().getRequestId(), "receipt_probe");
+        probe.put("receiptId", "probe-1");
+        service.onUpgradeResult(connected, probe);
+        assertEquals("PENDING", stored().getStatus());
+        assertEquals(0, stored().getAttemptCount());
+        service.onUpgradeResult(session, success(stored().getRequestId(), TARGET));
+        Date completed = stored().getCompletedAt();
+        service.onUpgradeResult(connected, probe);
+        assertEquals("SUCCESS", stored().getStatus());
+        assertEquals(completed, stored().getCompletedAt());
+        ArgumentCaptor<String> frames = ArgumentCaptor.forClass(String.class);
+        verify(remote, times(2)).sendText(frames.capture());
+        for (String wire : frames.getAllValues()) {
+            JSONObject support = JSONObject.parseObject(wire);
+            assertEquals("EXECUTOR_UPGRADE_RESULT_SUPPORT", support.getString("type"));
+            assertEquals(stored().getRequestId(), support.getString("requestId"));
+            assertEquals("probe-1", support.getString("receiptId"));
+        }
+    }
+
+    @Test
+    void unknownForeignAndMalformedReceiptProbesReceiveNoSupport() throws Exception {
+        service.updateOne(7, 1, 3L);
+        Session socket = mock(Session.class);
+        RemoteEndpoint.Basic remote = mock(RemoteEndpoint.Basic.class);
+        when(socket.getBasicRemote()).thenReturn(remote);
+        ExecutorSession connected = new ExecutorSession(7, 8, 1, socket);
+        JSONObject probe = phase(stored().getRequestId(), "receipt_probe");
+        for (Object receipt : java.util.Arrays.asList(null, "", " ", "x".repeat(129), 123)) {
+            probe.put("receiptId", receipt);
+            service.onUpgradeResult(connected, probe);
+        }
+        probe.put("receiptId", "probe-1");
+        service.onUpgradeResult(new ExecutorSession(7, 8, 2, socket), probe);
+        service.onUpgradeResult(new ExecutorSession(9, 8, 1, socket), probe);
+        probe.put("requestId", "unknown");
+        service.onUpgradeResult(connected, probe);
+        assertEquals("PENDING", stored().getStatus());
+        assertEquals(0, stored().getAttemptCount());
+        verify(remote, never()).sendText(anyString());
+    }
+
+    @Test
+    void legacyPreRestartSuccessWaitsForTargetHeartbeat() {
+        service.updateOne(7, 1, 3L);
+        service.onUpgradeResult(session, success(stored().getRequestId(), BEHIND));
+        assertEquals("UPDATING", stored().getStatus());
+        assertNull(stored().getCompletedAt());
+        verify(presence, never()).recordVersion(anyLong(), anyString());
+        JSONObject heartbeat = new JSONObject();
+        heartbeat.put("version", TARGET);
+        service.onHeartbeat(session, heartbeat);
+        assertEquals("SUCCESS", stored().getStatus());
+    }
+
+    @Test
+    void terminalRollbackReceiptIsAcknowledgedAndDuplicateDoesNotConsumeAttempts() throws Exception {
+        service.updateOne(7, 1, 3L);
+        Session socket = mock(Session.class);
+        RemoteEndpoint.Basic remote = mock(RemoteEndpoint.Basic.class);
+        when(socket.getBasicRemote()).thenReturn(remote);
+        ExecutorSession connected = new ExecutorSession(7, 8, 1, socket);
+        JSONObject result = failed(stored().getRequestId(), "candidate failed to start; rolled back");
+        result.put("receiptId", "startup-transaction-1");
+        result.put("terminal", true);
+        service.onUpgradeResult(connected, result);
+        assertEquals("FAILED", stored().getStatus());
+        assertEquals(1, stored().getAttemptCount());
+        service.onUpgradeResult(connected, result);
+        assertEquals(1, stored().getAttemptCount());
+        ArgumentCaptor<String> frames = ArgumentCaptor.forClass(String.class);
+        verify(remote, times(2)).sendText(frames.capture());
+        for (String wire : frames.getAllValues()) {
+            JSONObject ack = JSONObject.parseObject(wire);
+            assertEquals("EXECUTOR_UPGRADE_RESULT_ACK", ack.getString("type"));
+            assertEquals(stored().getRequestId(), ack.getString("requestId"));
+            assertEquals("startup-transaction-1", ack.getString("receiptId"));
+        }
+    }
+
+    @Test
+    void successReceiptReplaysAfterLostAckWithoutChangingTerminalState() throws Exception {
+        service.updateOne(7, 1, 3L);
+        Session socket = mock(Session.class);
+        RemoteEndpoint.Basic remote = mock(RemoteEndpoint.Basic.class);
+        when(socket.getBasicRemote()).thenReturn(remote);
+        ExecutorSession connected = new ExecutorSession(7, 8, 1, socket);
+        JSONObject result = success(stored().getRequestId(), TARGET);
+        result.put("receiptId", "startup-success-1");
+        doThrow(new java.io.IOException("connection lost")).doNothing().when(remote).sendText(anyString());
+        service.onUpgradeResult(connected, result);
+        Date completed = stored().getCompletedAt();
+        service.onUpgradeResult(connected, result);
+        assertEquals("SUCCESS", stored().getStatus());
+        assertEquals(completed, stored().getCompletedAt());
+        assertEquals(0, stored().getAttemptCount());
+        verify(remote, times(2)).sendText(contains("EXECUTOR_UPGRADE_RESULT_ACK"));
+        verify(presence, times(1)).recordVersion(7L, TARGET);
+    }
+
+    @Test
+    void legacyFailuresStillRetryAndLegacySuccessDoesNotReceiveUnknownAck() throws Exception {
+        service.updateOne(7, 1, 3L);
+        Session socket = mock(Session.class);
+        RemoteEndpoint.Basic remote = mock(RemoteEndpoint.Basic.class);
+        when(socket.getBasicRemote()).thenReturn(remote);
+        ExecutorSession connected = new ExecutorSession(7, 8, 1, socket);
+        JSONObject result = failed(stored().getRequestId(), "legacy failure");
+        result.put("terminal", true); // A standalone flag must not activate the new protocol.
+        service.onUpgradeResult(connected, result);
+        assertEquals("PENDING", stored().getStatus());
+        assertEquals(1, stored().getAttemptCount());
+        service.onUpgradeResult(connected, success(stored().getRequestId(), TARGET));
+        assertEquals("SUCCESS", stored().getStatus());
+        verify(remote, never()).sendText(anyString());
+    }
+
+    @Test
+    void malformedOrNonterminalReceiptsNeverConsumeAttemptsOrReceiveAck() throws Exception {
+        service.updateOne(7, 1, 3L);
+        Session socket = mock(Session.class);
+        RemoteEndpoint.Basic remote = mock(RemoteEndpoint.Basic.class);
+        when(socket.getBasicRemote()).thenReturn(remote);
+        ExecutorSession connected = new ExecutorSession(7, 8, 1, socket);
+        for (String receipt : List.of("", " ", "x".repeat(129), "valid-but-not-terminal")) {
+            JSONObject result = failed(stored().getRequestId(), "not a startup outcome");
+            result.put("receiptId", receipt);
+            service.onUpgradeResult(connected, result);
+        }
+        assertEquals("PENDING", stored().getStatus());
+        assertEquals(0, stored().getAttemptCount());
+        verify(remote, never()).sendText(anyString());
+    }
+
+    @Test
+    void foreignTenantCannotReportOrReceiveReceiptAck() throws Exception {
+        service.updateOne(7, 1, 3L);
+        Session socket = mock(Session.class);
+        RemoteEndpoint.Basic remote = mock(RemoteEndpoint.Basic.class);
+        when(socket.getBasicRemote()).thenReturn(remote);
+        JSONObject result = success(stored().getRequestId(), TARGET);
+        result.put("receiptId", "startup-1");
+        service.onUpgradeResult(new ExecutorSession(7, 8, 2, socket), result);
+        assertEquals("PENDING", stored().getStatus());
+        verify(remote, never()).sendText(anyString());
+    }
 
     @Test
     void phaseReportsDriveTheTaskThroughDrainingUpdatingAndSuccess() {

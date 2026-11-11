@@ -1,3 +1,5 @@
+import { useAuthStore } from '@/shared/auth/store';
+import { getRealtimeAccessToken } from '@/shared/api/client';
 import type { RealtimeEvent, EventHandler, Subscription, ConnectionState } from './types';
 
 function normalizeWsProtocol(protocol: string): string {
@@ -45,7 +47,9 @@ export class RealtimeClient {
   private _state: ConnectionState = 'disconnected';
   private stateListeners = new Set<(s: ConnectionState) => void>();
 
-  constructor(url: string) {
+  private generation = 0;
+
+  constructor(url: string, private readonly credentials?: () => Promise<string | null>) {
     this.url = url;
   }
 
@@ -59,24 +63,31 @@ export class RealtimeClient {
   }
 
   private setState(s: ConnectionState) {
+    if (this._state === s) return;
     this._state = s;
     this.stateListeners.forEach((l) => l(s));
   }
 
   connect(token: string) {
+    if (this.token === token && this._state !== 'disconnected') return;
+    this.disconnect();
     this.token = token;
     this.doConnect();
   }
 
-  disconnect() {
+  disconnect(clearSubscriptions = false) {
+    if (clearSubscriptions) {
+      this.subscribers.clear();
+      this.serverSubscribedChannels.clear();
+    }
+    this.generation++;
+    this.setState('disconnected');
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     this.ws?.close();
     this.ws = null;
-    this.serverSubscribedChannels.clear();
-    this.setState('disconnected');
   }
 
   subscribe(channel: string, handler: EventHandler): Subscription {
@@ -109,7 +120,10 @@ export class RealtimeClient {
   }
 
   private isServerSubscriptionChannel(channel: string): boolean {
-    return channel.startsWith('conversation:') || channel.startsWith('scheduled-run:') || channel.startsWith('dispatch:');
+    return channel.startsWith('conversation:')
+      || channel.startsWith('scheduled-run:')
+      || channel.startsWith('dispatch:')
+      || channel.startsWith('notification:');
   }
 
   private sendServerSubscribe(channel: string) {
@@ -135,17 +149,36 @@ export class RealtimeClient {
   }
 
   private doConnect() {
+    const generation = ++this.generation;
     this.setState('connecting');
-    this.ws = new WebSocket(this.url);
+    if (this.credentials) {
+      void this.credentials().then(token => {
+        if (generation !== this.generation) return;
+        if (!token) { this.disconnect(); return; }
+        this.token = token;
+        this.openSocket(generation);
+      }).catch(() => {
+        if (generation === this.generation) this.scheduleReconnect();
+      });
+    } else {
+      this.openSocket(generation);
+    }
+  }
 
-    this.ws.onopen = () => {
+  private openSocket(generation: number) {
+    const socket = new WebSocket(this.url);
+    this.ws = socket;
+
+    socket.onopen = () => {
+      if (generation !== this.generation) return;
       this.ws!.send(JSON.stringify({ type: 'auth', token: this.token }));
       this.reconnectAttempt = 0;
       this.setState('connected');
       this.resubscribeAll();
     };
 
-    this.ws.onmessage = (e: MessageEvent) => {
+    socket.onmessage = (e: MessageEvent) => {
+      if (generation !== this.generation) return;
       try {
         const event = JSON.parse(e.data) as RealtimeEvent;
         const handlers = this.subscribers.get(event.channel);
@@ -155,13 +188,15 @@ export class RealtimeClient {
       } catch { /* malformed message, skip */ }
     };
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (generation !== this.generation) return;
       if (this._state === 'disconnected') return;
       this.scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
-      this.ws?.close();
+    socket.onerror = () => {
+      if (generation !== this.generation) return;
+      socket.close();
     };
   }
 
@@ -179,7 +214,17 @@ let _instance: RealtimeClient | null = null;
 
 export function getRealtimeClient(): RealtimeClient {
   if (!_instance) {
-    _instance = new RealtimeClient(buildRealtimeUrl());
+    _instance = new RealtimeClient(buildRealtimeUrl(), getRealtimeAccessToken);
+    useAuthStore.subscribe((state, previous) => {
+      if (state.accessToken === previous.accessToken && state.currentWorkspace?.id === previous.currentWorkspace?.id && state.user?.id === previous.user?.id) return;
+      // No subscription survives logout or a workspace/identity switch.
+      if (!state.accessToken || state.currentWorkspace?.id !== previous.currentWorkspace?.id
+          || state.user?.id !== previous.user?.id) {
+        _instance!.disconnect(true);
+        return;
+      }
+      _instance!.connect(state.accessToken);
+    });
   }
   return _instance;
 }

@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.auth.federation;
 
 import com.aliyun.autowonder.auth.federation.dto.SsoBindRequest;
+import com.aliyun.autowonder.auth.federation.dto.SsoLoginConfigVO;
 import com.aliyun.autowonder.auth.federation.dto.SsoProviderVO;
 import com.aliyun.autowonder.auth.federation.dto.SsoTicketRequest;
 import com.aliyun.autowonder.common.error.BizException;
@@ -25,8 +26,9 @@ class FederationAuthControllerTest {
     private final FederationRegistryService registryService = mock(FederationRegistryService.class);
     private final FederationLoginService loginService = mock(FederationLoginService.class);
     private final FederatedIdentityService identityService = mock(FederatedIdentityService.class);
+    private final PlatformAuthConfigService authConfigService = mock(PlatformAuthConfigService.class);
     private final FederationAuthController controller =
-            new FederationAuthController(registryService, loginService, identityService);
+            new FederationAuthController(registryService, loginService, identityService, authConfigService);
 
     @Test
     void providersAreForwardedVerbatim() {
@@ -37,10 +39,22 @@ class FederationAuthControllerTest {
     }
 
     @Test
-    void startRedirectsTheBrowserToTheIdpAuthorizationUrl() {
-        when(loginService.startLogin(7L)).thenReturn("https://adfs.corp.example.com/adfs/ls?SAMLRequest=x");
+    void loginConfigExposesOnlyTheRegistrationSwitchAndDefaultProvider() {
+        when(authConfigService.registrationEnabled()).thenReturn(false);
+        when(authConfigService.defaultProviderId()).thenReturn(7L);
 
-        ResponseEntity<Void> response = controller.start(7L);
+        SsoLoginConfigVO config = controller.loginConfig().getData();
+
+        assertEquals(Boolean.FALSE, config.getRegistrationEnabled());
+        assertEquals(7L, config.getDefaultProviderId());
+    }
+
+    @Test
+    void startRedirectsTheBrowserToTheIdpAuthorizationUrl() {
+        when(loginService.startLogin(7L, null))
+                .thenReturn("https://adfs.corp.example.com/adfs/ls?SAMLRequest=x");
+
+        ResponseEntity<Void> response = controller.start(7L, null);
 
         assertEquals(HttpStatus.SEE_OTHER, response.getStatusCode());
         assertEquals(URI.create("https://adfs.corp.example.com/adfs/ls?SAMLRequest=x"),
@@ -48,11 +62,22 @@ class FederationAuthControllerTest {
     }
 
     @Test
+    void startForwardsTheValidatedReturnTargetToTheLoginService() {
+        when(loginService.startLogin(7L, "/workitems/42"))
+                .thenReturn("https://adfs.corp.example.com/adfs/ls?SAMLRequest=x");
+
+        ResponseEntity<Void> response = controller.start(7L, "/workitems/42");
+
+        assertEquals(HttpStatus.SEE_OTHER, response.getStatusCode());
+        verify(loginService).startLogin(7L, "/workitems/42");
+    }
+
+    @Test
     void startFailureLandsOnTheCompletePageWithTheBizErrorCode() {
-        when(loginService.startLogin(7L))
+        when(loginService.startLogin(7L, null))
                 .thenThrow(new BizException(ErrorCode.FEDERATION_CONNECTION_NOT_FOUND));
 
-        ResponseEntity<Void> response = controller.start(7L);
+        ResponseEntity<Void> response = controller.start(7L, null);
 
         assertEquals(HttpStatus.SEE_OTHER, response.getStatusCode());
         assertEquals(URI.create("/sso/complete?error=36001"), response.getHeaders().getLocation());
@@ -60,9 +85,9 @@ class FederationAuthControllerTest {
 
     @Test
     void startUnexpectedFailureLandsOnTheCompletePageWithConfigInvalid() {
-        when(loginService.startLogin(7L)).thenThrow(new IllegalStateException("boom"));
+        when(loginService.startLogin(7L, null)).thenThrow(new IllegalStateException("boom"));
 
-        ResponseEntity<Void> response = controller.start(7L);
+        ResponseEntity<Void> response = controller.start(7L, null);
 
         assertEquals(URI.create("/sso/complete?error=36002"), response.getHeaders().getLocation());
     }

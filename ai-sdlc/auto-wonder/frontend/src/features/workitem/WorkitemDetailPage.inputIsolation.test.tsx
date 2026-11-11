@@ -44,7 +44,7 @@ function setupHandlers() {
       success: true, code: '0', message: '', traceId: null, data: mockWorkitem,
     })),
     http.get('/api/workitems/1/dispatch-requests', () => HttpResponse.json({ success: true, code: '0', data: [] })),
-    http.get('/api/workitems/1/unified-timeline', () => HttpResponse.json({
+    http.get('/api/workitems/1/unified-timeline/window', () => HttpResponse.json({
       success: true, code: '0', message: '', traceId: null,
       data: [{ id: '1', type: 'comment', authorId: '100', authorName: 'Coder-01', authorType: 'AGENT', isAgent: true, content: '已完成', gmtCreate: '2026-07-09T11:00:00Z' }],
     })),

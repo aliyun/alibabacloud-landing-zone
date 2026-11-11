@@ -5,6 +5,14 @@
     "plugin": "插件",
     "hook": "Runtime Hook"
   },
+  "hookGuide": {
+    "title": "Runtime Hook 怎么配置？",
+    "setup": "准备根目录含 hook.yaml 和脚本的文件夹，上传保存后，在数字员工「能力配置」中添加该 Hook；后续新派发的任务会在指定时机执行。",
+    "examples": "常用模板：执行前检查 Git / Node.js / npm；提交前检查暂存区空白错误。",
+    "templates": "查看两个完整模板和配置步骤",
+    "qoderHint": "平台 beforeTool / afterTool 对应 Qoder 的 PreToolUse / PostToolUse；这里仍需上传 hook.yaml 和脚本。原生 JSON、matcher 与其他原生事件请按官方文档配置，不能直接作为平台包上传。",
+    "qoderDocs": "Qoder CLI Hooks 官方文档"
+  },
   "all": "全部",
   "package": {
     "limit": "最多 500 个文件；压缩包和解压后的总大小均不超过 100 MB。",

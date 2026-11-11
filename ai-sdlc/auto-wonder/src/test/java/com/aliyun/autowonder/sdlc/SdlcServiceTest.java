@@ -866,6 +866,17 @@ class SdlcServiceTest {
     }
 
     @Test
+    void disable_locks_the_sdlc_row_for_update() {
+        SdlcDO s = sdlc(9L, "ENABLED");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        when(sdlcDao.updateStatus(eq(9L), eq(100L), eq("DISABLED"), isNull(), eq(0), eq(7L))).thenReturn(1);
+
+        service.disable(9L, 100L, 7L);
+
+        verify(sdlcDao).findByIdForUpdate(9L, 100L);
+    }
+
+    @Test
     void enable_step_order_gap_succeeds() {
         SdlcDO s = sdlc(9L, "DRAFT");
         when(sdlcDao.findById(9L)).thenReturn(s);

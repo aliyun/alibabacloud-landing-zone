@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { WorkitemClarificationPanel } from './WorkitemClarificationPanel';
+import { mockLatestClarificationConversation } from '@/test/mocks/clarificationLatest';
 import { useAuthStore } from '@/shared/auth/store';
 import { clearClarificationPrefill, writeClarificationPrefill } from './prefill';
 
@@ -97,6 +98,8 @@ function mockPanel(conv: PanelConversation) {
       },
     ),
   );
+  // 进入面板会先解析「最近一次会话」：默认无记录，既有用例走本地预填链路。
+  mockLatestClarificationConversation();
   return payload;
 }
 
@@ -322,6 +325,35 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
     expect(screen.getByTestId('elicitation-skip-req-1')).toBeEnabled();
   });
 
+  // 服务端按卡片 schema 兜底拒收（缺必答/未知字段/类型不符）时，用户要看到具体原因并保持可答。
+  it('shows the server schema rejection reason and keeps the card answerable', async () => {
+    await renderPanel({
+      acpInteractionSupported: true,
+      processingStatus: 'PROCESSING',
+      processingTurnId: 3,
+      pendingElicitations: [{
+        requestId: 'req-1', turnId: 3, mode: 'form', message: '选一个',
+        requestedSchema: SELECT_SCHEMA, status: 'PENDING', gmtCreate: '',
+      }],
+      turns: [{ id: 3, direction: 'INBOUND', content: '请给方案', status: 'PROCESSING' }],
+    });
+    server.use(
+      http.post(
+        '/api/workitems/:workitemId/clarification-conversations/:conversationId/elicitations/:requestId/reply',
+        () => HttpResponse.json(
+          { success: false, code: '10001', message: '还有必答题目没有作答，请补充后再提交。', traceId: null, data: null },
+          { status: 400 },
+        ),
+      ),
+    );
+
+    fireEvent.click(await screen.findByTestId('elicitation-option-q0-0'));
+    fireEvent.click(screen.getByTestId('elicitation-submit-req-1'));
+
+    expect(await screen.findByText('还有必答题目没有作答，请补充后再提交。')).toBeInTheDocument();
+    expect(screen.getByTestId('elicitation-wizard-req-1')).toBeInTheDocument();
+  });
+
   // 线上 bug：轮次取消把卡片结算成 CANCELED，但该 resolved 事件不落库，前端时间线仍当作 pending，
   // 提交/跳过都吃 409「already settled」，卡片关不掉、对话卡死。修复：CONFLICT 即撤下卡片。
   it('对已结算（409 CONFLICT）的问题：撤下卡片并提示已失效，解除卡死', async () => {
@@ -458,6 +490,66 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
 
     expect(await screen.findByTestId('elicitation-wizard-req-B')).toBeInTheDocument();
     expect(screen.getByTestId('elicitation-count-req-B')).toHaveTextContent('第 1/1 题');
+  });
+
+  it('恢复流中的另一待答问题不会抢占正在填写的恢复卡片，提交后才接续', async () => {
+    const currentCard = {
+      requestId: '11111111111111111111111111111111', turnId: 5, mode: 'form', message: '当前问题',
+      requestedSchema: SELECT_SCHEMA, status: 'PENDING', gmtCreate: '',
+    };
+    const nextCard = { ...currentCard, requestId: '22222222222222222222222222222222', message: '排队问题' };
+    const oldAnswer = {
+      ...currentCard, requestId: '33333333333333333333333333333333', turnId: 3, message: '旧问题', status: 'ANSWERED',
+      answerJson: JSON.stringify({ q0: '旧答案' }), deliveryStatus: 'WRITTEN',
+    };
+    const turns = [
+      { id: 3, direction: 'IN', content: '旧请求', status: 'SUCCESS' },
+      { id: 5, direction: 'IN', content: '当前请求', status: 'PROCESSING' },
+    ];
+    const { queryClient } = await renderPanel({
+      acpInteractionSupported: true,
+      processingStatus: 'PROCESSING', processingTurnId: 5, turns,
+      pendingElicitations: [currentCard], questionHistory: [oldAnswer], answerDeliveries: [oldAnswer],
+    });
+    await screen.findByTestId(`elicitation-wizard-${currentCard.requestId}`);
+    fireEvent.click(screen.getByTestId('elicitation-option-q0-other'));
+    fireEvent.change(screen.getByTestId('elicitation-other-input-q0'), { target: { value: '还没输完' } });
+
+    // 刷新后已有 A 的详情快照，WS/事件恢复再收到另一条合法的待答问题 B。
+    emit(1, 'acp_elicitation', {
+      type: 'acp_elicitation',
+      data: { ...nextCard, requestedSchema: JSON.parse(SELECT_SCHEMA) },
+    }, 5);
+
+    mockPanel({
+      acpInteractionSupported: true,
+      processingStatus: 'PROCESSING', processingTurnId: 5, turns,
+      pendingElicitations: [currentCard, nextCard], questionHistory: [oldAnswer], answerDeliveries: [oldAnswer],
+    });
+    const callsBeforePoll = detailCalls;
+    refetchConversation(queryClient);
+    await waitFor(() => expect(detailCalls).toBeGreaterThan(callsBeforePoll));
+
+    expect(screen.getByTestId(`elicitation-wizard-${currentCard.requestId}`)).not.toHaveClass('is-dismissing');
+    expect(screen.queryByTestId(`elicitation-wizard-${nextCard.requestId}`)).toBeNull();
+    expect(screen.getByTestId('elicitation-other-input-q0')).toHaveValue('还没输完');
+
+    let replyBody: unknown = null;
+    server.use(http.post(
+      '/api/workitems/:workitemId/clarification-conversations/:conversationId/elicitations/:requestId/reply',
+      async ({ request, params }) => {
+        expect(params.requestId).toBe(currentCard.requestId);
+        replyBody = await request.json();
+        return ok(null);
+      },
+    ));
+    fireEvent.click(screen.getByTestId(`elicitation-submit-${currentCard.requestId}`));
+    await waitFor(() => expect(replyBody).toEqual({ action: 'accept', content: JSON.stringify({ q0: '还没输完' }) }));
+    emit(2, 'acp_elicitation_resolved', {
+      type: 'acp_elicitation_resolved', data: { requestId: currentCard.requestId, action: 'accept', content: { q0: '还没输完' } },
+    }, 5);
+    expect(await screen.findByTestId(`elicitation-wizard-${nextCard.requestId}`)).toBeInTheDocument();
+    expect(screen.queryByTestId('elicitation-other-input-q0')).toBeNull();
   });
 
   // F18/F19：ACP 没有 invoke 方法，选中命令就是把 `/name ` 当普通文本填进输入框。

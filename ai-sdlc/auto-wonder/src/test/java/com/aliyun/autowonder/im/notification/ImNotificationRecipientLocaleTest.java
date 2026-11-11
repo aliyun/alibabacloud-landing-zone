@@ -84,7 +84,7 @@ class ImNotificationRecipientLocaleTest {
                 when(settings.findLive(9L, "ui.locale")).thenReturn(setting("\"en-US\""));
                 var task = new ImNotificationTask("100:" + channel + ":9", 100, 7, 42, 9, "SYSTEM", 0,
                         "系统", "rid", "<b>{raw}</b>", "WORKITEM_ASSIGNED", null, null, null,
-                        "SYSTEM_NAME_FALLBACK", null);
+                        "SYSTEM_NAME_FALLBACK", null, null);
                 queue.enqueue(task);
                 var fields = ArgumentCaptor.forClass(Map.class);
                 verify(redis).xadd(eq(properties.getStreamKey()), fields.capture(), eq(10000L));

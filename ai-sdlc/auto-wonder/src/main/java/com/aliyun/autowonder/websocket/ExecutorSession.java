@@ -4,6 +4,7 @@ import lombok.Getter;
 import javax.websocket.Session;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Getter
 public class ExecutorSession {
@@ -13,6 +14,7 @@ public class ExecutorSession {
     private final int maxConcurrentDispatches;
     private final Session session;
     private final AtomicBoolean replacementRecoveryPending = new AtomicBoolean();
+    private final AtomicLong heartbeatRevision = new AtomicLong();
 
     public ExecutorSession(long executorId, long agentId, long tenantId, Session session) {
         this(executorId, agentId, tenantId, 1, session);
@@ -42,4 +44,8 @@ public class ExecutorSession {
     public boolean consumeReplacementRecoveryPending() {
         return replacementRecoveryPending.compareAndSet(true, false);
     }
+
+    long receivedHeartbeat() { return heartbeatRevision.incrementAndGet(); }
+
+    boolean isLatestHeartbeat(long revision) { return heartbeatRevision.get() == revision; }
 }

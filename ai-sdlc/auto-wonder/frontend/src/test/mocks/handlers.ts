@@ -8,6 +8,7 @@ type StoredLaunchConfig = {
   memoryMode: string | null;
   maxConcurrentDispatches?: number;
   runtimeVersion?: string | null;
+  runtimeVersionPinned?: boolean | null;
   workspaceRoot?: string | null;
   daemonName?: string | null;
   debug?: boolean | null;
@@ -58,6 +59,7 @@ export type SeededLaunchConfig = {
   contextWindow?: string | null;
   memoryMode?: string | null;
   runtimeVersion?: string | null;
+  runtimeVersionPinned?: boolean | null;
   workspaceRoot?: string | null;
   daemonName?: string | null;
   debug?: boolean | null;
@@ -83,7 +85,7 @@ function emptyLaunchConfig(): StoredLaunchConfig {
 }
 
 const MOCK_WS_URL = 'wss://community.example/ws/executor';
-const MOCK_RUNTIME_VERSION = '0.3.30';
+const MOCK_RUNTIME_VERSION = '0.3.43';
 const MOCK_POWERSHELL_UTF8_PREAMBLE = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; ';
 const MOCK_PROVIDERS: Record<string, string> = {
   QODER_CN_CLI: 'qodercn',
@@ -132,13 +134,18 @@ function incompleteConfigReason(stored: StoredLaunchConfig, provider: string): s
   return null;
 }
 
-// 与 ExecutorLaunchCommandService 保持一致：启动值只来自数据库配置，命令由服务端拼装
+// 与 ExecutorLaunchCommandService 保持一致：启动值只来自数据库配置，命令由服务端拼装；
+// 只有明确保存的新固定版本覆盖平台推荐版本，历史残留值不参与。
 function buildMockLaunchCommand(id: number, stored: StoredLaunchConfig, fixture: ExecutorFixture,
   os: string, debug: boolean, shell: string | null): Record<string, unknown> {
   const provider = mockProviderFor(fixture.clientKind);
   const isQoder = isQoderProvider(provider);
+  const runtimeVersion = stored.runtimeVersionPinned && stored.runtimeVersion ? stored.runtimeVersion : MOCK_RUNTIME_VERSION;
+  const [major, minor, patch] = runtimeVersion.split('.').map(Number);
+  const packageName = major > 0 || minor > 3 || (minor === 3 && patch >= 33)
+    ? '@alicloud/autowonder' : 'autowonder';
   const argv = [
-    'npx', '-y', `autowonder@${stored.runtimeVersion ?? MOCK_RUNTIME_VERSION}`, 'connect',
+    'npx', '-y', `${packageName}@${runtimeVersion}`, 'connect',
     '--ws-url', MOCK_WS_URL,
     '--token', fixture.token,
     '--executor-id', String(id),
@@ -166,7 +173,7 @@ function buildMockLaunchCommand(id: number, stored: StoredLaunchConfig, fixture:
     reasoningEffort: isQoder ? stored.reasoningEffort : null,
     contextWindow: isQoder ? stored.contextWindow : null,
     wsUrl: MOCK_WS_URL,
-    runtimeVersion: stored.runtimeVersion ?? MOCK_RUNTIME_VERSION,
+    runtimeVersion,
     workspaceRoot: stored.workspaceRoot ?? null,
     daemonName: stored.daemonName ?? null,
     os,
@@ -260,6 +267,14 @@ function userSettingPayload(key: string) {
 }
 
 export const handlers = [
+  http.get('/api/notifications/unread-count', () => HttpResponse.json({ success: true, code: '0', data: 0 })),
+  http.get('/api/repos', () => HttpResponse.json({ success: true, code: '0', data: [] })),
+  http.post('/api/repos/frontend-projects/discover', () => HttpResponse.json({ success: true, code: '0', data: [] })),
+  http.get('/api/repos/:id/frontend-projects/latest', () => HttpResponse.json({ success: true, code: '0', data: null })),
+  http.get('/api/repos/:id/frontend-projects', () => HttpResponse.json({ success: true, code: '0', data: [] })),
+  http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId/turns/:turnId/events', () =>
+    HttpResponse.json({ success: true, code: '0', data: [] })),
+
   // 多个页面（技能、执行器等）会无条件拉取执行器列表；全局兜底为空列表，
   // 避免个别用例未 mock 时请求落入 unhandled → 拦截器 401 处理清空 auth store。
   http.get('/api/executors', () => {
@@ -445,7 +460,7 @@ export const handlers = [
         primaryColor: '#f97316',
         domain: 'https://community.example',
         mcpBaseUrl: 'https://community.example/api/mcp',
-        recommendedRuntimeVersion: '0.2.125',
+        recommendedRuntimeVersion: MOCK_RUNTIME_VERSION,
         deploymentVersion: 'x.x.x',
         communityEdition: false,
         canManage: false,
@@ -555,6 +570,36 @@ export const handlers = [
       message: '',
       data: [],
       traceId: 'trace-sso-providers',
+    });
+  }),
+  // 登录页公开配置：默认注册开放、无默认连接，未 mock 的用例不会自动发起 SSO。
+  http.get('/api/auth/sso/config', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: { registrationEnabled: true, defaultProviderId: null },
+      traceId: 'trace-sso-config',
+    });
+  }),
+  // 平台 SSO 配置页读取注册开关与默认连接；默认注册开放、无默认连接。
+  http.get('/api/platform/federation/auth-config', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: { registrationEnabled: true, defaultProviderId: null },
+      traceId: 'trace-federation-auth-config',
+    });
+  }),
+  // 企业 SSO 配置页展示当前消息通道；默认钉钉，用例可覆盖。
+  http.get('/api/platform/im-channels/selection', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: { provider: 'DINGTALK' },
+      traceId: 'trace-im-selection',
     });
   }),
   http.get('/api/workspaces/mine', () => {
@@ -696,6 +741,18 @@ export const handlers = [
       traceId: 'trace-workitem-watchers',
     });
   }),
+  // 工单详情页的 PRD 设计入口卡片挂载即读只读摘要；全局兜底为「尚无设计」，
+  // 避免所有渲染 WorkitemDetailPage 的用例落入 unhandled → 拦截器 401 处理清空 auth store。
+  // 摘要接口按设计不创建聚合根，需要真实设计的用例用 server.use 覆盖。
+  http.get('/api/workitems/:workitemId/prd/summary', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: null,
+      traceId: 'trace-prd-summary',
+    });
+  }),
   // 工单列表、看板与详情页的标签编辑会拉取当前空间用过的标签做联想；
   // 全局兜底为空列表，需要联想数据的用例用 server.use 覆盖。
   http.get('/api/workitems/tag-options', () => {
@@ -766,6 +823,76 @@ export const handlers = [
       message: '',
       data: null,
       traceId: 'trace-user-setting-delete',
+    });
+  }),
+  // 布局挂载时会查询一次新空间引导资格；全局兜底为「无资格」，
+  // 引导用例用 server.use 覆盖，避免无关用例因未处理请求失败。
+  http.get('/api/workspace-guide', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: {
+        eligible: false,
+        status: null,
+        stage: null,
+        substep: null,
+        conversationId: null,
+        clientMessageId: null,
+        version: null,
+        globallyDisabled: false,
+        capabilityReady: false,
+      },
+      traceId: 'trace-workspace-guide',
+    });
+  }),
+  // 重复工单预检默认无命中，避免沿用真实网络或让无关用例因未处理请求失败。
+  http.post('/api/workitems/duplicate-checks', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: {
+        checkId: null,
+        title: '',
+        exactMatches: [],
+        exactTotal: 0,
+        exactTruncated: false,
+        intentEnabled: false,
+        intentStatus: null,
+        intentMatches: [],
+        intentPartial: false,
+      },
+      traceId: 'trace-duplicate-check',
+    });
+  }),
+  http.get('/api/workspaces/creation-requests/me', () => HttpResponse.json({
+    success: true,
+    code: '0',
+    message: '',
+    data: { canCreate: true, pending: false, administratorContacts: null },
+    traceId: 'trace-workspace-creation-permission',
+  })),
+  http.post('/api/workspaces/creation-requests', () => HttpResponse.json({
+    success: true,
+    code: '0',
+    message: '',
+    data: { canCreate: false, pending: true, administratorContacts: null },
+    traceId: 'trace-workspace-creation-request',
+  })),
+  http.get('/api/platform/feature-switches', () => {    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: {
+        duplicateWorkitemIntentEnabled: false,
+        version: 0,
+        userRegistrationReviewEnabled: false,
+        userRegistrationReviewVersion: 0,
+        workspaceCreationDefaultAllowed: true,
+        workspaceCreationDefaultAllowedVersion: 0,
+      },
+      traceId: 'trace-feature-switches',
     });
   }),
 ];

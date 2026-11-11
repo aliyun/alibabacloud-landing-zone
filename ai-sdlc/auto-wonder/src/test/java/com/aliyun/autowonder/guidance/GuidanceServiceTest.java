@@ -10,6 +10,7 @@ import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchRecoveryService;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.AgentSdlcResolver;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
@@ -20,6 +21,7 @@ import com.aliyun.autowonder.workitem.WorkitemCommentDO;
 import com.aliyun.autowonder.workitem.WorkitemCommentDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemService;
+import com.aliyun.autowonder.workitem.dto.CommentInteractionVO;
 import com.aliyun.autowonder.workitem.dto.CommentVO;
 import com.aliyun.autowonder.workitem.dto.ParticipantVO;
 import com.aliyun.autowonder.workitem.dto.TimelineItemVO;
@@ -29,9 +31,13 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -46,6 +52,7 @@ class GuidanceServiceTest {
     private AgentSdlcResolver sdlcResolver;
     private ApplicationEventPublisher eventPublisher;
     private WorkitemCommentDao commentDao;
+    private DispatchRecoveryService recoveryService;
 
     @BeforeEach
     void setUp() {
@@ -59,8 +66,10 @@ class GuidanceServiceTest {
         dispatchService = mock(DispatchService.class);
         sdlcResolver = mock(AgentSdlcResolver.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
+        recoveryService = mock(DispatchRecoveryService.class);
         service = new GuidanceService(guidanceDao, workitemDao, commentDao, agentDao, dispatchDao, transport,
                 workitemService, dispatchService, sdlcResolver, eventPublisher);
+        service.setRecoveryService(recoveryService);
 
         WorkitemDO workitem = new WorkitemDO();
         workitem.setId(50L);
@@ -99,6 +108,53 @@ class GuidanceServiceTest {
         DispatchDO formal = dispatch(93L, "PENDING");
         when(dispatchService.enqueue(anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyLong()))
                 .thenReturn(formal);
+    }
+
+    @Test
+    void disabledFlowRejectsNewInteractionExecutionBeforeGuidanceWrite() {
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_SDLC_DISABLED, "execution.sdlc_disabled",
+                new Object[0], "disabled")).when(availability)
+                .requireStartable(100L, 40013L, 810L);
+        service.setExecutionAvailabilityService(availability);
+
+        BizException failure = assertThrows(BizException.class,
+                () -> service.create(100L, 50L, 600L, 40013L, 7L));
+
+        assertEquals(ErrorCode.EXECUTION_SDLC_DISABLED.getCode(), failure.getCode());
+        verify(guidanceDao, never()).insert(any());
+        verify(dispatchService, never()).enqueueCommentInteraction(anyLong(), anyLong(), anyLong(),
+                any(), anyBoolean(), any(), anyLong(), anyLong());
+    }
+
+    @Test
+    void disabledFlowRejectsScheduledRunInteractionBeforeGuidanceWrite() {
+        ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunDao", runDao);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setId(77L);
+        run.setWorkspaceId(100L);
+        run.setSdlcId(810L);
+        when(runDao.findById(100L, 77L)).thenReturn(run);
+        WorkitemCommentDO comment = new WorkitemCommentDO();
+        comment.setId(600L);
+        comment.setTenantId(100L);
+        comment.setWorkitemId(77L);
+        when(commentDao.findBySourceAndId(100L, ExecutionSourceType.SCHEDULED_TASK_RUN.name(), 77L, 600L))
+                .thenReturn(comment);
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_SDLC_DISABLED, "execution.sdlc_disabled",
+                new Object[0], "disabled")).when(availability)
+                .requireStartable(100L, 40013L, 810L);
+        service.setExecutionAvailabilityService(availability);
+
+        BizException failure = assertThrows(BizException.class,
+                () -> service.createForScheduledRunComment(100L, 77L, 600L, 40013L, 7L));
+
+        assertEquals(ErrorCode.EXECUTION_SDLC_DISABLED.getCode(), failure.getCode());
+        verify(guidanceDao, never()).insert(any());
+        verify(dispatchService, never()).enqueueScheduledRunCommentInteraction(
+                anyLong(), anyLong(), anyLong(), any(), anyLong(), anyLong());
     }
 
     @Test
@@ -625,6 +681,214 @@ class GuidanceServiceTest {
     }
 
     @Test
+    void runningInteractionProjectsEndControlWithItsOwnDispatchFacts() {
+        DispatchDO running = interactionDispatch(91L, "RUNNING", "SIDE_INTERACTION");
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(running);
+        when(recoveryService.controlStates(eq(100L), anyCollection())).thenReturn(Map.of());
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        CommentInteractionVO interaction = comment.getInteractions().get(0);
+        assertTrue(interaction.isControlEligible());
+        assertFalse(interaction.isCancelRequested());
+        assertFalse(interaction.isStopPending());
+        assertTrue(interaction.getControl().getEnd().isAllowed());
+        assertFalse(interaction.getControl().getForceEnd().isAllowed());
+        assertNull(interaction.getControl().getPause());
+        assertNull(interaction.getControl().getResume());
+    }
+
+    @Test
+    void cancellingInteractionProjectsForceEndAndUnconfirmedStop() {
+        DispatchDO pausing = interactionDispatch(91L, "PAUSING", "COMMENT_INTERACTION");
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(pausing);
+        when(recoveryService.controlStates(eq(100L), anyCollection())).thenReturn(Map.of(91L,
+                new DispatchRecoveryService.ControlState(true, true, false, 5L, "REQUESTED", "CANCEL_REQUESTED")));
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        CommentInteractionVO interaction = comment.getInteractions().get(0);
+        assertTrue(interaction.isControlEligible());
+        assertTrue(interaction.isCancelRequested());
+        assertTrue(interaction.isStopPending());
+        assertFalse(interaction.getControl().getEnd().isAllowed());
+        assertEquals("delivery.controlReason.cancelling", interaction.getControl().getEnd().getReasonKey());
+        assertTrue(interaction.getControl().getForceEnd().isAllowed());
+    }
+
+    @Test
+    void queuedInteractionBeforeDispatchAllowsDirectCancelOnly() {
+        DispatchDO pending = interactionDispatch(91L, "PENDING", "CANONICAL_INTERACTION");
+        pending.setExecutorId(null);
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, GuidanceStatus.QUEUED)));
+        when(dispatchDao.findById(91L)).thenReturn(pending);
+        when(recoveryService.controlStates(eq(100L), anyCollection())).thenReturn(Map.of());
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        CommentInteractionVO interaction = comment.getInteractions().get(0);
+        assertTrue(interaction.isControlEligible());
+        assertTrue(interaction.getControl().getEnd().isAllowed());
+        assertEquals("delivery.controlReason.notCancelling", interaction.getControl().getForceEnd().getReasonKey());
+    }
+
+    @Test
+    void terminalInteractionExposesNeitherEndNorForceEnd() {
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(interactionDispatch(91L, "SUCCEEDED", "SIDE_INTERACTION"));
+        when(recoveryService.controlStates(eq(100L), anyCollection())).thenReturn(Map.of());
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        CommentInteractionVO interaction = comment.getInteractions().get(0);
+        assertTrue(interaction.isControlEligible());
+        assertEquals("delivery.controlReason.terminal", interaction.getControl().getEnd().getReasonKey());
+        assertEquals("delivery.controlReason.terminal", interaction.getControl().getForceEnd().getReasonKey());
+    }
+
+    @Test
+    void forcedTerminalInteractionKeepsTheUnconfirmedStopFact() {
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, "CANCELED")));
+        when(dispatchDao.findById(91L)).thenReturn(interactionDispatch(91L, "CANCELED", "SIDE_INTERACTION"));
+        when(recoveryService.controlStates(eq(100L), anyCollection())).thenReturn(Map.of(91L,
+                new DispatchRecoveryService.ControlState(true, true, true, 6L, "UNCONFIRMED", "CANCELED_STOP_UNCONFIRMED")));
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        CommentInteractionVO interaction = comment.getInteractions().get(0);
+        assertTrue(interaction.isStopPending());
+        assertFalse(interaction.getControl().getEnd().isAllowed());
+        assertFalse(interaction.getControl().getForceEnd().isAllowed());
+    }
+
+    @Test
+    void bindingsOutsideThisWorkitemInteractionAreNotControllable() {
+        DispatchDO formal = dispatch(91L, "RUNNING");
+        DispatchDO otherWorkitem = interactionDispatch(92L, "RUNNING", "SIDE_INTERACTION");
+        otherWorkitem.setWorkitemId(51L);
+        DispatchDO otherAgent = interactionDispatch(93L, "RUNNING", "SIDE_INTERACTION");
+        otherAgent.setAgentId(40014L);
+        when(guidanceDao.listByWorkitem(100L, 50L)).thenReturn(List.of(
+                guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED),
+                guidance(702L, 601L, 92L, GuidanceStatus.DELIVERED),
+                guidance(703L, 602L, 93L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(formal);
+        when(dispatchDao.findById(92L)).thenReturn(otherWorkitem);
+        when(dispatchDao.findById(93L)).thenReturn(otherAgent);
+        TimelineItemVO first = comment(600L);
+        TimelineItemVO second = comment(601L);
+        TimelineItemVO third = comment(602L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(first, second, third));
+
+        assertFalse(first.getInteractions().get(0).isControlEligible());
+        assertNull(first.getInteractions().get(0).getControl());
+        assertFalse(second.getInteractions().get(0).isControlEligible());
+        assertFalse(third.getInteractions().get(0).isControlEligible());
+        verify(recoveryService, never()).controlStates(anyLong(), anyCollection());
+    }
+
+    @Test
+    void interactionFromAnotherSourceIsNotControllable() {
+        DispatchDO scheduled = interactionDispatch(91L, "RUNNING", "SIDE_INTERACTION");
+        scheduled.setSourceType("SCHEDULED_TASK_RUN");
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(scheduled);
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        assertFalse(comment.getInteractions().get(0).isControlEligible());
+        verify(recoveryService, never()).controlStates(anyLong(), anyCollection());
+    }
+
+    @Test
+    void interactionFromAnotherTenantIsNotControllable() {
+        DispatchDO foreign = interactionDispatch(91L, "RUNNING", "SIDE_INTERACTION");
+        foreign.setTenantId(200L);
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(foreign);
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        CommentInteractionVO interaction = comment.getInteractions().get(0);
+        assertFalse(interaction.isControlEligible());
+        assertNull(interaction.getControl());
+        assertNull(interaction.getExecutionStatus());
+        verify(recoveryService, never()).controlStates(anyLong(), anyCollection());
+    }
+
+    @Test
+    void bindingWithoutPersistedDispatchIdIsNotControllable() {
+        DispatchDO unpersisted = interactionDispatch(91L, "RUNNING", "SIDE_INTERACTION");
+        unpersisted.setId(null);
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(unpersisted);
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        CommentInteractionVO interaction = comment.getInteractions().get(0);
+        assertFalse(interaction.isControlEligible());
+        assertNull(interaction.getControl());
+        verify(recoveryService, never()).controlStates(anyLong(), anyCollection());
+    }
+
+    @Test
+    void eligibleInteractionWithoutRecoveryReadsKeepsControlUnset() {
+        service.setRecoveryService(null);
+        DispatchDO running = interactionDispatch(91L, "RUNNING", "SIDE_INTERACTION");
+        when(guidanceDao.listByWorkitem(100L, 50L))
+                .thenReturn(List.of(guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(running);
+        TimelineItemVO comment = comment(600L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(comment));
+
+        CommentInteractionVO interaction = comment.getInteractions().get(0);
+        assertTrue(interaction.isControlEligible());
+        assertNull(interaction.getControl());
+        assertFalse(interaction.isCancelRequested());
+    }
+
+    @Test
+    void multipleInteractionsReadControlStatesOnceAndStayIndependent() {
+        when(guidanceDao.listByWorkitem(100L, 50L)).thenReturn(List.of(
+                guidance(701L, 600L, 91L, GuidanceStatus.DELIVERED),
+                guidance(702L, 601L, 92L, GuidanceStatus.DELIVERED)));
+        when(dispatchDao.findById(91L)).thenReturn(interactionDispatch(91L, "RUNNING", "SIDE_INTERACTION"));
+        when(dispatchDao.findById(92L)).thenReturn(interactionDispatch(92L, "PAUSING", "COMMENT_INTERACTION"));
+        when(recoveryService.controlStates(eq(100L), anyCollection())).thenReturn(Map.of(92L,
+                new DispatchRecoveryService.ControlState(true, false, false, 7L, "REQUESTED", "CANCEL_REQUESTED")));
+        TimelineItemVO first = comment(600L);
+        TimelineItemVO second = comment(601L);
+
+        service.attachInteractionStatuses(100L, 50L, List.of(first, second));
+
+        assertTrue(first.getInteractions().get(0).getControl().getEnd().isAllowed());
+        assertFalse(second.getInteractions().get(0).getControl().getEnd().isAllowed());
+        assertTrue(second.getInteractions().get(0).getControl().getForceEnd().isAllowed());
+        verify(recoveryService, times(1)).controlStates(eq(100L),
+                argThat(ids -> ids.size() == 2 && ids.contains(91L) && ids.contains(92L)));
+    }
+
+    @Test
     void pauseStateQueuesGuidanceForTheResumedDispatch() {
         DispatchDO paused = dispatch(91L, "PAUSING");
         when(dispatchDao.listByWorkitem(100L, 50L)).thenReturn(List.of(paused));
@@ -880,6 +1144,31 @@ class GuidanceServiceTest {
         dispatch.setExecutorId(10005L);
         dispatch.setStatus(status);
         return dispatch;
+    }
+
+    private DispatchDO interactionDispatch(long id, String status, String resumeMode) {
+        DispatchDO dispatch = dispatch(id, status);
+        dispatch.setResumeMode(resumeMode);
+        return dispatch;
+    }
+
+    private GuidanceDO guidance(long id, long commentId, Long dispatchId, String status) {
+        GuidanceDO guidance = new GuidanceDO();
+        guidance.setId(id);
+        guidance.setTenantId(100L);
+        guidance.setWorkitemId(50L);
+        guidance.setCommentId(commentId);
+        guidance.setTargetAgentId(40013L);
+        guidance.setDispatchId(dispatchId);
+        guidance.setStatus(status);
+        return guidance;
+    }
+
+    private TimelineItemVO comment(long id) {
+        TimelineItemVO comment = new TimelineItemVO();
+        comment.setId(id);
+        comment.setType("comment");
+        return comment;
     }
 
     private ParticipantVO participant(long id, String name) {

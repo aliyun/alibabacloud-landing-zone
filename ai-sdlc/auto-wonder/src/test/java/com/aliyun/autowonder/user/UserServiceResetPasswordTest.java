@@ -41,7 +41,10 @@ class UserServiceResetPasswordTest {
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         service = new UserService(userDao, new JwtService(props), mock(SessionService.class), props,
                 mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
-                mock(SessionIssuanceService.class));
+                mock(SessionIssuanceService.class),
+                mock(com.aliyun.autowonder.feature.PlatformFeatureSwitchService.class),
+                mock(WorkspaceCreationPermissionService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class));
     }
 
     @Test

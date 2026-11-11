@@ -77,6 +77,16 @@ public class WorkitemClarificationConversationService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 工单维度最近一次澄清会话：供前端进入面板时直接落定身份与会话。
+     * 跨数字人、按最近活跃时间取一条；该工单没有任何会话时返回 null（不是错误）。
+     */
+    public ClarificationConversationVO getLatestConversation(Long tenantId, Long workitemId) {
+        AgentConversationDO conv = convDao.findLatestByBizRefWithoutAgent(
+                tenantId, CHANNEL, BIZ_REF_TYPE, workitemId);
+        return conv == null ? null : toVO(conv, List.of());
+    }
+
     public ClarificationConversationVO getConversation(Long tenantId, Long workitemId, Long conversationId) {
         AgentConversationDO conv = convDao.findById(tenantId, conversationId);
         if (conv == null) {
@@ -108,10 +118,8 @@ public class WorkitemClarificationConversationService {
                         .build())
                 .collect(Collectors.toList());
 
-        AgentConversationTurnDO processing = turnDao.findProcessingInbound(tenantId, conversationId);
-        if (processing == null) {
-            processing = turnDao.findNextQueuedInbound(tenantId, conversationId);
-        }
+        // A later status query can observe completion while these history rows still lack its reply.
+        AgentConversationTurnDO processing = ConversationTurnSnapshot.activeInbound(turns);
         // 仅详情接口查挂起卡片与命令快照：列表页不需要，逐会话查会白跑 N 次（快照还是 Redis 读）。
         // 两者都是辅助信息：失败降级为空并留诊断日志，不阻断已有历史返回（修复要求 3）。
         var vo = toVO(conv, turnVOs, processing,

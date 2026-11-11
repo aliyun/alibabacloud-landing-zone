@@ -8,6 +8,7 @@ public final class AiConstants {
         public static final String SDLC_GEN = "SDLC_GEN";
         public static final String AGENT_CONFIG_GEN = "AGENT_CONFIG_GEN";
         public static final String CLARIFICATION = "CLARIFICATION";
+        public static final String PRD_DESIGN = "PRD_DESIGN";
         private Scene() {}
     }
 

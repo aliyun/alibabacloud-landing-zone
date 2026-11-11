@@ -16,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class ExecutorI18nBoundaryTest {
+
+    private static final long TENANT = 100L;
     @AfterEach void cleanup() { LocaleContextHolder.resetLocaleContext(); AutoWonderContext.destroy(); }
 
     private void boundary(Runnable action, String code, int status, String diagnostic, String english) {
@@ -80,12 +82,12 @@ class ExecutorI18nBoundaryTest {
         var catalog = mock(ProviderModelCatalogService.class);
         var options = new ExecutorLaunchOptionsService(catalog);
         LocaleContextHolder.setLocale(Locale.CHINA);
-        var chinese = options.launchOptions("QODER_CLI");
+        var chinese = options.launchOptions(TENANT, "QODER_CLI");
         assertEquals("自动（默认）", chinese.getModels().get(0).getLabel());
         assertEquals("极高", chinese.getReasoningEfforts().get(1).getLabel());
         assertEquals("国际版 Qoder CLI 执行器", ExecutorLaunchOptionsService.creatableClientKinds().get(0).getDescription());
         LocaleContextHolder.setLocale(Locale.US);
-        var english = options.launchOptions("QODER_CLI");
+        var english = options.launchOptions(TENANT, "QODER_CLI");
         assertEquals("Platform memory (recommended)", english.getMemoryModes().get(0).getLabel());
         assertEquals("AutoWonder supplies platform memory", english.getMemoryModes().get(0).getDescription());
         assertEquals("International Qoder CLI Executor", ExecutorLaunchOptionsService.creatableClientKinds().get(0).getDescription());
@@ -95,16 +97,16 @@ class ExecutorI18nBoundaryTest {
         english.getModels().get(0).setLabel("poison");
         english.getMemoryModes().get(0).setValue("poison");
         ExecutorLaunchOptionsService.creatableClientKinds().get(0).setDescription("poison");
-        assertEquals("Auto (default)", options.launchOptions("QODER_CLI").getModels().get(0).getLabel());
-        assertEquals("platform", options.launchOptions("QODER_CLI").getMemoryModes().get(0).getValue());
+        assertEquals("Auto (default)", options.launchOptions(TENANT, "QODER_CLI").getModels().get(0).getLabel());
+        assertEquals("platform", options.launchOptions(TENANT, "QODER_CLI").getMemoryModes().get(0).getValue());
         assertEquals("自动（默认）", chinese.getModels().get(0).getLabel());
-        when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(
+        when(catalog.read(TENANT, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(
                 new ProviderModelCatalogItemVO("auto", "自动（默认）"),
                 new ProviderModelCatalogItemVO("ultimate", "<b>旗舰</b>")), new Date()));
-        assertEquals(List.of("自动（默认）", "<b>旗舰</b>"), options.models("qoder").stream().map(SelectOptionVO::getLabel).toList());
+        assertEquals(List.of("自动（默认）", "<b>旗舰</b>"), options.models(TENANT, "qoder").stream().map(SelectOptionVO::getLabel).toList());
         LocaleContextHolder.setLocale(Locale.CHINA);
         assertEquals("国际版 Qoder CLI 执行器", ExecutorLaunchOptionsService.creatableClientKinds().get(0).getDescription());
-        assertEquals("平台记忆（推荐）", options.launchOptions("QODER_CN_CLI").getMemoryModes().get(0).getLabel());
+        assertEquals("平台记忆（推荐）", options.launchOptions(TENANT, "QODER_CN_CLI").getMemoryModes().get(0).getLabel());
     }
 
     @Test void configErrorsKeepStoredRawArgumentsAndValidationOrder() {
@@ -161,6 +163,6 @@ class ExecutorI18nBoundaryTest {
 
     @Test void catalogRestrictionPreservesParamStatusAndRawCode() {
         var catalog = new ProviderModelCatalogService(mock(RedisManager.class));
-        boundary(() -> catalog.read("claude"), "10001", 400, "仅支持 qoder 或 qodercn provider", "Only qoder or qodercn providers are supported.");
+        boundary(() -> catalog.read(TENANT, "claude"), "10001", 400, "仅支持 qoder 或 qodercn provider", "Only qoder or qodercn providers are supported.");
     }
 }

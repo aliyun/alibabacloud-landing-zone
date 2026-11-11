@@ -738,7 +738,7 @@ class ExecutorServiceTest {
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
         presenceBatch(Map.of(1L, online(null, "qoder3-coder-plus")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
-        when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+        when(catalog.read(100L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
         service.setProviderModelCatalogService(catalog);
 
@@ -755,7 +755,7 @@ class ExecutorServiceTest {
         when(executorDao.listAll(100L, null)).thenReturn(List.of(e));
         presenceBatch(Map.of(1L, online(null, "unknown-model")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
-        when(catalog.read("qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
+        when(catalog.read(100L, "qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
                 List.of(new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
         service.setProviderModelCatalogService(catalog);
 
@@ -778,7 +778,7 @@ class ExecutorServiceTest {
 
         assertEquals("claude-sonnet-4", vos.get(0).getModel());
         assertNull(vos.get(0).getModelName());
-        verify(catalog, never()).read(anyString());
+        verify(catalog, never()).read(anyLong(), anyString());
     }
 
     @Test
@@ -788,7 +788,7 @@ class ExecutorServiceTest {
         when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
         presenceBatch(Map.of(1L, online(null, "qoder3-coder-plus")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
-        when(catalog.read("qoder")).thenThrow(new RuntimeException("redis down"));
+        when(catalog.read(100L, "qoder")).thenThrow(new RuntimeException("redis down"));
         service.setProviderModelCatalogService(catalog);
 
         List<ExecutorVO> vos = service.listByAgent(5L, 100L);
@@ -810,7 +810,7 @@ class ExecutorServiceTest {
                 2L, online(null, "   "),
                 3L, online(null, "qoder3-coder-plus")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
-        when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+        when(catalog.read(100L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
         service.setProviderModelCatalogService(catalog);
 
@@ -823,7 +823,7 @@ class ExecutorServiceTest {
         assertEquals("qoder3-coder-plus", vos.get(2).getModel());
         assertEquals("Qoder3 Coder Plus", vos.get(2).getModelName());
         // The two executors without a usable model must not trigger extra catalog reads.
-        verify(catalog, times(1)).read("qoder");
+        verify(catalog, times(1)).read(100L, "qoder");
     }
 
     @Test
@@ -837,7 +837,7 @@ class ExecutorServiceTest {
                 1L, online(null, "qoder3-coder-plus"),
                 2L, online(null, "no-name")));
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
-        when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+        when(catalog.read(100L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO(null, "Missing Id"),
                         new ProviderModelCatalogItemVO("no-name", null),
                         new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
@@ -848,7 +848,7 @@ class ExecutorServiceTest {
         assertEquals("Qoder3 Coder Plus", vos.get(0).getModelName());
         assertEquals("no-name", vos.get(1).getModel());
         assertNull(vos.get(1).getModelName());
-        verify(catalog, times(1)).read("qoder");
+        verify(catalog, times(1)).read(100L, "qoder");
     }
 
     @Test
@@ -858,7 +858,7 @@ class ExecutorServiceTest {
         when(executorDao.findById(9L)).thenReturn(e);
         presence(9L, true, Set.of(), null, "qoder3-coder-plus");
         ProviderModelCatalogService catalog = mock(ProviderModelCatalogService.class);
-        when(catalog.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+        when(catalog.read(100L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO("qoder3-coder-plus", "Qoder3 Coder Plus")), new Date()));
         service.setProviderModelCatalogService(catalog);
 

@@ -131,6 +131,7 @@ export interface ExecutorLaunchConfig {
   memoryMode: string | null;
   maxConcurrentDispatches?: number | null;
   runtimeVersion?: string | null;
+  runtimeVersionPinned?: boolean | null;
   workspaceRoot?: string | null;
   daemonName?: string | null;
   debug?: boolean | null;

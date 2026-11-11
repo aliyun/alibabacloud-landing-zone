@@ -129,6 +129,19 @@ public class PlatformIntelligenceService {
                 outbound == null ? current.getError() : outbound.getError());
     }
 
+    /**
+     * Best-effort cancel of an in-flight request by its stable requestId.
+     * Returns immediately: the caller never waits for a runtime acknowledgement.
+     */
+    @Transactional
+    public void cancel(Long workspaceId, UUID requestId) {
+        InvocationResult result = getResult(workspaceId, requestId);
+        if (result == null || result.isTerminal()) {
+            return;
+        }
+        conversations.requestTurnCancel(workspaceId, result.conversationId(), result.turnId());
+    }
+
     private static boolean hasIdentity(AgentVersionDO v) {
         return hasText(v.getRoleName()) || hasText(v.getRoleCode()) || hasText(v.getBusinessBackground())
                 || hasText(v.getResponsibilities()) || hasText(v.getIdentityJson());

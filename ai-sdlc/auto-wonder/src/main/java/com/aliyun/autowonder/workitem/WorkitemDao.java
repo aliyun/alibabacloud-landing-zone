@@ -38,6 +38,8 @@ public interface WorkitemDao {
             @Param("createdFrom") Date createdFrom, @Param("createdTo") Date createdTo,
             @Param("creatorIds") List<Long> creatorIds,
             @Param("tagConditions") List<WorkitemTagCondition> tagConditions,
+            @Param("squadIds") List<Long> squadIds,
+            @Param("unassignedSquad") boolean unassignedSquad,
             @Param("offset") int offset, @Param("limit") int limit);
     long count(@Param("tenantId") Long tenantId,
             @Param("workType") String workType,
@@ -53,7 +55,9 @@ public interface WorkitemDao {
             @Param("scheduledStart") String scheduledStart,
             @Param("createdFrom") Date createdFrom, @Param("createdTo") Date createdTo,
             @Param("creatorIds") List<Long> creatorIds,
-            @Param("tagConditions") List<WorkitemTagCondition> tagConditions);
+            @Param("tagConditions") List<WorkitemTagCondition> tagConditions,
+            @Param("squadIds") List<Long> squadIds,
+            @Param("unassignedSquad") boolean unassignedSquad);
     int updateContent(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("title") String title, @Param("contentMd") String contentMd,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
@@ -125,4 +129,25 @@ public interface WorkitemDao {
     /** 仅当令牌为空时写入（并发首写竞败方返回 0 行，需回读取胜者令牌）。 */
     int updateExternalShareTokenIfAbsent(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("externalShareToken") String externalShareToken);
+
+    /**
+     * 同名检测的候选预筛：用标题包含匹配取超集，避免数据库比较器的大小写/重音不敏感
+     * 以及 SQL TRIM 与 Java 空白口径的差异造成漏检；精确比较由
+     * {@code WorkitemDuplicateService} 在内存中完成。
+     */
+    List<WorkitemDO> listByExactTitleCandidate(@Param("tenantId") long tenantId,
+            @Param("title") String title, @Param("excludeId") Long excludeId,
+            @Param("limit") int limit);
+
+    /**
+     * 同意图检测的唯一候选读取：一次 SQL 只投影 id/title，按 id 升序流式消费。
+     * 不分页、不截断；调用方在同一结果集内累加有界大小，超限立即停止消费。
+     */
+    void streamIntentCandidates(@Param("tenantId") long tenantId, @Param("since") Date since,
+            @Param("through") Date through, @Param("excludeId") Long excludeId,
+            org.apache.ibatis.session.ResultHandler<WorkitemDO> handler);
+
+    /** 展示/通知用的轻量投影：不含正文、评论或附件。 */
+    List<WorkitemDO> listSummaryByIds(@Param("tenantId") Long tenantId,
+            @Param("ids") Collection<Long> ids);
 }

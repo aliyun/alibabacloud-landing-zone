@@ -30,7 +30,8 @@
     "describe": "描述你需要的数字员工",
     "draftHint": "生成结果会先成为可编辑草稿。确认草稿后会回填高级表单，只有点击创建才会真正创建数字员工。",
     "advanced": "高级表单",
-    "requiredHint": "请填写必填配置后创建数字员工。"
+    "requiredHint": "请填写必填配置后创建数字员工。",
+    "sdlcLoadFailed": "SDLC流程列表加载失败，可重试或暂不绑定流程直接创建。"
   },
   "fields": {
     "name": "名称",
@@ -47,7 +48,7 @@
     "variableName": "变量名",
     "description": "说明",
     "agentName": "员工名称",
-    "sdlc": "SDLC 模版",
+    "sdlc": "SDLC流程",
     "evolution": "自进化模式",
     "allowedBranches": "允许提交的分支",
     "selectVariable": "选择环境变量"
@@ -66,7 +67,7 @@
     "background": "描述该员工所在的业务背景...",
     "responsibilities": "描述该员工的核心职责...",
     "agentName": "如: 前端开发小明",
-    "sdlc": "选择关联的 SDLC 模版",
+    "sdlc": "选择关联的 SDLC流程",
     "repositories": "选择仓库（可多选）",
     "branches": "允许提交的分支（留空表示不限制，如 develop、feature/*）",
     "editBranches": "留空表示不限制，如 develop、release/autowonder-v*",
@@ -75,7 +76,7 @@
   },
   "evolution": {
     "MANUAL": "纯手动",
-    "ASSISTED": "辅助审核（推荐）",
+    "ASSISTED": "自动记忆（推荐）",
     "AUTO_PROPOSAL": "自动生成候选",
     "tooltip": "控制 worker 上传 learning_delta 后，服务端是否自动进入待审核 Memory / Evolution Proposal。不会自动发布 active 资产。",
     "unset": "未设置"
@@ -109,6 +110,7 @@
     "nameHint": "数字员工的展示名称，保存后立即生效，不需要提交审核。与下方的“角色名称”是两个不同的字段。",
     "platformAvatar": "平台智能体的头像由平台锁定，不可修改。",
     "avatarHint": "留空表示清除头像。与员工名称一样保存后立即生效。",
+    "sdlcLoadFailed": "SDLC流程列表加载失败，可重试；已绑定流程不会因此被清除。",
     "title": "编辑配置 — {{name}}"
   },
   "repository": {
@@ -138,7 +140,7 @@
   },
   "evolutionDescription": {
     "MANUAL": "只保存 artifact，不自动沉淀记忆或候选",
-    "ASSISTED": "自动生成待审核记忆和候选，不自动上线",
+    "ASSISTED": "自动记忆、持续自进化",
     "AUTO_PROPOSAL": "自动生成候选，并允许候选自带 replay 时自动验证"
   },
   "capability": {
@@ -207,6 +209,103 @@
     "codeReviewer": "代码审查员",
     "codeReview": "代码审核员"
   },
+  "submit": {
+    "title": "提交审核",
+    "noteLabel": "提交说明",
+    "notePlaceholder": "选填：说明本次变更的目的与影响，帮助审核人快速判断",
+    "noteHint": "选填，最多 500 字",
+    "confirm": "确认提交"
+  },
+  "diff": {
+    "title": "审核变更 — {{name}}",
+    "noBaseline": "无基线",
+    "versionShort": "v{{version}}",
+    "baselineOnline": "基线：当前在线版本",
+    "baselineNone": "基线：无在线版本（首版）",
+    "submitter": "提交人：{{name}}",
+    "submittedAt": "提交时间：{{time}}",
+    "submitNote": "提交说明",
+    "firstVersionDoc": "待审核版本 v{{version}}（首版）· 全部按新增展示",
+    "group": {
+      "soul": "SOUL.md",
+      "soulFile": "businessBackground",
+      "agentMd": "AGENT.md",
+      "agentMdFile": "responsibilities",
+      "config": "配置",
+      "repoPerms": "仓库权限",
+      "skills": "Skills 能力绑定",
+      "memoryRefs": "Memory 引用",
+      "environmentVariables": "环境变量",
+      "noChange": "无变化"
+    },
+    "stat": {
+      "changedFields": "{{fields}} 项变更",
+      "adjusted": "{{items}} 项调整"
+    },
+    "column": {
+      "field": "字段",
+      "base": "在线版本",
+      "target": "待审核版本",
+      "baseWithVersion": "在线版本 v{{version}}",
+      "targetWithVersion": "待审核版本 v{{version}}"
+    },
+    "toolbar": {
+      "context": "上下文",
+      "contextLines": "{{lines}} 行"
+    },
+    "action": {
+      "collapseUnchanged": "折叠未变更行",
+      "prevChange": "上一处",
+      "nextChange": "下一处",
+      "expandAll": "展开全部",
+      "expandContext": "展开上下文",
+      "showUnchanged": "显示未变更项"
+    },
+    "fold": {
+      "hidden": "⋯ 未变更的 {{lines}} 行"
+    },
+    "layout": {
+      "split": "切换分栏",
+      "unified": "切换单栏"
+    },
+    "notice": {
+      "firstVersion": "该数字员工尚无在线版本，本次审核的是首个版本：所有内容均按新增展示，基线列为空。",
+      "firstVersionConfig": "首版：所有字段均为新增，仅展示新增侧。",
+      "baselineUnavailable": "基线版本已不可用，已降级为无基线视图：全部内容按新增展示。",
+      "compareBase": "对比基线为当前在线版本 {{base}}。审核通过后，{{target}} 将立即替换线上配置。",
+      "allSame": "本次提交与在线版本无差异。",
+      "largeDoc": "文档较长，默认只渲染变更块；可使用「展开全部」查看完整内容。",
+      "envMasked": "仅对比绑定关系与元数据，变量值始终脱敏显示 **；值本身的变化不会产生新版本。",
+      "nonVersioned": "名称、头像、小队归属不进入版本快照，修改后直接生效，因此不在本次 diff 中；如需追溯请联系工作空间管理员。"
+    },
+    "empty": {
+      "noContent": "无内容",
+      "memory": "本次提交未调整记忆引用。"
+    },
+    "memory": {
+      "autoImported": "系统自动导入"
+    },
+    "repo": {
+      "branchPatterns": "分支白名单：",
+      "unrestricted": "不限制"
+    },
+    "env": {
+      "value": "值：",
+      "description": "描述：",
+      "masked": "**"
+    },
+    "set": {
+      "added": "新增",
+      "removed": "移除",
+      "modified": "修改"
+    },
+    "error": {
+      "loadFailed": "版本加载失败",
+      "retry": "重试"
+    },
+    "confirmApprove": "确认通过并上线 v{{version}}？通过后立即替换线上配置。",
+    "confirmApproveOk": "确认通过"
+  },
   "display": {
     "hubTitle": "数字员工管理",
     "hubListDescription": "按角色、启用状态和执行器在线状态快速扫描数字员工",
@@ -226,10 +325,9 @@
     "executorOnline": "执行器在线",
     "executorOffline": "执行器离线",
     "onlineRatio": "{{online}}/{{total}} 在线",
-    "executorRatio": "执行器：{{online}}/{{total}} 在线",
     "configHelp": "配置说明",
     "configHelpOpen": "点击任一数字员工卡片进入详情与配置。",
-    "configHelpContent": "可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC 模板及技能/能力配置。",
+    "configHelpContent": "可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC流程及技能/能力配置。",
     "emptyPlatform": "暂无平台智能体",
     "emptyAgents": "暂无数字员工",
     "role": "角色",
@@ -281,8 +379,6 @@
     "editDraft": "编辑草稿",
     "diffTitle": "当前生效 vs 草稿 v{{version}}",
     "identity": "身份配置",
-    "sdlcTag": "SDLC 模版：{{name}}",
-    "evolutionTag": "自进化模式：{{mode}}",
     "workitems": "任务列表",
     "repositoryTab": "仓库权限{{suffix}}",
     "capabilityTab": "能力配置{{suffix}}",
@@ -301,6 +397,11 @@
     "latestVersion": "最新版本",
     "submittedAt": "提交时间",
     "preview": "预览",
+    "viewDiff": "查看变更",
+    "submitNoteColumn": "提交说明",
+    "approveAndOnline": "通过并上线",
+    "rejectChange": "拒绝",
+    "readOnlyHint": "只读成员仅可查看变更，不能审批。",
     "approve": "通过",
     "reject": "驳回",
     "emptyReviews": "暂无待审核的数字员工",
@@ -310,7 +411,7 @@
     "rejectReason": "请输入驳回原因...",
     "businessBackground": "业务背景",
     "responsibilities": "工作职责",
-    "sdlcId": "SDLC 模版 ID",
+    "sdlcId": "SDLC流程 ID",
     "versionStatus": "版本状态",
     "inProgress": "执行中",
     "pendingDecision": "待决策",
@@ -334,6 +435,8 @@
     "bindingLabel": "{{name}}（{{label}}）",
     "close": "关闭",
     "createAction": "新建数字员工",
-    "officialCapabilities": "平台内置能力（只读）"
+    "officialCapabilities": "平台内置能力（只读）",
+    "executorUnknown": "暂无信息",
+    "executorNone": "0 台执行器"
   }
 }

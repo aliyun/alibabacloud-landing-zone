@@ -14,4 +14,6 @@ public class CreateAgentRequest {
     private String businessBackground;
     /** REST compatibility field containing the digital worker's AGENT.md Markdown content. */
     private String responsibilities;
+    /** Optional SDLC workflow bound to the initial draft version; null means unbound. */
+    private Long sdlcId;
 }

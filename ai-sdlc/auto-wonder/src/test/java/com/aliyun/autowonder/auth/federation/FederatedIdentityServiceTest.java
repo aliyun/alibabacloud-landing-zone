@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -42,6 +43,7 @@ class FederatedIdentityServiceTest {
     private UserDao userDao;
     private FederationStateStore stateStore;
     private SessionIssuanceService sessionIssuanceService;
+    private SsoIdentityAttributeSyncService attributeSyncService;
     private FederatedIdentityService service;
 
     @BeforeEach
@@ -52,8 +54,21 @@ class FederatedIdentityServiceTest {
         userDao = mock(UserDao.class);
         stateStore = mock(FederationStateStore.class);
         sessionIssuanceService = mock(SessionIssuanceService.class);
+        attributeSyncService = mock(SsoIdentityAttributeSyncService.class);
         service = new FederatedIdentityService(identityDao, connectionDao, registryService, userDao,
-                stateStore, sessionIssuanceService);
+                stateStore, sessionIssuanceService, attributeSyncService);
+    }
+
+    @Test
+    void pendingReviewAccountCannotBindOrSignInThroughFederation() {
+        UserDO pending = new UserDO();
+        pending.setId(USER);
+        pending.setStatus(2);
+
+        BizException error = org.junit.jupiter.api.Assertions.assertThrows(
+                BizException.class, () -> FederatedIdentityService.requireActiveUser(pending));
+
+        assertEquals("37012", error.getCode());
     }
 
     @Test
@@ -217,6 +232,7 @@ class FederatedIdentityServiceTest {
         assertEquals(USER, inserted.getValue().getUserId());
         verify(stateStore).deleteTicket("ticket-1");
         verify(sessionIssuanceService).issue(user);
+        verify(attributeSyncService).syncFeishu(eq(USER), any(), any());
     }
 
     @Test
@@ -246,6 +262,7 @@ class FederatedIdentityServiceTest {
         assertEquals("Entra 租户 A 登录", claimed.getProviderName());
         assertEquals("OIDC", claimed.getProtocol());
         verify(stateStore).deleteTicket("ticket-1");
+        verify(attributeSyncService).syncFeishu(eq(USER), any(), any());
     }
 
     @Test

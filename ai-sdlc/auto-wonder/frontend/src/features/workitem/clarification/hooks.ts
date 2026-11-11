@@ -1,3 +1,4 @@
+import { useAuthStore } from '@/shared/auth/store';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRealtime } from '@/shared/realtime/useRealtime';
@@ -44,6 +45,24 @@ export function useClarificationConversations(workitemId: number | string, agent
     enabled: !!workitemId && !!agentId,
     retry: clarificationQueryRetry,
     retryDelay: () => CLARIFICATION_QUERY_RETRY_DELAY_MS,
+  });
+}
+
+/**
+ * 工单维度最近一次澄清会话（跨数字人）：进入面板时先解析它，命中就跳过选人页。
+ * 只在没有 URL 上下文时启用；失败与「没有会话」都交给调用方回落到本地记忆链路。
+ */
+export function useLatestClarificationConversation(
+  workitemId: number | string,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['workitem', workitemId, 'clarification-latest-conversation'],
+    queryFn: () => api.getLatestClarificationConversation(workitemId),
+    enabled: !!workitemId && enabled,
+    retry: clarificationQueryRetry,
+    retryDelay: () => CLARIFICATION_QUERY_RETRY_DELAY_MS,
+    staleTime: 0,
   });
 }
 
@@ -166,6 +185,8 @@ export function useClarificationEvents(
   conversationId: number | null,
   processingTurnId: number | null | undefined,
 ) {
+  const workspaceId = useAuthStore(state => state.currentWorkspace?.id);
+  const userId = useAuthStore(state => state.user?.id);
   const queryClient = useQueryClient();
   const [streamedEvents, setStreamedEvents] = useState<StreamedEvent[]>([]);
   // 斜杠命令是会话级能力，独立于轮次事件流存放：由实时 acp_commands 事件写入，
@@ -180,15 +201,19 @@ export function useClarificationEvents(
   const retryTimer1Ref = useRef<ReturnType<typeof setTimeout>>();
   const retryTimer2Ref = useRef<ReturnType<typeof setTimeout>>();
 
+  const recoverRef = useRef<() => void>(() => {});
+  const lastLiveAtRef = useRef(0);
   const channel = conversationId ? `conversation:${conversationId}` : null;
 
   useRealtime(channel, {
     enabled: !!conversationId,
+    onReconnect: () => recoverRef.current(),
     onEvent: useCallback((event) => {
       if (event.type !== 'CONVERSATION_TURN_EVENT') return;
       const payload = event.payload as ConversationRealtimeEvent | null;
       if (!payload || payload.conversationId !== conversationId) return;
 
+      lastLiveAtRef.current = Date.now();
       const dedupKey = `${payload.turnId}:${payload.dispatchAttempt ?? 0}:${payload.eventSeq}`;
       if (seenEventsRef.current.has(dedupKey)) return;
       seenEventsRef.current.add(dedupKey);
@@ -242,7 +267,69 @@ export function useClarificationEvents(
       clearTimeout(retryTimer1Ref.current);
       clearTimeout(retryTimer2Ref.current);
     };
-  }, [conversationId]);
+  }, [conversationId, workspaceId, userId]);
+
+  // Only the active turn is recovered. One request at a time, incremental DB cursor,
+  // and no polling while live events arrive. Keep incomplete chunks across pages.
+  useEffect(() => {
+    if (!conversationId || !processingTurnId) return;
+    let disposed = false;
+    let loading = false;
+    let rerun = false;
+    let needsRecovery = true;
+    let denied = false;
+    let cursor = 0;
+    let pending: ClarificationTurnEvent[] = [];
+    const recover = async () => {
+      if (disposed || denied) return;
+      if (loading) { rerun = true; return; }
+      loading = true;
+      needsRecovery = true;
+      try {
+        let more = true;
+        while (more && !disposed) {
+          const rows = await api.getClarificationTurnEvents(workitemId, conversationId, processingTurnId, cursor);
+          if (disposed) return;
+          const next = Math.max(cursor, ...rows.map(row => row.id));
+          pending.push(...rows);
+          const assembled = assembleTurnEvents(pending);
+          const completed = new Set(assembled.map(e => `${e.turnId}:${e.dispatchAttempt ?? 0}:${e.eventSeq}`));
+          pending = pending.filter(row => !completed.has(`${row.turnId}:${row.dispatchAttempt ?? 0}:${row.eventSeq}`));
+          const additions = assembled.filter(event => {
+            const key = `${event.turnId}:${event.dispatchAttempt ?? 0}:${event.eventSeq}`;
+            if (seenEventsRef.current.has(key)) return false;
+            seenEventsRef.current.add(key);
+            return event.eventType !== 'acp_commands';
+          });
+          if (additions.length) setStreamedEvents(prev => [...prev, ...additions].sort((a, b) =>
+            a.turnId - b.turnId || (a.dispatchAttempt ?? 0) - (b.dispatchAttempt ?? 0) || a.eventSeq - b.eventSeq));
+          more = rows.length >= 500 && next > cursor;
+          cursor = next;
+          // Yield between pages instead of replaying an entire turn in one render.
+          if (more) await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        needsRecovery = false;
+      } catch (error) {
+        denied = isClarificationNonRetryableError(error);
+      } finally {
+        loading = false;
+        if (rerun) { rerun = false; void recover(); }
+      }
+    };
+    recoverRef.current = () => { void recover(); };
+    void recover();
+    const checkIdle = () => {
+      if (document.visibilityState !== 'hidden' && (needsRecovery || Date.now() - lastLiveAtRef.current >= 15_000)) void recover();
+    };
+    const timer = setInterval(checkIdle, 15_000);
+    document.addEventListener('visibilitychange', checkIdle);
+    return () => {
+      document.removeEventListener('visibilitychange', checkIdle);
+      disposed = true;
+      clearInterval(timer);
+      recoverRef.current = () => {};
+    };
+  }, [workitemId, conversationId, processingTurnId, workspaceId, userId]);
 
   const visibleEvents = useMemo(() => {
     if (streamedEvents.length === 0) return streamedEvents;

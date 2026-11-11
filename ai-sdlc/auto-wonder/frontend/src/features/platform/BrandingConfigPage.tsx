@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Input, Modal, Radio, Space, Switch, Tabs, Tag, Typography, Upload, message } from 'antd';
 import { SaveOutlined, UploadOutlined, EyeOutlined, EyeInvisibleOutlined, InfoCircleFilled, CloseCircleFilled } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import type { UploadRequestOption } from 'rc-upload/lib/interface';
 import {
   BRANDING_ADMIN_QUERY_KEY,
@@ -34,8 +35,9 @@ import './messageChannel.css';
 import { PlatformAdminPanel } from './PlatformAdminPanel';
 import { SsoConfigPanel } from './SsoConfigPanel';
 import { UserManagementPanel } from './UserManagementPanel';
+import { FeatureSwitchesPanel } from './FeatureSwitchesPanel';
 import { PageError } from '@/shared/ui/PageError';
-import { PageHeader } from '@/shared/ui/PageHeader';
+import { WorkspacePageHeader } from '@/app/WorkspacePageHeader';
 import { ApiError } from '@/shared/types/common';
 
 const { Title, Text } = Typography;
@@ -44,14 +46,16 @@ type ImRobotFormValues = UpdateDingTalkImChannelParams;
 
 const BRANDING_TAB_KEY = 'branding';
 const NOTIFICATION_TAB_KEY = 'notification';
+const FEATURE_SWITCH_TAB_KEY = 'feature-switches';
 const PLATFORM_ADMIN_TAB_KEY = 'platform-admin';
 const ENTERPRISE_SSO_TAB_KEY = 'enterprise-sso';
 const USER_MANAGEMENT_TAB_KEY = 'user-management';
 const PLATFORM_CONFIG_TAB_STORAGE_KEY = 'autowonder.platform-config.tab';
-const ADMIN_ONLY_TAB_KEYS = new Set([ENTERPRISE_SSO_TAB_KEY, USER_MANAGEMENT_TAB_KEY]);
+const ADMIN_ONLY_TAB_KEYS = new Set([NOTIFICATION_TAB_KEY, ENTERPRISE_SSO_TAB_KEY, USER_MANAGEMENT_TAB_KEY]);
 const PLATFORM_CONFIG_TAB_KEYS = new Set([
   BRANDING_TAB_KEY,
   NOTIFICATION_TAB_KEY,
+  FEATURE_SWITCH_TAB_KEY,
   PLATFORM_ADMIN_TAB_KEY,
   ENTERPRISE_SSO_TAB_KEY,
   USER_MANAGEMENT_TAB_KEY,
@@ -85,6 +89,7 @@ export function BrandingConfigPage() {
     queryFn: getAdminBranding,
     retry: false,
   });
+  const isPlatformAdmin = data?.canManage === true;
   const {
     data: imChannels,
     error: imChannelsError,
@@ -92,26 +97,35 @@ export function BrandingConfigPage() {
   } = useQuery({
     queryKey: PLATFORM_IM_CHANNELS_QUERY_KEY,
     queryFn: getPlatformImChannels,
+    enabled: isPlatformAdmin,
     retry: false,
   });
   const { data: imSelection } = useQuery({
     queryKey: IM_SELECTION_QUERY_KEY,
     queryFn: getImSelection,
+    enabled: isPlatformAdmin,
     retry: false,
   });
 
   const [activeTab, setActiveTab] = useState(readPlatformConfigTab);
+  // 通知深链携带的合法查询参数优先于标签页记忆（例如 status=PENDING_REVIEW / userId）。
+  const [searchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  useEffect(() => {
+    if (urlTab && PLATFORM_CONFIG_TAB_KEYS.has(urlTab)) {
+      setActiveTab(urlTab);
+    }
+  }, [urlTab]);
   const [switchOpen, setSwitchOpen] = useState(false);
   const [notificationDirty, setNotificationDirty] = useState(false);
   const [groupChatDirty, setGroupChatDirty] = useState(false);
   const [imConflictError, setImConflictError] = useState<unknown>(null);
-  const isPlatformAdmin = data?.canManage === true;
-  // 管理员专属页签（企业 SSO、用户管理）不会对非管理员渲染；历史存储值落回品牌配置，避免空白页。
+  // 非管理员打开受限页签的历史记录或深链时，回到品牌配置。
   const resolvedActiveTab = !isPlatformAdmin && ADMIN_ONLY_TAB_KEYS.has(activeTab)
     ? BRANDING_TAB_KEY
     : activeTab;
   useLocalizedValidation(form, !error && resolvedActiveTab === BRANDING_TAB_KEY);
-  useLocalizedValidation(imForm, !error && !imChannelsError);
+  useLocalizedValidation(imForm, isPlatformAdmin && !error && !imChannelsError);
   const provider = imSelection?.provider ?? (imChannels ? selectedImProvider(imChannels) : 'DINGTALK');
   const providerLabel = provider === 'FEISHU' ? t('feishu') : provider === 'DINGTALK' ? t('dingtalk') : provider;
   const current = data || DEFAULT_BRANDING;
@@ -135,7 +149,7 @@ export function BrandingConfigPage() {
   }, [data, form]);
 
   useEffect(() => {
-    if (imChannels) {
+    if (isPlatformAdmin && imChannels) {
       const channel = imChannels.find((item) => item.provider === provider) || EMPTY_IM_CHANNEL;
       imForm.setFieldsValue({
         enabled: channel.enabled,
@@ -146,7 +160,7 @@ export function BrandingConfigPage() {
       // Server data replaces the draft, so the section is no longer dirty for switch warnings.
       setNotificationDirty(false);
     }
-  }, [imForm, imChannels, provider]);
+  }, [imForm, imChannels, isPlatformAdmin, provider]);
 
   const saveMutation = useMutation({
     mutationFn: updateBranding,
@@ -248,7 +262,7 @@ export function BrandingConfigPage() {
     const apiError = error instanceof ApiError ? error : null;
     return (
       <>
-        <PageHeader brandTo="/workspaces" />
+        <WorkspacePageHeader />
         <PageError
           status="500"
           title={t('systemError')}
@@ -515,7 +529,7 @@ export function BrandingConfigPage() {
 
   return (
     <>
-    <PageHeader brandTo="/workspaces" />
+    <WorkspacePageHeader />
     <div className="aw-branding" style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', padding: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 18 }}>
         <Title level={3} style={{ margin: 0, letterSpacing: 0 }}>{t('configuration')}</Title>
@@ -534,7 +548,7 @@ export function BrandingConfigPage() {
         }}
         items={[
           { key: BRANDING_TAB_KEY, label: t('brandingTab'), children: brandingPane },
-          {
+          ...(isPlatformAdmin ? [{
             key: NOTIFICATION_TAB_KEY,
             label: t('notificationTab'),
             // imForm is seeded by an effect in this component and read through useWatch here,
@@ -542,6 +556,11 @@ export function BrandingConfigPage() {
             // disconnected from any rendered Form element.
             forceRender: true,
             children: notificationPane,
+          }] : []),
+          {
+            key: FEATURE_SWITCH_TAB_KEY,
+            label: t('featureSwitchTab'),
+            children: <FeatureSwitchesPanel canManage={isPlatformAdmin} />,
           },
           ...(isPlatformAdmin
             ? [{ key: ENTERPRISE_SSO_TAB_KEY, label: t('ssoTab'), children: <SsoConfigPanel branding={data} /> }]

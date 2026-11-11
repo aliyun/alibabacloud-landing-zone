@@ -9,6 +9,8 @@ import com.aliyun.autowonder.clarification.ClarificationDao;
 import com.aliyun.autowonder.guidance.GuidanceDO;
 import com.aliyun.autowonder.guidance.GuidanceDao;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.sdlc.SdlcStepDao;
 import com.aliyun.autowonder.squad.SquadMemberDO;
 import com.aliyun.autowonder.squad.SquadMemberDao;
@@ -387,6 +389,33 @@ class PackageContextAssemblerTest {
         d.setAgentId(400L);
         d.setAgentVersionId(401L);
         return d;
+    }
+
+    @Test
+    void interactionManifestAndWorkflowDescribeTheTargetStepWithoutRebindingTheWorkitem() {
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(TENANT);
+        workitem.setSdlcId(15L);
+        when(workitemDao.findById(200L)).thenReturn(workitem);
+        DispatchDO interaction = dispatch();
+        interaction.setResumeMode("CANONICAL_INTERACTION");
+        SdlcStepDO entry = workflowStep(300L, 56L, 1, "new entry", "analysis", "", null, null);
+        when(stepDao.findById(300L)).thenReturn(entry);
+        when(stepDao.listBySdlc(56L)).thenReturn(List.of(entry));
+
+        PackageContext ctx = assembler.assemble(interaction, version());
+        assertEquals(56L, ctx.getSdlcId());
+        assertEquals("56", ctx.getSdlc().get("sdlcId"));
+        assertEquals(15L, workitem.getSdlcId());
+
+        entry.setTenantId(TENANT + 1);
+        assertEquals(ErrorCode.SDLC_STEP_NOT_FOUND.getCode(),
+                assertThrows(BizException.class, () -> assembler.assemble(interaction, version())).getCode());
+        interaction.setSdlcStepId(null);
+        ctx = assembler.assemble(interaction, version());
+        assertNull(ctx.getSdlcId());
+        assertEquals("interaction-only", ctx.getSdlc().get("workflow"));
     }
 
     private WorkitemCommentDO comment(long id, String content, String authorType, long authorRef) {

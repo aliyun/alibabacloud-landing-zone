@@ -80,7 +80,8 @@
         FROM executor
         WHERE is_deleted = 0
           AND (JSON_EXTRACT(launch_config, '$.runtimeVersion') IS NULL
-               OR JSON_TYPE(JSON_EXTRACT(launch_config, '$.runtimeVersion')) = 'NULL')
+               OR JSON_TYPE(JSON_EXTRACT(launch_config, '$.runtimeVersion')) = 'NULL'
+               OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(launch_config, '$.runtimeVersionPinned')), 'false') != 'true')
         ORDER BY id ASC
     </select>
     <update id="updateLaunchConfig">
@@ -102,9 +103,15 @@
         WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND id IN
         <foreach collection="ids" item="eid" open="(" separator="," close=")">#{eid}</foreach>
     </select>
-    <select id="listByClientKind" resultType="com.aliyun.autowonder.executor.ExecutorDO">
+    <select id="listByClientKindAndTenant" resultType="com.aliyun.autowonder.executor.ExecutorDO">
         SELECT * FROM executor
-        WHERE client_kind = #{clientKind} AND is_deleted = 0
+        WHERE tenant_id = #{tenantId} AND client_kind = #{clientKind} AND is_deleted = 0
         ORDER BY last_heartbeat DESC, id ASC
+    </select>
+    <select id="listActiveTenantClientKinds" resultType="com.aliyun.autowonder.executor.ExecutorDO">
+        SELECT DISTINCT tenant_id, client_kind FROM executor
+        WHERE is_deleted = 0 AND tenant_id IS NOT NULL
+            AND client_kind IS NOT NULL AND TRIM(client_kind) != ''
+        ORDER BY tenant_id ASC, client_kind ASC
     </select>
 </mapper>

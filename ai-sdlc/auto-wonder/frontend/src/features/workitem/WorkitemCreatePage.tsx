@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next';
 import { i18n } from '@/shared/i18n';
 import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { priorityMap, workTypeMap } from './constants';
+import { useWorkitemDuplicateCheck } from './useWorkitemDuplicateCheck';
+import { DuplicateWorkitemsModal } from './components/DuplicateWorkitemsModal';
 
 const { TextArea } = Input;
 
@@ -18,6 +20,8 @@ export function WorkitemCreatePage() {
   useLocalizedValidation(form);
   const createMut = useCreateWorkitem();
   const accessCommand = useAccessCommand();
+  const titleValue = Form.useWatch<string>('title', form) ?? '';
+  const duplicateCheck = useWorkitemDuplicateCheck({ title: titleValue });
 
   const handleSubmit = (values: {
     workType: string;
@@ -25,6 +29,8 @@ export function WorkitemCreatePage() {
     contentMd: string;
     priority: number;
   }) => {
+    // 提交后立即作废本次预检：迟到的结果只走系统通知，不再打断创建流程。
+    duplicateCheck.markSubmitted();
     accessCommand('READ_WRITE', t('actions.create'), async () => {
       try {
         const wi = await createMut.mutateAsync({
@@ -36,6 +42,7 @@ export function WorkitemCreatePage() {
         message.success(i18n.t('workitem:messages.created'));
         navigate(`/workitems/${wi.id}`);
       } catch {
+        duplicateCheck.resetSubmission();
         return; // create failed; interceptor already showed the error, stay on form to retry
       }
     });
@@ -50,7 +57,13 @@ export function WorkitemCreatePage() {
           />
         </Form.Item>
         <Form.Item name="title" label={t('fields.title')} rules={[{ required: true, message: t('create.titleRequired') }]}>
-          <Input placeholder={t('create.titlePlaceholder')} maxLength={200} />
+          <Input
+            placeholder={t('create.titlePlaceholder')}
+            maxLength={200}
+            onBlur={duplicateCheck.titleHandlers.onBlur}
+            onCompositionStart={duplicateCheck.titleHandlers.onCompositionStart}
+            onCompositionEnd={duplicateCheck.titleHandlers.onCompositionEnd}
+          />
         </Form.Item>
         <Form.Item name="contentMd" label={t('fields.description')} rules={[{ required: true, message: t('create.descriptionRequired') }]}>
           <TextArea rows={6} placeholder={t('create.descriptionPlaceholder')} />
@@ -72,6 +85,13 @@ export function WorkitemCreatePage() {
           <Button onClick={() => navigate('/workitems')}>{t('create.cancel')}</Button>
         </Form.Item>
       </Form>
+      <DuplicateWorkitemsModal
+        open={duplicateCheck.modal.open}
+        matches={duplicateCheck.modal.matches}
+        truncated={duplicateCheck.modal.truncated}
+        partial={duplicateCheck.modal.partial}
+        onDismiss={duplicateCheck.dismiss}
+      />
     </Card>
   );
 }

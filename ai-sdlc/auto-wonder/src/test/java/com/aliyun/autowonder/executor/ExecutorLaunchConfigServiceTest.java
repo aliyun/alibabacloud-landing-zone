@@ -3,10 +3,15 @@ package com.aliyun.autowonder.executor;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.executor.dto.CreateExecutorRequest;
 import com.aliyun.autowonder.executor.dto.ExecutorLaunchConfigVO;
+import com.aliyun.autowonder.executor.dto.ProviderModelCatalogItemVO;
+import com.aliyun.autowonder.executor.dto.ProviderModelCatalogVO;
 import com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.util.Date;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -116,14 +121,14 @@ class ExecutorLaunchConfigServiceTest {
     void concurrencyDefaultsAndValidationMatchLaunchSettings() {
         CreateExecutorRequest request = new CreateExecutorRequest();
         request.setClientKind("QODER_CLI");
-        assertEquals(5, service.resolveForCreate(request).maxConcurrentDispatches);
+        assertEquals(5, service.resolveForCreate(TENANT, request).maxConcurrentDispatches);
         request.setMaxConcurrentDispatches(1);
-        assertEquals(1, service.resolveForCreate(request).maxConcurrentDispatches);
+        assertEquals(1, service.resolveForCreate(TENANT, request).maxConcurrentDispatches);
         request.setMaxConcurrentDispatches(10);
-        assertEquals(10, service.resolveForCreate(request).maxConcurrentDispatches);
+        assertEquals(10, service.resolveForCreate(TENANT, request).maxConcurrentDispatches);
         for (int invalid : new int[]{0, -1, 11, 50}) {
             request.setMaxConcurrentDispatches(invalid);
-            assertThrows(BizException.class, () -> service.resolveForCreate(request));
+            assertThrows(BizException.class, () -> service.resolveForCreate(TENANT, request));
         }
     }
 
@@ -159,10 +164,81 @@ class ExecutorLaunchConfigServiceTest {
         assertFalse(saved.getDebug());
     }
 
+    @Test void clearingAnExplicitRuntimePinPreservesTheOtherSavedLaunchSettings() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, "QODER_CLI",
+                "{\"memoryMode\":\"none\",\"model\":\"auto\",\"runtimeVersion\":\"0.3.35\","
+                        + "\"runtimeVersionPinned\":true,\"maxConcurrentDispatches\":1,"
+                        + "\"workspaceRoot\":\"/data/tasks\",\"daemonName\":\"cleaner\",\"debug\":true}", 4));
+        when(executorDao.updateLaunchConfig(eq(9L), eq(TENANT), anyString(), eq(4), eq(USER))).thenReturn(1);
+        var request = req(4, "none", "auto", "medium", "260000");
+        request.setRuntimeVersion("");
+        var saved = service.updateConfig(9L, TENANT, request, USER);
+        assertNull(saved.getRuntimeVersion());
+        assertNull(saved.getRuntimeVersionPinned());
+        assertEquals("none", saved.getMemoryMode());
+        assertEquals("auto", saved.getModel());
+        assertEquals(1, saved.getMaxConcurrentDispatches());
+        assertEquals("/data/tasks", saved.getWorkspaceRoot());
+        assertEquals("cleaner", saved.getDaemonName());
+        assertTrue(saved.getDebug());
+        assertEquals(5, saved.getVersion());
+    }
+
     @Test void applyRequiresTheSavedVersionFromTheSameExecutorSnapshot() {
         when(executorDao.findById(9L)).thenReturn(executor(9L, "CLAUDE_CODE", "{\"memoryMode\":\"platform\"}", 4));
         assertThrows(BizException.class, () -> service.requireCompleteConfig(9L, TENANT, 3));
         assertEquals("platform", service.requireCompleteConfig(9L, TENANT, 4).memoryMode);
+    }
+
+    @Test void editedRuntimeVersionSurvivesPersistenceAndFormSavesWithoutRevivingLegacyPins() {
+        ExecutorDO row = executor(9L, "CLAUDE_CODE",
+                "{\"memoryMode\":\"platform\",\"runtimeVersion\":\"0.3.9\"}", 4);
+        when(executorDao.findById(9L)).thenReturn(row);
+        when(executorDao.updateLaunchConfig(eq(9L), eq(TENANT), anyString(), anyInt(), eq(USER))).thenAnswer(call -> {
+            if (!row.getConfigVersion().equals(call.getArgument(3))) return 0;
+            row.setLaunchConfig(call.getArgument(2));
+            row.setConfigVersion(row.getConfigVersion() + 1);
+            return 1;
+        });
+        var executors = mock(ExecutorService.class);
+        var executor = new com.aliyun.autowonder.executor.dto.ExecutorVO();
+        executor.setId(9L);
+        executor.setClientKind("CLAUDE_CODE");
+        when(executors.getDetail(9L, TENANT)).thenReturn(executor);
+        when(executors.getToken(9L, TENANT)).thenReturn("test-token");
+        var branding = mock(com.aliyun.autowonder.branding.PlatformBrandingService.class);
+        when(branding.effectivePublicBaseUrl()).thenReturn("https://example.test");
+        when(branding.recommendedRuntimeVersion()).thenReturn("0.3.34");
+        var commands = new ExecutorLaunchCommandService(branding, executors, service);
+        var request = new com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchCommandRequest();
+        String original = commands.buildForExecutor(9L, TENANT, "posix", false, null).getCommand();
+        assertTrue(original.contains("@alicloud/autowonder@0.3.34"));
+        request.setVersion(4);
+        request.setCommand(original + " --workspace-root /data/tasks");
+        assertNull(commands.saveCommand(9L, TENANT, USER, request).getRuntimeVersionPinned());
+        when(branding.recommendedRuntimeVersion()).thenReturn("0.3.35");
+        String refreshed = commands.buildForExecutor(9L, TENANT, "posix", false, null).getCommand();
+        assertTrue(refreshed.contains("@alicloud/autowonder@0.3.35"));
+
+        request.setVersion(5);
+        request.setCommand(refreshed.replace("@0.3.35", "@0.3.36"));
+        var saved = commands.saveCommand(9L, TENANT, USER, request);
+        assertEquals("0.3.36", saved.getRuntimeVersion());
+        assertTrue(saved.getRuntimeVersionPinned());
+        assertTrue(service.readStoredConfig(9L, TENANT).getRuntimeVersionPinned());
+        var form = req(6, "none", null, null, null);
+        saved = service.updateConfig(9L, TENANT, form, USER);
+        assertEquals("0.3.36", saved.getRuntimeVersion());
+        assertTrue(saved.getRuntimeVersionPinned());
+        when(branding.recommendedRuntimeVersion()).thenReturn("0.3.37");
+        assertEquals("0.3.36", commands.buildForExecutor(9L, TENANT, "windows", false, null).getRuntimeVersion());
+        assertTrue(commands.buildForExecutor(9L, TENANT, "posix", true, "bash").getCommand()
+                .contains("@alicloud/autowonder@0.3.36"));
+
+        form.setVersion(7);
+        form.setRuntimeVersion("");
+        assertNull(service.updateConfig(9L, TENANT, form, USER).getRuntimeVersionPinned());
+        assertEquals("0.3.37", commands.buildForExecutor(9L, TENANT, "posix", false, null).getRuntimeVersion());
     }
 
     @Test
@@ -477,7 +553,7 @@ class ExecutorLaunchConfigServiceTest {
     @Test
     void resolveForCreate_fills_the_dialog_defaults_for_an_omitted_launch_value() {
         ExecutorLaunchConfigService.LaunchConfig config =
-                service.resolveForCreate(create("QODER_CLI", null, null, null, null));
+                service.resolveForCreate(TENANT, create("QODER_CLI", null, null, null, null));
 
         assertEquals("auto", config.model);
         assertEquals("medium", config.reasoningEffort);
@@ -489,7 +565,7 @@ class ExecutorLaunchConfigServiceTest {
     @Test
     void resolveForCreate_keeps_explicit_values_verbatim() {
         ExecutorLaunchConfigService.LaunchConfig config =
-                service.resolveForCreate(create("QODER_CN_CLI", "none", "lite", "low", "400000"));
+                service.resolveForCreate(TENANT, create("QODER_CN_CLI", "none", "lite", "low", "400000"));
 
         assertEquals("lite", config.model);
         assertEquals("low", config.reasoningEffort);
@@ -500,7 +576,7 @@ class ExecutorLaunchConfigServiceTest {
     @Test
     void resolveForCreate_derives_the_ultimate_reasoning_effort() {
         ExecutorLaunchConfigService.LaunchConfig config =
-                service.resolveForCreate(create("QODER_CLI", null, "ultimate", null, null));
+                service.resolveForCreate(TENANT, create("QODER_CLI", null, "ultimate", null, null));
 
         assertEquals("ultimate", config.model);
         assertEquals("high", config.reasoningEffort);
@@ -510,21 +586,42 @@ class ExecutorLaunchConfigServiceTest {
     void resolveForCreate_rejects_a_model_the_catalog_no_longer_offers() {
         // 显式传入的模型不可用必须报错，不能悄悄替换成别的 id 落库
         BizException ex = assertThrows(BizException.class, () ->
-                service.resolveForCreate(create("QODER_CLI", null, "removed-model", null, null)));
+                service.resolveForCreate(TENANT, create("QODER_CLI", null, "removed-model", null, null)));
         assertEquals("17006", ex.getCode());
+    }
+
+    @Test
+    void resolveForCreate_validatesModelsAgainstTheRequestingWorkspaceOnly() {
+        // Workspace 100's account only offers auto; workspace 200 still sees the full catalog.
+        when(modelCatalogService.read(100L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+                List.of(new ProviderModelCatalogItemVO("auto", "Auto (default)")), new Date()));
+        when(modelCatalogService.read(200L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+                List.of(new ProviderModelCatalogItemVO("auto", "Auto (default)"),
+                        new ProviderModelCatalogItemVO("ultimate", "Ultimate")), new Date()));
+        CreateExecutorRequest ultimate = create("QODER_CLI", null, "ultimate", null, null);
+        CreateExecutorRequest auto = create("QODER_CLI", null, "auto", null, null);
+
+        assertEquals("ultimate", service.resolveForCreate(200L, ultimate).model);
+        // 100 cannot borrow 200's catalog entry, but its own shorter list still validates successfully.
+        BizException rejected = assertThrows(BizException.class,
+                () -> service.resolveForCreate(100L, ultimate));
+        assertEquals("17006", rejected.getCode());
+        assertEquals("auto", service.resolveForCreate(100L, auto).model);
+        // The omitted-model default comes from the same workspace catalog.
+        assertEquals("auto", service.resolveForCreate(100L, create("QODER_CLI", null, null, null, null)).model);
     }
 
     @Test
     void resolveForCreate_rejects_an_unknown_context_window() {
         BizException ex = assertThrows(BizException.class, () ->
-                service.resolveForCreate(create("QODER_CLI", null, null, null, "512000")));
+                service.resolveForCreate(TENANT, create("QODER_CLI", null, null, null, "512000")));
         assertEquals("27003", ex.getCode());
     }
 
     @Test
     void resolveForCreate_stores_only_memory_mode_for_a_non_qoder_client_kind() {
         ExecutorLaunchConfigService.LaunchConfig config =
-                service.resolveForCreate(create("CLAUDE_CODE", "provider-local", "lite", "low", "400000"));
+                service.resolveForCreate(TENANT, create("CLAUDE_CODE", "provider-local", "lite", "low", "400000"));
 
         assertEquals("provider-local", config.memoryMode);
         assertNull(config.model);
@@ -534,7 +631,7 @@ class ExecutorLaunchConfigServiceTest {
 
     @Test
     void resolveForCreate_defaults_memory_mode_when_the_request_is_null() {
-        ExecutorLaunchConfigService.LaunchConfig config = service.resolveForCreate(null);
+        ExecutorLaunchConfigService.LaunchConfig config = service.resolveForCreate(TENANT, null);
 
         assertEquals("platform", config.memoryMode);
         assertNull(config.model);
@@ -640,6 +737,50 @@ class ExecutorLaunchConfigServiceTest {
         assertEquals("opus", service.updateConfig(1,TENANT,request,USER).getModelUpgradePolicy().getLevels().get(0).getModel());
         policy.setEnabled(false); policy.setLevels(java.util.List.of());
         assertFalse(service.updateConfig(1,TENANT,request,USER).getModelUpgradePolicy().isEnabled());
+    }
+
+    @Test void upgradePolicyRejectsAModelOnlyAnotherWorkspaceCatalogOffers() {
+        when(executorDao.findById(1L)).thenReturn(executor(1L, "QODER_CLI",
+                "{\"model\":\"auto\",\"memoryMode\":\"platform\",\"reasoningEffort\":\"medium\","
+                        + "\"contextWindow\":\"260000\"}", 1));
+        when(executorDao.updateLaunchConfig(anyLong(), anyLong(), anyString(), anyInt(), anyLong())).thenReturn(1);
+        // The executor's workspace only offers auto; workspace 200 additionally offers ultimate.
+        when(modelCatalogService.read(TENANT, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+                List.of(new ProviderModelCatalogItemVO("auto", "Auto (default)")), new Date()));
+        when(modelCatalogService.read(200L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+                List.of(new ProviderModelCatalogItemVO("auto", "Auto (default)"),
+                        new ProviderModelCatalogItemVO("ultimate", "Ultimate")), new Date()));
+        ModelUpgradePolicy policy = new ModelUpgradePolicy(); policy.setEnabled(true);
+        ModelUpgradePolicy.Level level = new ModelUpgradePolicy.Level(); level.setEntryCount(2); level.setModel("ultimate");
+        policy.setLevels(java.util.List.of(level));
+        UpdateExecutorLaunchConfigRequest request = req(1, "platform", "auto", "medium", "260000");
+        request.setModelUpgradePolicy(policy);
+
+        BizException rejected = assertThrows(BizException.class,
+                () -> service.updateConfig(1L, TENANT, request, USER));
+
+        assertEquals("17006", rejected.getCode());
+        verify(executorDao, never()).updateLaunchConfig(anyLong(), anyLong(), anyString(), anyInt(), anyLong());
+    }
+
+    @Test void upgradePolicyAcceptsAModelTheExecutorsOwnWorkspaceCatalogOffers() {
+        when(executorDao.findById(1L)).thenReturn(executor(1L, "QODER_CLI",
+                "{\"model\":\"auto\",\"memoryMode\":\"platform\",\"reasoningEffort\":\"medium\","
+                        + "\"contextWindow\":\"260000\"}", 1));
+        when(executorDao.updateLaunchConfig(anyLong(), anyLong(), anyString(), anyInt(), anyLong())).thenReturn(1);
+        when(modelCatalogService.read(TENANT, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+                List.of(new ProviderModelCatalogItemVO("auto", "Auto (default)"),
+                        new ProviderModelCatalogItemVO("ultimate", "Ultimate")), new Date()));
+        ModelUpgradePolicy policy = new ModelUpgradePolicy(); policy.setEnabled(true);
+        ModelUpgradePolicy.Level level = new ModelUpgradePolicy.Level(); level.setEntryCount(2); level.setModel("ultimate");
+        policy.setLevels(java.util.List.of(level));
+        UpdateExecutorLaunchConfigRequest request = req(1, "platform", "auto", "medium", "260000");
+        request.setModelUpgradePolicy(policy);
+
+        ExecutorLaunchConfigVO saved = service.updateConfig(1L, TENANT, request, USER);
+
+        assertEquals("ultimate", saved.getModelUpgradePolicy().getLevels().get(0).getModel());
+        verify(modelCatalogService, never()).read(200L, "qoder");
     }
 
     @Test void fractionalEntryThresholdsAreRejectedAtJsonBoundary() {

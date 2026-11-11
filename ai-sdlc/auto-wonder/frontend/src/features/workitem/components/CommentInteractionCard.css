@@ -10,9 +10,15 @@
 .aw-comment-log-row time { color: var(--aw-muted); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .aw-comment-log-dot { color: var(--aw-accent-text); }
 .aw-comment-empty, .aw-comment-note { color: var(--aw-muted); padding: 6px 0; font-size: 11px; }
-.aw-comment-controls { display: flex; gap: 12px; }
+.aw-comment-controls { display: flex; gap: 12px; align-items: center; }
 .aw-comment-controls button { border: 0; background: transparent; padding: 4px 0; color: var(--aw-accent-text); font-size: 12px; cursor: pointer; }
 .aw-comment-controls button:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 2px; }
+.aw-comment-controls .aw-comment-stop { width: 30px; height: 30px; min-height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid var(--aw-border); border-radius: 6px; background: var(--aw-panel); color: var(--aw-error); }
+.aw-comment-controls .aw-comment-stop:hover { background: var(--aw-raised); color: var(--aw-error); }
+.aw-comment-controls .aw-comment-stop--force { border-style: dashed; }
+.aw-comment-stop-warning { margin-top: 8px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--aw-warning) 40%, var(--aw-border)); background: color-mix(in srgb, var(--aw-warning) 8%, var(--aw-panel)); border-radius: 6px; font-size: 12px; }
+.aw-comment-stop-error { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--aw-error); }
+.aw-comment-stop-error button { border: 0; background: transparent; padding: 0; color: var(--aw-accent-text); font-size: 12px; cursor: pointer; text-decoration: underline; }
 .aw-comment-answer { margin-top: 8px; overflow-wrap: anywhere; }
 .aw-comment-reply--failed .aw-comment-state { background: color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel)); color: var(--aw-error); }
 .aw-comment-error { margin-top: 8px; color: var(--aw-error); overflow-wrap: anywhere; }

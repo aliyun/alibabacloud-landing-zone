@@ -18,6 +18,7 @@ import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeFailure;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.WorkitemAssignedEvent;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
@@ -42,6 +43,7 @@ import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.sdlc.SdlcStepDao;
 import com.aliyun.autowonder.squad.SquadMemberDO;
 import com.aliyun.autowonder.squad.SquadMemberDao;
+import com.aliyun.autowonder.squad.SquadNameResolver;
 import com.aliyun.autowonder.statemachine.StatusNodeDO;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
 import com.aliyun.autowonder.statemachine.StatusTemplateDO;
@@ -91,6 +93,7 @@ import org.slf4j.MDC;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
@@ -147,6 +150,8 @@ public class WorkitemService {
     private final AgentDao agentDao;
     private final AgentSdlcResolver sdlcResolver;
     private final SquadMemberDao squadMemberDao;
+    @Autowired(required = false)
+    private SquadNameResolver squadNameResolver;
     private final ExecutorDao executorDao;
     private final UserDao userDao;
     private final WorkspaceMemberDao workspaceMemberDao;
@@ -167,6 +172,17 @@ public class WorkitemService {
     private ScheduledTaskNotificationService scheduledTaskNotificationService;
     @Autowired(required = false)
     private WorkitemServiceRestartHandler restartHandler;
+    private ExecutionAvailabilityService executionAvailabilityService;
+
+    @Autowired(required = false)
+    public void setExecutionAvailabilityService(ExecutionAvailabilityService service) {
+        this.executionAvailabilityService = service;
+    }
+
+    @Autowired(required = false)
+    public void setSquadNameResolver(SquadNameResolver squadNameResolver) {
+        this.squadNameResolver = squadNameResolver;
+    }
 
     /** A non-terminal (running) dispatch idle longer than this is treated as stalled. Default 60m. */
     @Value("${autowonder.workitem.stuck-threshold-ms:3600000}")
@@ -302,6 +318,8 @@ public class WorkitemService {
         }
 
         writeEvent(workspaceId, w.getId(), WorkitemEventType.CREATE.code(), null, init.getCode(), "HUMAN", userId);
+        // 可选的重复检测在事务提交后由监听器尽力触发，不参与创建结果。
+        eventPublisher.publishEvent(new WorkitemCreatedEvent(workspaceId, w.getId(), w.getTitle(), userId));
         if (req.getAssigneeType() != null) {
             return assign(w.getId(), req.getAssigneeType(), req.getAssigneeRef(),
                     req.getSdlcId(), req.getSquadId(), req.getScheduledStartAt(), workspaceId, userId);
@@ -337,6 +355,7 @@ public class WorkitemService {
                                       long tenantId, long currentUserId, String keyword, String tag,
                                       String scheduledStart, String createdFrom, String createdTo,
                                       List<Long> creatorIds, String tagConditions,
+                                      String squadIds, boolean unassignedSquad,
                                       int page, int size) {
         int p = page < 1 ? 1 : page;
         int s = size < 1 ? 20 : Math.min(size, 200);
@@ -350,6 +369,11 @@ public class WorkitemService {
         Date effectiveCreatedFrom = normalizeCreatedBound(createdFrom);
         Date effectiveCreatedTo = normalizeCreatedBound(createdTo);
         List<WorkitemTagCondition> effectiveTagConditions = parseTagConditions(tagConditions);
+        List<Long> effectiveSquadIds = parseSquadIds(squadIds);
+        if (unassignedSquad && effectiveSquadIds != null) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workitem.list.squad_filter.exclusive", null,
+                    "unassignedSquad cannot combine with squadIds " + effectiveSquadIds);
+        }
         Long keywordId = null;
         if (effectiveKeyword != null && effectiveKeyword.matches("\\d+")) {
             try {
@@ -361,12 +385,12 @@ public class WorkitemService {
                 assigneeType, assigneeRef,
                 pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag,
                 effectiveScheduledStart, effectiveCreatedFrom, effectiveCreatedTo, creatorIds,
-                effectiveTagConditions);
+                effectiveTagConditions, effectiveSquadIds, unassignedSquad);
         List<WorkitemDO> rows = workitemDao.list(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
                 pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag,
                 effectiveScheduledStart, effectiveCreatedFrom, effectiveCreatedTo, creatorIds,
-                effectiveTagConditions, offset, s);
+                effectiveTagConditions, effectiveSquadIds, unassignedSquad, offset, s);
         Map<Long, DispatchDO> latestByWorkitem = loadLatestDispatches(tenantId, rows);
 
         Set<Long> humanIds = new HashSet<>();
@@ -484,6 +508,39 @@ public class WorkitemService {
         } catch (DateTimeParseException e) {
             return null;
         }
+    }
+
+    /**
+     * 交付小队高级筛选（工单 #57510）：入参为逗号分隔的正整数 id，缺省、空白或只有逗号时表示不过滤。
+     * 去重后保留顺序；非数字、非正数一律按 keyed 参数错误返回，避免静默命中错误小队。
+     */
+    private List<Long> parseSquadIds(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
+        for (String part : raw.split(",", -1)) {
+            String token = part.trim();
+            if (token.isEmpty()) {
+                continue;
+            }
+            long id;
+            try {
+                id = Long.parseLong(token);
+            } catch (NumberFormatException ex) {
+                throw invalidSquadFilter("squadIds contains a non-numeric value: " + token, ex);
+            }
+            if (id <= 0) {
+                throw invalidSquadFilter("squadIds contains a non-positive value: " + token, null);
+            }
+            ids.add(id);
+        }
+        return ids.isEmpty() ? null : new ArrayList<>(ids);
+    }
+
+    private BizException invalidSquadFilter(String diagnostic, Throwable cause) {
+        return BizException.keyed(ErrorCode.PARAM_INVALID, "workitem.list.squad_filter.invalid", null,
+                diagnostic, cause);
     }
 
     /**
@@ -866,13 +923,26 @@ public class WorkitemService {
         boolean sameAssignee = Objects.equals(w.getAssigneeType(), assigneeType)
                 && Objects.equals(w.getAssigneeRef(), assigneeRef);
         boolean agentAssign = "AGENT".equals(assigneeType) && assigneeRef != null;
+        if (agentAssign && restartHandler != null
+                && restartHandler.replay(tenantId, id, restartToken, assigneeRef, sdlcId, scheduledStartAt)) return toVO(w);
         // A reassignment to an AGENT whose delivery already started is an explicit
         // delivery restart: stop old formal executions, then start a new formal round
         // from the SDLC entry. First-time delivery (no SDLC bound) keeps the plain
         // assignment path — there is no old execution to stop.
         boolean restartDelivery = agentAssign && w.getSdlcId() != null && w.getCurrentStepId() != null;
-        if (sameAssignee && !restartDelivery && scheduledStartAt == null) {
+        boolean explicitBinding = agentAssign && sdlcId != null
+                && (!sdlcId.equals(w.getSdlcId()) || w.getCurrentStepId() == null);
+        if (sameAssignee && !restartDelivery && !explicitBinding && scheduledStartAt == null) {
             return toVO(w);
+        }
+        Long targetSdlcId = sdlcId != null ? sdlcId : w.getSdlcId();
+        if (agentAssign && sdlcId == null) {
+            targetSdlcId = resolveAgentSdlcId(assigneeRef, tenantId, w.getWorkType());
+        }
+        // Reject before any assignment write so an unavailable target never leaves a partial
+        // assignee/binding behind. Applies to first delivery, restart and deferred starts.
+        if (agentAssign && executionAvailabilityService != null) {
+            executionAvailabilityService.requireStartable(tenantId, assigneeRef, targetSdlcId);
         }
         AssignmentActor effectiveActor = actor == null
                 ? AssignmentActor.systemFallback()
@@ -899,21 +969,20 @@ public class WorkitemService {
             assignEvent.setDetailJson(assignDetailJson(w.getAssigneeType(), assigneeType));
             eventDao.insert(assignEvent);
 
-            // First-time delivery start: bind chosen SDLC + its first step.
-            // Guard on w.getSdlcId()==null so a mid-flight currentStepId is never reset.
-            if ("AGENT".equals(assigneeType) && assigneeRef != null
-                    && w.getSdlcId() == null && w.getCurrentStepId() == null) {
-                Long effectiveSdlcId = sdlcId != null ? sdlcId
-                        : resolveAgentSdlcId(assigneeRef, tenantId, w.getWorkType());
-                bindSdlc(id, tenantId, effectiveSdlcId, w.getVersion() + 1, modifierUserId);
-            }
+        }
 
+        boolean restart = restartDelivery && restartHandler != null;
+        boolean selectEntry = agentAssign && (explicitBinding || restart
+                || (w.getSdlcId() == null && w.getCurrentStepId() == null));
+        boolean routeChanged = selectEntry && bindAssignmentEntry(w, targetSdlcId,
+                sameAssignee ? w.getVersion() : w.getVersion() + 1, modifierUserId);
+        if (!sameAssignee || routeChanged) {
             reloaded = workitemDao.findById(id);
 
             // Record the real human who triggered the assignment (assign-operator) so a later
             // handoff with no resolvable next-hop can fall back to them. SYSTEM-initiated assigns
             // (agent->agent handoffs) must not overwrite the human operator.
-            if (effectiveActor.isHuman() && modifierUserId != SYSTEM_USER_ID && reloaded != null
+            if (!sameAssignee && effectiveActor.isHuman() && modifierUserId != SYSTEM_USER_ID && reloaded != null
                     && !java.util.Objects.equals(reloaded.getAssignOperatorId(), modifierUserId)) {
                 workitemDao.updateAssignOperator(id, tenantId, modifierUserId, reloaded.getVersion(), modifierUserId);
                 // updateAssignOperator bumps the version when it matches; reload so the
@@ -943,7 +1012,7 @@ public class WorkitemService {
         }
 
         if ("AGENT".equals(assigneeType) && assigneeRef != null && reloaded != null) {
-            if (restartDelivery && restartHandler != null) {
+            if (restart) {
                 // An immediate restart supersedes any leftover delayed-restart schedule:
                 // without this CAS clear the scheduled-start scanner would fire the stale
                 // deferred round once its planned time arrives, stopping this restart's
@@ -959,19 +1028,7 @@ public class WorkitemService {
                 // round and publish the restart event that stops old formal executions before
                 // the new round runs. WorkitemAssignedEvent must NOT also fire — that would
                 // enqueue a second, uncontrolled dispatch for the same reassignment.
-                SdlcStepDO entry = sdlcResolver.firstStep(tenantId, reloaded.getSdlcId());
-                if (entry == null) {
-                    throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
-                }
-                if (!entry.getId().equals(reloaded.getCurrentStepId())) {
-                    int rows = workitemDao.updateSdlcAndStep(id, tenantId, reloaded.getSdlcId(),
-                            entry.getId(), reloaded.getVersion(), modifierUserId);
-                    if (rows == 0) {
-                        throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
-                    }
-                    reloaded = workitemDao.findById(id);
-                }
-                restartHandler.restartAgentDelivery(id, tenantId, assigneeRef, entry.getId(),
+                restartHandler.restartAgentDelivery(id, tenantId, assigneeRef, reloaded.getCurrentStepId(),
                         restartToken, scheduledStartAt, modifierUserId, effectiveActor);
             } else {
                 boolean deferred = reloaded.getScheduledStartAt() != null
@@ -1255,19 +1312,25 @@ public class WorkitemService {
         throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
     }
 
-    private void bindSdlc(long workitemId, long tenantId, long sdlcId, int version, long userId) {
-        SdlcDO sdlc = sdlcDao.findById(sdlcId);
-        if (sdlc == null || !Long.valueOf(tenantId).equals(sdlc.getTenantId())) {
-            throw new BizException(ErrorCode.SDLC_NOT_FOUND);
+    private boolean bindAssignmentEntry(WorkitemDO w, long sdlcId, int version, long userId) {
+        if (!Objects.equals(w.getSdlcId(), sdlcId)) {
+            SdlcDO sdlc = sdlcDao.findById(sdlcId);
+            if (sdlc == null || !w.getTenantId().equals(sdlc.getTenantId())) {
+                throw new BizException(ErrorCode.SDLC_NOT_FOUND);
+            }
         }
-        SdlcStepDO first = sdlcResolver.firstStep(tenantId, sdlcId);
+        SdlcStepDO first = sdlcResolver.firstStep(w.getTenantId(), sdlcId);
         if (first == null) {
             throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
         }
-        int rows = workitemDao.updateSdlcAndStep(workitemId, tenantId, sdlcId, first.getId(), version, userId);
+        if (Objects.equals(w.getSdlcId(), sdlcId) && first.getId().equals(w.getCurrentStepId())) {
+            return false;
+        }
+        int rows = workitemDao.updateSdlcAndStep(w.getId(), w.getTenantId(), sdlcId, first.getId(), version, userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
+        return true;
     }
 
     private Long resolveAgentSdlcId(long agentId, long tenantId, String workType) {
@@ -1316,7 +1379,9 @@ public class WorkitemService {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
         writeEvent(tenantId, id, WorkitemEventType.EDIT.code(), null, null, "HUMAN", userId);
-        eventPublisher.publishEvent(new WorkitemContentUpdatedEvent(tenantId, id, effectiveTitle, effectiveContentMd, userId));
+        boolean titleChanged = !Objects.equals(w.getTitle(), effectiveTitle);
+        eventPublisher.publishEvent(new WorkitemContentUpdatedEvent(tenantId, id, effectiveTitle,
+                effectiveContentMd, userId, titleChanged));
         return toVO(workitemDao.findById(id));
     }
 
@@ -1778,6 +1843,12 @@ public class WorkitemService {
         }
 
         for (DispatchDO target : formal) {
+            if (target.getIdempotencyKey() != null && target.getIdempotencyKey().startsWith("restart:")
+                    && target.getDeliverySourceDispatchId() != null) {
+                addGraphEdge(edges, byId, target.getDeliverySourceDispatchId(), target, "RESTART", null,
+                        com.aliyun.autowonder.common.i18n.SystemMessages.render("dispatch.round_restart", new Object[0], "交付重启"));
+                continue;
+            }
             if ("COMMENT_REWORK".equals(target.getResumeMode())) {
                 Long sideDispatchId = parsePrefixedId(target.getIdempotencyKey(), "interaction-rework:");
                 GuidanceDO guidance = sideDispatchId == null ? null : guidanceByDispatch.get(sideDispatchId);
@@ -1942,7 +2013,7 @@ public class WorkitemService {
         if ("AGENT".equals(w.getAssigneeType()) && w.getAssigneeRef() != null) {
             ids.putIfAbsent(w.getAssigneeRef(), w.getAssigneeRef());
         }
-        List<SquadMemberDO> squadMembers = resolveSquadMembers(tenantId, new ArrayList<>(ids.keySet()));
+        List<SquadMemberDO> squadMembers = resolveSquad(tenantId, new ArrayList<>(ids.keySet())).members();
         for (SquadMemberDO member : squadMembers) {
             if (member.getAgentId() != null) {
                 ids.putIfAbsent(member.getAgentId(), member.getAgentId());
@@ -2660,6 +2731,14 @@ public class WorkitemService {
         boolean cancelled = state.cancelRequested();
         boolean interaction = DispatchService.isInteractionDispatchValue(d);
         DispatchControlCapabilitiesVO capabilities = new DispatchControlCapabilitiesVO();
+        DispatchDO latestFormal = context.allDispatches.stream()
+                .filter(row -> !DispatchService.isInteractionDispatchValue(row))
+                .max(Comparator.comparingLong(DispatchDO::getId)).orElse(null);
+        capabilities.setRestartLatest(!context.controlClosed && !interaction && !cancelled && !state.stopPending()
+                && DispatchStatus.PAUSED.equals(d.getStatus()) && latestFormal != null
+                && Objects.equals(latestFormal.getId(), d.getId())
+                ? ControlActionCapabilityVO.allowed()
+                : ControlActionCapabilityVO.denied("delivery.controlReason.notResumable"));
 
         boolean pauseCandidate = !context.controlClosed && !interaction && !cancelled && !runtimeFailed
                 && (DispatchStatus.isPauseable(d.getStatus()) || DispatchStatus.PAUSE_FAILED.equals(d.getStatus()));
@@ -2671,21 +2750,7 @@ public class WorkitemService {
                 ? ControlActionCapabilityVO.allowed()
                 : ControlActionCapabilityVO.denied(pause.reasonKey()));
 
-        if (terminal) {
-            capabilities.setEnd(ControlActionCapabilityVO.denied("delivery.controlReason.terminal"));
-        } else if (cancelled) {
-            capabilities.setEnd(ControlActionCapabilityVO.denied("delivery.controlReason.cancelling"));
-        } else {
-            capabilities.setEnd(ControlActionCapabilityVO.allowed());
-        }
-
-        if (terminal) {
-            capabilities.setForceEnd(ControlActionCapabilityVO.denied("delivery.controlReason.terminal"));
-        } else if (!cancelled) {
-            capabilities.setForceEnd(ControlActionCapabilityVO.denied("delivery.controlReason.notCancelling"));
-        } else {
-            capabilities.setForceEnd(ControlActionCapabilityVO.allowed());
-        }
+        DispatchEndControlPolicy.applyEnd(capabilities, terminal, cancelled);
 
         if (context.controlClosed) {
             capabilities.setResume(ControlActionCapabilityVO.denied("delivery.controlReason.closed"));
@@ -2870,6 +2935,14 @@ public class WorkitemService {
     }
 
     public List<ParticipantVO> getParticipants(long workitemId, long tenantId) {
+        return participantsWithSquad(workitemId, tenantId).participants();
+    }
+
+    /**
+     * Participants plus the delivery squad they were derived from, so mention
+     * candidates can be grouped and ordered by the same squad resolution.
+     */
+    private ParticipantsWithSquad participantsWithSquad(long workitemId, long tenantId) {
         WorkitemDO w = workitemDao.findById(workitemId);
         if (w == null) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
@@ -2888,10 +2961,10 @@ public class WorkitemService {
             seedAgentIds.putIfAbsent(w.getAssigneeRef(), w.getAssigneeRef());
         }
 
-        List<SquadMemberDO> squadMembers = resolveSquadMembers(tenantId, new ArrayList<>(seedAgentIds.keySet()));
+        SquadResolution squad = resolveSquad(tenantId, new ArrayList<>(seedAgentIds.keySet()));
         LinkedHashMap<Long, Long> participantAgentIds = new LinkedHashMap<>();
-        if (!squadMembers.isEmpty()) {
-            for (SquadMemberDO member : squadMembers) {
+        if (!squad.members().isEmpty()) {
+            for (SquadMemberDO member : squad.members()) {
                 if (member.getAgentId() != null) {
                     participantAgentIds.putIfAbsent(member.getAgentId(), member.getAgentId());
                 }
@@ -2907,10 +2980,14 @@ public class WorkitemService {
                 participants.add(toHumanParticipant(user));
             }
         }
+        Map<Long, SquadNameResolver.SquadLabel> labels =
+                resolveSquadLabels(tenantId, participantAgentIds.keySet(), squad.squadId());
         for (Long agentId : participantAgentIds.keySet()) {
-            participants.add(toAgentParticipant(tenantId, agentId));
+            ParticipantVO participant = toAgentParticipant(tenantId, agentId);
+            applySquadLabel(participant, labels.get(agentId));
+            participants.add(participant);
         }
-        return participants;
+        return new ParticipantsWithSquad(participants, squad.squadId());
     }
 
     public List<ParticipantVO> getMentionCandidates(long workitemId, long tenantId) {
@@ -2919,15 +2996,24 @@ public class WorkitemService {
 
     public List<ParticipantVO> getMentionCandidates(long workitemId, long tenantId, String query, int limit) {
         int effectiveLimit = limit <= 0 ? 50 : Math.min(limit, 100);
+        ParticipantsWithSquad context = participantsWithSquad(workitemId, tenantId);
         LinkedHashMap<String, ParticipantVO> candidates = new LinkedHashMap<>();
-        for (ParticipantVO participant : getParticipants(workitemId, tenantId)) {
-            addMentionCandidate(candidates, participant, query, effectiveLimit);
+        for (ParticipantVO participant : context.participants()) {
+            addMentionCandidate(candidates, participant, query);
         }
+        LinkedHashMap<Long, Long> tenantAgentIds = new LinkedHashMap<>();
         for (AgentDO agent : safeList(agentDao.listByTenant(tenantId))) {
             if (agent == null || agent.getId() == null || agent.getOnlineVersionId() == null) {
                 continue;
             }
-            addMentionCandidate(candidates, toAgentParticipant(tenantId, agent.getId()), query, effectiveLimit);
+            tenantAgentIds.putIfAbsent(agent.getId(), agent.getId());
+        }
+        Map<Long, SquadNameResolver.SquadLabel> tenantAgentLabels =
+                resolveSquadLabels(tenantId, tenantAgentIds.keySet(), context.currentSquadId());
+        for (Long agentId : tenantAgentIds.keySet()) {
+            ParticipantVO participant = toAgentParticipant(tenantId, agentId);
+            applySquadLabel(participant, tenantAgentLabels.get(agentId));
+            addMentionCandidate(candidates, participant, query);
         }
         if (workspaceMemberDao != null) {
             for (WorkspaceMemberDO member : safeList(workspaceMemberDao.listByTenant(tenantId))) {
@@ -2937,17 +3023,23 @@ public class WorkitemService {
                 }
                 UserDO user = userDao.findById(member.getUserId());
                 if (user != null) {
-                    addMentionCandidate(candidates, toHumanParticipant(user), query, effectiveLimit);
+                    addMentionCandidate(candidates, toHumanParticipant(user), query);
                 }
             }
         }
-        return new ArrayList<>(candidates.values());
+        List<ParticipantVO> result = new ArrayList<>(candidates.values());
+        // Current delivery squad first; the stable sort keeps the original order inside each group.
+        result.sort(Comparator.comparingInt(candidate -> candidate.isCurrentSquad() ? 0 : 1));
+        if (result.size() > effectiveLimit) {
+            return new ArrayList<>(result.subList(0, effectiveLimit));
+        }
+        return result;
     }
 
     private void addMentionCandidate(LinkedHashMap<String, ParticipantVO> candidates,
-            ParticipantVO participant, String query, int limit) {
+            ParticipantVO participant, String query) {
         if (participant == null || participant.getUserId() == null || participant.getName() == null
-                || participant.getName().isBlank() || candidates.size() >= limit) {
+                || participant.getName().isBlank()) {
             return;
         }
         if (!matchesMentionQuery(participant, query)) {
@@ -2990,11 +3082,12 @@ public class WorkitemService {
         return new ArrayList<>(ids.keySet());
     }
 
-    private List<SquadMemberDO> resolveSquadMembers(long tenantId, List<Long> agentIds) {
+    private SquadResolution resolveSquad(long tenantId, List<Long> agentIds) {
         if (agentIds.isEmpty()) {
-            return List.of();
+            return SquadResolution.EMPTY;
         }
         Set<Long> seedIds = new HashSet<>(agentIds);
+        Long bestSquadId = null;
         List<SquadMemberDO> bestMembers = List.of();
         int bestScore = 0;
         Set<Long> visitedSquads = new HashSet<>();
@@ -3012,10 +3105,34 @@ public class WorkitemService {
                 if (score > bestScore || (score == bestScore && members.size() > bestMembers.size())) {
                     bestScore = score;
                     bestMembers = members;
+                    bestSquadId = link.getSquadId();
                 }
             }
         }
-        return bestMembers;
+        return new SquadResolution(bestSquadId, bestMembers);
+    }
+
+    private Map<Long, SquadNameResolver.SquadLabel> resolveSquadLabels(long tenantId,
+            Collection<Long> agentIds, Long currentSquadId) {
+        if (squadNameResolver == null) {
+            return Map.of();
+        }
+        return squadNameResolver.resolve(tenantId, agentIds, currentSquadId);
+    }
+
+    private void applySquadLabel(ParticipantVO participant, SquadNameResolver.SquadLabel label) {
+        if (participant == null || label == null) {
+            return;
+        }
+        participant.setSquadName(label.squadName());
+        participant.setCurrentSquad(label.currentSquad());
+    }
+
+    private record SquadResolution(Long squadId, List<SquadMemberDO> members) {
+        private static final SquadResolution EMPTY = new SquadResolution(null, List.of());
+    }
+
+    private record ParticipantsWithSquad(List<ParticipantVO> participants, Long currentSquadId) {
     }
 
     private ParticipantVO toAgentParticipant(long tenantId, Long agentId) {
@@ -3058,6 +3175,27 @@ public class WorkitemService {
     public List<TimelineItemVO> getUnifiedTimeline(long workitemId) {
         WorkitemDO owner = workitemDao.findById(workitemId);
         if (owner == null || owner.getTenantId() == null) throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+        return projectTimeline(workitemId, commentDao.listByWorkitem(owner.getTenantId(), workitemId), eventDao.listByWorkitem(workitemId));
+    }
+
+    public List<TimelineItemVO> getTimelineWindow(long workitemId, int page) {
+        WorkitemDO owner = workitemDao.findById(workitemId);
+        if (owner == null || owner.getTenantId() == null) throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+        List<WorkitemCommentDO> comments = new ArrayList<>();
+        List<WorkitemEventDO> events = new ArrayList<>();
+        for (TimelineItemVO key : eventDao.listWindowKeys(owner.getTenantId(), workitemId, Math.max(0L, (long) page) * 50)) {
+            if ("comment".equals(key.getType())) {
+                WorkitemCommentDO comment = commentDao.findById(owner.getTenantId(), key.getId());
+                if (comment != null) comments.add(comment);
+            } else {
+                WorkitemEventDO event = eventDao.findById(owner.getTenantId(), key.getId());
+                if (event != null) events.add(event);
+            }
+        }
+        return projectTimeline(workitemId, comments, events);
+    }
+
+    private List<TimelineItemVO> projectTimeline(long workitemId, List<WorkitemCommentDO> comments, List<WorkitemEventDO> events) {
         List<TimelineItemVO> items = new ArrayList<>();
         WorkitemDO workitem = workitemDao.findById(workitemId);
         ExternalCollaborationVO externalCollaboration = workitem == null || workitem.getTenantId() == null
@@ -3065,7 +3203,7 @@ public class WorkitemService {
                 ? null
                 : externalWorkitemViewService.find(workitem.getTenantId(), workitemId);
 
-        for (WorkitemCommentDO c : commentDao.listByWorkitem(owner.getTenantId(), workitemId)) {
+        for (WorkitemCommentDO c : comments) {
             TimelineItemVO item = new TimelineItemVO();
             item.setId(c.getId());
             item.setType("comment");
@@ -3080,7 +3218,7 @@ public class WorkitemService {
             items.add(item);
         }
 
-        for (WorkitemEventDO e : eventDao.listByWorkitem(workitemId)) {
+        for (WorkitemEventDO e : events) {
             TimelineItemVO item = new TimelineItemVO();
             item.setId(e.getId());
             item.setType("system");
@@ -3121,7 +3259,8 @@ public class WorkitemService {
                 .comparing(TimelineItemVO::getGmtCreate,
                         Comparator.nullsLast(Comparator.reverseOrder()))
                 .thenComparing(TimelineItemVO::getId,
-                        Comparator.nullsLast(Comparator.reverseOrder())));
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(TimelineItemVO::getType, Comparator.reverseOrder()));
         return items;
     }
 

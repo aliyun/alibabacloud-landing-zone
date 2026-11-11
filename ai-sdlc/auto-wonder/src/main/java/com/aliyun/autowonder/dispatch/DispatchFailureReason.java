@@ -11,6 +11,10 @@ public final class DispatchFailureReason {
     public static final String MANUAL_CONTINUE = "MANUAL_CONTINUE";
     public static final String COMMENT_REWORK = "COMMENT_REWORK";
     public static final String PAUSE_CONFIRMATION_MISSING = "PAUSE_CONFIRMATION_MISSING";
+    /** Management-state rejection: the target agent is offline, so no new execution may start. */
+    public static final String AGENT_OFFLINE = "AGENT_OFFLINE";
+    /** Management-state rejection: the target SDLC is disabled, so no new execution may start. */
+    public static final String SDLC_DISABLED = "SDLC_DISABLED";
 
     private DispatchFailureReason() {}
 }

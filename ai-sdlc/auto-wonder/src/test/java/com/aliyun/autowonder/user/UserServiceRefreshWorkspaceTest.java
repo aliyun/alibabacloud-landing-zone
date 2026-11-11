@@ -40,9 +40,17 @@ class UserServiceRefreshWorkspaceTest {
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         props.setAccessTtlSeconds(3600);
         jwtService = new JwtService(props);
-        service = new UserService(mock(UserDao.class), jwtService, sessionService, props,
+        UserDao userDao = mock(UserDao.class);
+        UserDO active = new UserDO();
+        active.setId(USER_ID);
+        active.setStatus(0);
+        when(userDao.findById(USER_ID)).thenReturn(active);
+        service = new UserService(userDao, jwtService, sessionService, props,
                 workspaceMemberDao, mock(SystemAdminService.class),
-                new SessionIssuanceService(jwtService, sessionService, props));
+                new SessionIssuanceService(jwtService, sessionService, props),
+                mock(com.aliyun.autowonder.feature.PlatformFeatureSwitchService.class),
+                mock(WorkspaceCreationPermissionService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class));
         when(sessionService.getUserIdByRefresh(REFRESH_TOKEN)).thenReturn(USER_ID);
     }
 
@@ -127,6 +135,46 @@ class UserServiceRefreshWorkspaceTest {
 
         verify(workspaceMemberDao).findByWorkspaceAndUser(WORKSPACE_ID, USER_ID);
         verifyNoMoreInteractions(workspaceMemberDao);
+    }
+
+    @Test
+    void foregroundRefreshExtendsTheRollingSessionWithTheConfiguredTtl() {
+        when(sessionService.extendRefreshSession(REFRESH_TOKEN, 31536000))
+                .thenReturn(SessionService.RenewalOutcome.EXTENDED);
+
+        service.refreshAccessToken(REFRESH_TOKEN, null, true);
+
+        verify(sessionService).extendRefreshSession(REFRESH_TOKEN, 31536000);
+    }
+
+    @Test
+    void backgroundRefreshOnlyIssuesATokenAndNeverExtendsTheSession() {
+        service.refreshAccessToken(REFRESH_TOKEN, null);
+
+        verify(sessionService, never()).extendRefreshSession(anyString(), anyInt());
+    }
+
+    @Test
+    void foregroundRefreshRejectsASessionRevokedBeforeRenewal() {
+        when(sessionService.extendRefreshSession(REFRESH_TOKEN, 31536000))
+                .thenReturn(SessionService.RenewalOutcome.SESSION_MISSING);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.refreshAccessToken(REFRESH_TOKEN, WORKSPACE_ID, true));
+
+        assertEquals("10401", ex.getCode());
+        verifyNoInteractions(workspaceMemberDao);
+    }
+
+    @Test
+    void aThrottledForegroundRefreshStillIssuesAnAccessToken() {
+        when(sessionService.extendRefreshSession(REFRESH_TOKEN, 31536000))
+                .thenReturn(SessionService.RenewalOutcome.THROTTLED);
+
+        String token = service.refreshAccessToken(REFRESH_TOKEN, null, true);
+
+        assertNotNull(token);
+        assertEquals(USER_ID, jwtService.parse(token).getUserId());
     }
 
     @Test

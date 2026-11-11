@@ -246,6 +246,28 @@
   "ssoSecretConfigured": "Secret configured",
   "ssoSecretMissing": "Secret not configured",
   "ssoValueMissing": "—",
+  "ssoRegistrationSection": "Registration settings",
+  "ssoRegistrationLabel": "Allow self-registration",
+  "ssoRegistrationToggleAria": "Allow self-registration",
+  "ssoRegistrationHint": "When off, the sign-up entry is hidden and public registration is rejected. Automatic account creation on first SSO sign-in is controlled per connection.",
+  "ssoRegistrationUpdated": "Registration setting saved",
+  "ssoRegistrationUpdateFailed": "Failed to save the registration setting",
+  "ssoDefaultLogin": "Default sign-in",
+  "ssoDefaultLoginAria": "Toggle the default sign-in state of {{name}}",
+  "ssoDefaultLoginLabel": "Default sign-in entry",
+  "ssoDefaultLoginHint": "At most one per platform. The login page starts authentication automatically; a disabled connection or IdP stops the automatic start.",
+  "ssoDefaultLoginSet": "Set as the only default sign-in entry",
+  "ssoDefaultLoginCleared": "Default sign-in entry cleared",
+  "ssoDefaultLoginUpdateFailed": "Failed to update the default sign-in setting",
+  "ssoAutoProvisionLabel": "Create an account on first sign-in",
+  "ssoAutoProvisionHint": "When an unbound identity is verified for the first time, create a passwordless normal account and bind it. No administrator or workspace access is granted.",
+  "ssoFeishuUserIdClaim": "Feishu user ID claim",
+  "ssoFeishuUserIdClaimPlaceholder": "For example feishu_user_id",
+  "ssoFeishuClaimHintActive": "Optional; leave empty to skip syncing. The value must be the Feishu user_id; a present value is updated and a missing one keeps the stored value.",
+  "ssoFeishuClaimHintInactive": "Optional; leave empty to skip syncing. The current message channel is {{channel}}, so this mapping is inactive for now; the value is kept.",
+  "ssoChannelFeishu": "Feishu",
+  "ssoChannelDingtalk": "DingTalk",
+  "ssoChannelUnknown": "unknown channel",
   "themes": {
     "aliyun-orange": "Aliyun orange",
     "ocean-blue": "Ocean blue",
@@ -262,5 +284,37 @@
   "groupChatNewIdentitySecretHint": "Changing the application requires the new application's App Secret",
   "groupChatNewIdentityTokenHint": "Changing the application requires the new application's Verification Token",
   "groupChatIdentityChangeTitle": "The group-chat bot application identity will change",
-  "groupChatIdentityChangeImpact": "Saving affects every shared group binding on this channel and terminates replies the old application has not sent yet. Add the new bot to the target groups first; real credential validity is reported by the live connection state after saving."
+  "groupChatIdentityChangeImpact": "Saving affects every shared group binding on this channel and terminates replies the old application has not sent yet. Add the new bot to the target groups first; real credential validity is reported by the live connection state after saving.",
+  "featureSwitchTab": "Feature switches",
+  "featureSwitches": {
+    "saved": "Feature switch saved.",
+    "saveFailed": "Could not save the feature switch. Try again.",
+    "readOnly": "Only platform administrators may change feature switches.",
+    "duplicateIntent": {
+      "title": "Duplicate work item intent detection",
+      "statusOn": "Enabled",
+      "statusOff": "Disabled",
+      "toggle": "Toggle duplicate work item intent detection",
+      "scopeLabel": "Scope: ",
+      "scopeValue": "Entire platform",
+      "scopeHint": "This switch applies to all workspaces and is off by default.",
+      "description": "When enabled, after a work item is created or a changed title is saved the system silently checks the workspace for work items created in the last 30 days that share the same intent. Only matches send a system notification to the person who created or edited the work item. No match means no notification, and checks never delay create or save.",
+      "eligibility": "Checks run only when the workspace Chief is configured and available. An unavailable Chief or a failed check ends silently, without prompts, waiting or recovery polling.",
+      "hint": "Work item title matching compares titles with deterministic rules and needs no AI. It is always on and independent of this switch; an identical title after title entry opens a reminder you can ignore."
+    },
+    "registrationReview": {
+      "title": "User registration review",
+      "toggle": "Toggle user registration review",
+      "statusOn": "On",
+      "statusOff": "Off",
+      "hint": "When enabled, new self-service accounts need approval before sign-in. Turning it off leaves existing requests pending; new registrations become usable immediately."
+    },
+    "workspaceCreationDefault": {
+      "title": "Allow workspace creation by default",
+      "toggle": "Toggle workspace creation by default",
+      "statusOn": "On",
+      "statusOff": "Off",
+      "hint": "When on, every user who can sign in may create workspaces. When off, regular users need an individual grant from a platform administrator."
+    }
+  }
 }

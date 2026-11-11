@@ -52,8 +52,30 @@ class WorkspaceControllerTest {
 
     private final WorkspaceService workspaceService = mock(WorkspaceService.class);
     private final AccessRequestService accessRequestService = mock(AccessRequestService.class);
+    private final com.aliyun.autowonder.user.WorkspaceCreationPermissionService permissionService =
+            mock(com.aliyun.autowonder.user.WorkspaceCreationPermissionService.class);
     private final WorkspaceController controller =
-            new WorkspaceController(workspaceService, accessRequestService);
+            new WorkspaceController(workspaceService, accessRequestService, permissionService);
+
+    @Test
+    void myCreationRequestPassesTheContactProbeFlag() {
+        AutoWonderContext.get().setUserId(77L);
+        when(permissionService.requestStatus(77L, true))
+                .thenReturn(new com.aliyun.autowonder.user.dto.WorkspaceCreationRequestVO());
+
+        controller.myCreationRequest(true);
+
+        verify(permissionService).requestStatus(77L, true);
+    }
+
+    @Test
+    void requestCreationPermissionUsesTheCurrentUser() {
+        AutoWonderContext.get().setUserId(77L);
+
+        controller.requestCreationPermission();
+
+        verify(permissionService).submitRequest(77L);
+    }
 
     @AfterEach
     void clearContext() {

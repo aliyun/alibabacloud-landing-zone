@@ -39,3 +39,10 @@
 .execution-control-record { display:flex; align-items:baseline; gap:10px; padding:8px 0; }
 .execution-control-record > .ant-typography { flex-shrink:0; }
 .delivery-workbench-main > .delivery-workbench-meta { margin-bottom:12px; }
+
+.delivery-artifact-row { display:flex; align-items:center; gap:6px; width:100%; min-width:0; }
+.delivery-artifact-icon { flex:0 0 auto; color:var(--aw-muted); }
+.delivery-artifact-name { flex:0 1 auto; min-width:0; max-width:50%; padding:0; border:0; background:none; color:inherit; font:inherit; font-size:12px; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; border-radius:3px; }
+.delivery-artifact-name:hover,.delivery-artifact-name:focus-visible { color:var(--aw-accent-text); text-decoration:underline; }
+.delivery-artifact-name:focus-visible { outline:2px solid var(--aw-accent-text); outline-offset:2px; }
+.delivery-artifact-meta { flex:0 1 auto; min-width:0; font-size:11px; color:var(--aw-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

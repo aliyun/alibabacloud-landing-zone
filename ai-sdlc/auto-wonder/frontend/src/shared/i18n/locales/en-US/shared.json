@@ -26,6 +26,7 @@
       "INTEGRATION": "Platform integrations",
       "MCP": "MCP",
       "MEMORY": "Memory",
+      "PRD": "PRD design",
       "REPO": "Repositories",
       "SCHEDULEDTASK": "Scheduled tasks",
       "SDLC": "SDLC workflows",
@@ -100,6 +101,7 @@
   },
   "help": "Help center",
   "markdown": {
+    "largeContentPlainText": "This content is shown as plain text to reduce memory use. The full original text is preserved.",
     "completed": "Completed task",
     "todo": "To-do task",
     "openArtifact": "Open artifact {{label}}",

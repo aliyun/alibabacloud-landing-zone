@@ -12,6 +12,7 @@ import {
   useWorkitem, useUnifiedTimeline, useParticipants,
   useDeliveryProgress, useClarification, useArtifacts, useRequirementDocuments, useTransitionWorkitem, useSyncExternalWorkitem,
   useUpdateWorkitemContent, useDeleteWorkitem, useToggleWatch, useUpdateWorkitemTags, useWorkitemTagOptions,
+  useExecutionControl,
 } from './hooks';
 import { WorkitemHeader } from './components/WorkitemHeader';
 import { WorkitemMeta } from './components/WorkitemMeta';
@@ -27,7 +28,11 @@ import { WorkitemContent } from './components/WorkitemContent';
 import { WorkitemTagsEditor } from './components/WorkitemTagsEditor';
 import { RequirementDocumentsCard } from './components/RequirementDocumentsCard';
 import { ClarificationResult } from './components/ClarificationResult';
+import { usePrdSummary } from '@/features/prd/hooks';
+import { PrdContextPreview } from '@/features/prd/components/PrdContextPreview';
 import { UnifiedTimeline } from './components/UnifiedTimeline';
+import { InteractionStopControl } from './components/InteractionStopControl';
+import type { InteractionStopAction } from './components/InteractionStopControl';
 import { CommentInput } from './components/CommentInput';
 import { ScrollToEdgeButton } from './components/ScrollToEdgeButton';
 import { RightPanel } from './components/RightPanel';
@@ -40,7 +45,7 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { allows } from '@/shared/auth/access';
 import { useAuthStore } from '@/shared/auth/store';
 import { CLARIFICATION_THEME } from './clarification/theme';
-import type { Artifact, Participant, TimelineItem } from '@/shared/types/workitem';
+import type { Artifact, CommentInteraction, Participant, TimelineItem } from '@/shared/types/workitem';
 
 const CLARIFY_MIN_WIDTH = 320;
 
@@ -60,6 +65,10 @@ export function WorkitemDetailPage() {
   // 与后端一致：读写级即可编辑，角色勾选「工单」只读后收回入口。
   const tagsEditable = accessLevel !== null && allows(accessLevel, 'READ_WRITE')
     && (accessLevel === 'ADMIN' || !readOnlyDomains.includes('WORKITEM'));
+  const canControlInteraction = accessLevel !== null && allows(accessLevel, 'READ_WRITE')
+    && (accessLevel === 'ADMIN' || !readOnlyDomains.includes('WORKITEM'));
+  const executionControl = useExecutionControl(id || '');
+  const [interactionPending, setInteractionPending] = useState<Record<number, InteractionStopAction>>({});
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [clarifyReminderOpen, setClarifyReminderOpen] = useState(false);
   // localStorage 不是响应式的：挂载时读一次进 state，本次会话内勾选后立刻生效，不必刷新页面
@@ -81,6 +90,8 @@ export function WorkitemDetailPage() {
   const panelMode = clarifyView.mode;
   const [clarifyWidth, setClarifyWidth] = useState<number | null>(null);
   const rightPanelRef = useRef<HTMLDivElement>(null);
+  const [timelinePage, setTimelinePage] = useState({ id, page: 0 });
+  const page = timelinePage.id === id ? timelinePage.page : 0;
   useEffect(() => {
     setClarifyWidth(null);
   }, [id]);
@@ -114,12 +125,14 @@ export function WorkitemDetailPage() {
   const watchMutation = useToggleWatch();
   const tagsMutation = useUpdateWorkitemTags(id || '');
   const { data: tagOptions } = useWorkitemTagOptions();
-  const { data: timelineData, isLoading: timelineLoading } = useUnifiedTimeline(id || '');
+  const { data: timelineData, hasMore: timelineHasMore, isLoading: timelineLoading, refetch: refetchTimeline } = useUnifiedTimeline(id || '', page);
+  const { data: latestTimelineData } = useUnifiedTimeline(id || '');
   const timeline = timelineData ?? EMPTY_TIMELINE;
   const { data: participantsData, isLoading: participantsLoading } = useParticipants(id || '');
   const participants = participantsData ?? EMPTY_PARTICIPANTS;
   const { data: progress, isLoading: progressLoading, isError: progressError, refetch: retryProgress } = useDeliveryProgress(id || '', workitem?.statusCategory);
   const { data: clarification } = useClarification(id || '');
+  const { data: prdSummary } = usePrdSummary(id || '');
   const { data: artifactsData, isLoading: artifactsLoading } = useArtifacts(id || '');
   const artifacts = artifactsData ?? EMPTY_ARTIFACTS;
   const { data: requirementDocumentsData, isLoading: requirementDocumentsLoading } = useRequirementDocuments(id || '');
@@ -128,6 +141,35 @@ export function WorkitemDetailPage() {
     () => [...artifacts, ...requirementDocuments],
     [artifacts, requirementDocuments],
   );
+
+  // 每条交互只携带自己的 dispatchId：确认框、loading 和失败都按 dispatch 隔离。
+  const runInteractionAction = useCallback(async (dispatchId: number, action: InteractionStopAction) => {
+    await accessCommand('READ_WRITE', t('delivery.endExecution'), async () => {
+      setInteractionPending((current) => ({ ...current, [dispatchId]: action }));
+      try {
+        await executionControl.mutateAsync({ dispatchId, action });
+      } finally {
+        setInteractionPending((current) => {
+          const next = { ...current };
+          delete next[dispatchId];
+          return next;
+        });
+      }
+    });
+  }, [accessCommand, executionControl, t]);
+
+  const renderInteractionActions = useCallback((interaction: CommentInteraction) => {
+    const dispatchId = interaction.dispatchId;
+    if (!canControlInteraction || !dispatchId) return null;
+    return (
+      <InteractionStopControl
+        interaction={interaction}
+        pending={interactionPending[dispatchId] ?? null}
+        onAction={(action) => runInteractionAction(dispatchId, action)}
+        onRefresh={() => { void refetchTimeline(); }}
+      />
+    );
+  }, [canControlInteraction, interactionPending, refetchTimeline, runInteractionAction]);
 
   if (!id) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}><Result status="404" title={t('detail.invalidId')} extra={<Button onClick={() => navigate(-1)}>{t('detail.back')}</Button>} /></div>;
   if (isLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
@@ -287,6 +329,7 @@ export function WorkitemDetailPage() {
           <WorkitemContent
             title={workitem.title}
             contentMd={workitem.contentMd}
+            workitemId={id}
             saving={updateContentMutation.isPending}
             readOnly={Boolean(workitem.externalCollaboration)}
             onSave={handleSaveContent}
@@ -295,14 +338,21 @@ export function WorkitemDetailPage() {
             workitemId={id}
             documents={requirementDocuments}
             loading={requirementDocumentsLoading}
-          />
-          {AI_CLARIFICATION_ENABLED ? <ClarificationResult clarification={clarification} /> : null}
+            hasGeneratedContext={Boolean(clarification?.contentMd || prdSummary?.latestVersionNo)}
+          >
+            {AI_CLARIFICATION_ENABLED ? <ClarificationResult clarification={clarification} /> : null}
+            {Boolean(prdSummary?.latestVersionNo) && <PrdContextPreview workitemId={id} />}
+          </RequirementDocumentsCard>
             <UnifiedTimeline
               key={id}
               items={timeline}
               participants={participants}
               artifacts={timelineArtifacts}
               loading={timelineLoading}
+              page={page}
+              hasMore={timelineHasMore}
+              onPageChange={(next) => setTimelinePage({ id, page: next })}
+              renderInteractionActions={renderInteractionActions}
             />
           </div>
           <ScrollToEdgeButton containerRef={leftScrollRef} />
@@ -347,7 +397,7 @@ export function WorkitemDetailPage() {
         <RightPanel
           key={id}
           workitemId={id}
-          timeline={timeline}
+          timeline={latestTimelineData ?? EMPTY_TIMELINE}
           participants={participants}
           participantsLoading={participantsLoading}
           externalCollaboration={workitem.externalCollaboration}

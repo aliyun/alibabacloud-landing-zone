@@ -60,7 +60,10 @@ class DispatchResultTransactionTest {
         JSONObject input=JSON.parseObject("{\"type\":\"TASK_RESULT\",\"resultProtocolVersion\":2,"
                 + "\"resultId\":\"b55aa1a7-43d5-4452-b39a-278554b67942\",\"dispatchId\":55,\"success\":true,"
                 + "\"checkpointSeq\":7,\"checkpointSha256\":\"sha256:abc\",\"handoff\":{\"to\":\"qa\",\"toType\":\"AGENT\"}}");
-        if (legacy) { input.remove("resultProtocolVersion"); input.remove("resultId"); }
+        if (legacy) {
+            input.remove("resultProtocolVersion"); input.remove("resultId");
+            input.put("checkpointSeq", 1793245869518110347L);
+        }
         assertTrue(coordinator.handle(100,1,input).ack().getBooleanValue("retryable"));
         assertEquals("RUNNING",jdbc.queryForObject("SELECT status FROM dispatch WHERE id=55",String.class));
         assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM qa",Integer.class));
@@ -75,6 +78,29 @@ class DispatchResultTransactionTest {
         assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM dispatch_result_decision",Integer.class));
         reset(checkpoints,dispatches,handoffs);
         assertEquals(JSON.parseObject(accepted.toJSONString()),coordinator.handle(100,1,input).ack());
+        if (legacy) {
+            // Pre-V2 outbox reloads JSON numbers through float64 before retransmitting.
+            input.put("checkpointSeq", 1793245869518110500L);
+            assertEquals(JSON.parseObject(accepted.toJSONString()), coordinator.handle(100,1,input).ack());
+            assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM dispatch_result_decision", Integer.class));
+            assertEquals(java.util.List.of(1793245869518110347L), store.checkpointSequences(100,55,1,"sha256:abc"));
+            assertTrue(store.checkpointSequences(101,55,1,"sha256:abc").isEmpty());
+            assertTrue(store.checkpointSequences(100,56,1,"sha256:abc").isEmpty());
+            assertTrue(store.checkpointSequences(100,55,2,"sha256:abc").isEmpty());
+            assertTrue(store.checkpointSequences(100,55,1,"sha256:other").isEmpty());
+            for (var change : java.util.Map.<String,Object>of("resultSummary", "different result",
+                    "checkpointSha256", "sha256:other", "checkpointSeq", 1793245869518120000L).entrySet()) {
+                JSONObject different = JSON.parseObject(input.toJSONString());
+                different.put(change.getKey(), change.getValue());
+                assertEquals("REJECTED", coordinator.handle(100,1,different).ack().getString("disposition"));
+            }
+            JSONObject fractional = JSON.parseObject(input.toJSONString());
+            fractional.put("checkpointSeq", new java.math.BigDecimal("1793245869518110500.5"));
+            assertEquals("REJECTED", coordinator.handle(100,1,fractional).ack().getString("disposition"));
+            JSONObject v2 = JSON.parseObject(input.toJSONString());
+            v2.put("resultProtocolVersion", 2); v2.put("resultId", UUID.randomUUID().toString());
+            assertEquals("REJECTED", coordinator.handle(100,1,v2).ack().getString("disposition"));
+        }
         verifyNoInteractions(checkpoints,dispatches,handoffs);
         assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM qa",Integer.class));
     }

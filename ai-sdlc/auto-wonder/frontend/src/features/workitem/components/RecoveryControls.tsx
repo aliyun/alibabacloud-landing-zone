@@ -21,6 +21,7 @@ interface RestartRound {
   restart_round: number; restart_token?: string | null; status: string; stop_reason?: string | null;
   dispatch_id?: number | null; scheduled_start_at?: string | null; requested_by?: number;
   operator_type?: string; gmt_create?: string; gmt_modified?: string;
+  source_dispatch_id?: number | null; sdlc_id?: number | null;
 }
 interface RecoveryState {
   closed: boolean;
@@ -103,6 +104,8 @@ export function RecoveryControls({ workitemId, renderActions, variant = 'header'
           {restartLabels[r.status] || r.status}
         </Tag>
         {r.dispatch_id && <Typography.Text type="secondary">Dispatch #{r.dispatch_id}</Typography.Text>}
+        {r.source_dispatch_id && <Typography.Text type="secondary">{t('recovery.roundSource', { id: r.source_dispatch_id })}</Typography.Text>}
+        {r.sdlc_id && <Typography.Text type="secondary">{t('recovery.roundWorkflow', { id: r.sdlc_id })}</Typography.Text>}
         {r.gmt_modified && <Typography.Text type="secondary">{formatDateTime(r.gmt_modified)}</Typography.Text>}
       </Space>
       {r.stop_reason && <div style={{ overflowWrap: 'anywhere' }}><Typography.Text type="secondary">{r.stop_reason}</Typography.Text></div>}

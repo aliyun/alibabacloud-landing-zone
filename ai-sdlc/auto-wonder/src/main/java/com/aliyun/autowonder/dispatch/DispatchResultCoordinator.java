@@ -12,12 +12,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /** The single result acknowledgement boundary: terminal replies always have a committed decision. */
 @Service
 public class DispatchResultCoordinator {
+    private static final Logger log = LoggerFactory.getLogger(DispatchResultCoordinator.class);
     private final DispatchResultStore store;
     private final DispatchDao dao;
     private final DispatchService dispatches;
@@ -55,12 +58,17 @@ public class DispatchResultCoordinator {
             if (subject == null || !Objects.equals(subject.getTenantId(), tenantId))
                 return retry(input, "RESULT_OWNER_MISMATCH");
             try (ResultCommitActions actions = ResultCommitActions.open()) {
+                long started = System.nanoTime();
                 Outcome outcome = store.transaction(() -> decide(tenantId, executorId, decisionInput, hash, subject, legacy));
+                long committed = System.nanoTime();
                 actions.committed();
+                log.info("dispatch result committed dispatchId={} transactionMs={} afterCommitMs={}",
+                        subject.getId(), TimeUnit.NANOSECONDS.toMillis(committed - started),
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - committed));
                 return outcome;
             }
         } catch (RuntimeException failure) {
-            LoggerFactory.getLogger(getClass()).warn("result transaction retryable dispatchId={} resultId={}",
+            log.warn("result transaction retryable dispatchId={} resultId={}",
                     input.getLongValue("dispatchId"), decisionInput.getString("resultId"), failure);
             return retry(input, "RESULT_PROCESSING_UNAVAILABLE");
         }
@@ -74,6 +82,10 @@ public class DispatchResultCoordinator {
         store.lockDispatch(tenantId, id);
         DispatchResultStore.Decision previous = store.findLocked(tenantId, id, resultId);
         if (previous != null) return replay(input, executorId, hash, previous);
+        if (legacy) {
+            Outcome roundedReplay = replayRoundedLegacyCheckpoint(tenantId, executorId, input);
+            if (roundedReplay != null) return roundedReplay;
+        }
         DispatchDO row = dao.findById(id);
         if (!Objects.equals(row.getExecutorId(), executorId))
             return persist(tenantId, executorId, input, hash, "REJECTED", "STALE_EXECUTOR", null);
@@ -112,12 +124,15 @@ public class DispatchResultCoordinator {
         String category = input.getString("failureCategory");
         boolean failover = !success && DispatchService.isExecutorFailureCategory(category);
         JSONObject handoff = input.getJSONObject("handoff");
+        long resultStarted = System.nanoTime();
         boolean accepted = failover
                 ? dispatches.onExecutorUnavailableResult(tenantId, executorId, id, category, input.getString("error"),
                         store.countSessionRecoveryDecisions(tenantId, id))
                 : dispatches.onResult(tenantId, executorId, id, success, input.getString("resultSummary"),
                         input.getString("error"), Boolean.TRUE.equals(input.getBoolean("workflowChanged")),
                         success && handoff != null, category);
+        log.info("dispatch result applied dispatchId={} elapsedMs={}", id,
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - resultStarted));
         if (!accepted) return rejectActive(tenantId, executorId, input, hash, "RESULT_STATE_CONFLICT");
         if (failover) {
             guidance.requeueForExecutorFailover(tenantId, id);
@@ -130,8 +145,11 @@ public class DispatchResultCoordinator {
             workflows.apply(tenantId, id, input.getJSONObject("workflowPlan"));
         JSONObject handoffReply = null;
         if (success && handoff != null && dispatches.mayRouteHandoff(tenantId, executorId, id)) {
+            long handoffStarted = System.nanoTime();
             HandoffResult result = handoffs.handle(tenantId, row.getWorkitemId(), id,
                     handoff.getString("to"), handoff.getString("toType"));
+            log.info("dispatch result handoff finished dispatchId={} elapsedMs={}", id,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - handoffStarted));
             if (result == null) throw new IllegalStateException("HANDOFF_RESULT_MISSING");
             if (result.status() == HandoffResult.Status.REJECTED) {
                 // Optimistic conflicts are not permanent protocol decisions.
@@ -185,6 +203,26 @@ public class DispatchResultCoordinator {
         if (!decision.hash().equals(hash)) return retry(input, "RESULT_ID_CONFLICT");
         return new Outcome(decision.ack(), decision.handoff());
     }
+    private Outcome replayRoundedLegacyCheckpoint(long tenantId, long executorId, JSONObject input) {
+        if (!(input.get("checkpointSeq") instanceof Number number)) return null;
+        long sequence;
+        try { sequence = new java.math.BigDecimal(number.toString()).longValueExact(); }
+        catch (ArithmeticException | NumberFormatException invalid) { return null; }
+        String sha256 = input.getString("checkpointSha256");
+        if (sequence <= 0 || sha256 == null || sha256.isBlank()) return null;
+        for (long original : store.checkpointSequences(tenantId, input.getLongValue("dispatchId"), executorId, sha256)) {
+            // Pre-V2 outboxes reload int64 sequences through float64; all other fields stay exact.
+            if (original == sequence || Double.compare((double) original, (double) sequence) != 0) continue;
+            JSONObject restored = new JSONObject(input);
+            restored.put("checkpointSeq", original);
+            String restoredHash = payloadHash(restored);
+            String restoredId = withLegacyIdentity(tenantId, executorId, restored).getString("resultId");
+            DispatchResultStore.Decision previous = store.findLocked(tenantId, input.getLongValue("dispatchId"), restoredId);
+            if (previous != null && previous.executorId() == executorId && previous.hash().equals(restoredHash))
+                return new Outcome(previous.ack(), previous.handoff());
+        }
+        return null;
+    }
     public static Outcome retry(JSONObject input, String reason) {
         return new Outcome(acknowledgement(input, "RETRYABLE", reason), null);
     }
@@ -207,7 +245,7 @@ public class DispatchResultCoordinator {
     private static JSONObject withLegacyIdentity(long tenantId, long executorId, JSONObject input) {
         // A legacy dispatch can return to the same executor after infrastructure failover.
         // Identical results replay; a later, different outcome must get its own decision.
-        JSONObject normalized = JSON.parseObject(input.toJSONString());
+        JSONObject normalized = new JSONObject(input);
         normalized.put("resultProtocolVersion", 2);
         normalized.put("resultId", UUID.nameUUIDFromBytes(("autowonder/task-result/legacy/v1/"
                 + tenantId + "/" + executorId + "/" + input.getLongValue("dispatchId") + "/" + payloadHash(input))

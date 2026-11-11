@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.prd.PrdRequirementAcceptanceDao">
+
+    <sql id="cols">
+        id, workspace_id, workitem_id, dispatch_id, design_version_id, requirement_key,
+        implementation, verdict, note, not_applicable_reason, evidence_json, reported_at,
+        version, creator_id, modifier_id, gmt_create, gmt_modified
+    </sql>
+
+    <!-- INSERT IGNORE keeps seeding idempotent: re-packaging the same dispatch never duplicates rows
+         and never resets a report the executor already uploaded. not_applicable_reason /
+         evidence_json / reported_at are only set when seeding a requirement the confirmed design
+         excluded, which is a decision of the user rather than an executor report. -->
+    <insert id="insertIgnore" parameterType="com.aliyun.autowonder.prd.PrdRequirementAcceptanceDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO prd_requirement_acceptance
+            (workspace_id, workitem_id, dispatch_id, design_version_id, requirement_key,
+             implementation, verdict, not_applicable_reason, evidence_json, reported_at,
+             version, creator_id)
+        VALUES
+            (#{workspaceId}, #{workitemId}, #{dispatchId}, #{designVersionId}, #{requirementKey},
+             #{implementation}, #{verdict}, #{notApplicableReason}, #{evidenceJson}, #{reportedAt},
+             0, #{creatorId})
+    </insert>
+
+    <select id="listByDispatch" resultType="com.aliyun.autowonder.prd.PrdRequirementAcceptanceDO">
+        SELECT <include refid="cols"/> FROM prd_requirement_acceptance
+        WHERE workspace_id = #{workspaceId} AND dispatch_id = #{dispatchId}
+        ORDER BY requirement_key ASC
+    </select>
+
+    <select id="findByDispatchAndKey" resultType="com.aliyun.autowonder.prd.PrdRequirementAcceptanceDO">
+        SELECT <include refid="cols"/> FROM prd_requirement_acceptance
+        WHERE workspace_id = #{workspaceId} AND dispatch_id = #{dispatchId}
+          AND requirement_key = #{requirementKey}
+        LIMIT 1
+    </select>
+
+    <update id="updateReport" parameterType="com.aliyun.autowonder.prd.PrdRequirementAcceptanceDO">
+        UPDATE prd_requirement_acceptance
+        SET implementation = #{implementation},
+            verdict = #{verdict},
+            note = #{note},
+            not_applicable_reason = #{notApplicableReason},
+            evidence_json = #{evidenceJson},
+            reported_at = #{reportedAt},
+            modifier_id = #{modifierId},
+            version = version + 1
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND dispatch_id = #{dispatchId}
+    </update>
+
+    <select id="listByWorkitem" resultType="com.aliyun.autowonder.prd.PrdRequirementAcceptanceDO">
+        SELECT <include refid="cols"/> FROM prd_requirement_acceptance
+        WHERE workspace_id = #{workspaceId} AND workitem_id = #{workitemId}
+        ORDER BY dispatch_id DESC, requirement_key ASC
+    </select>
+
+    <delete id="deleteByWorkitem">
+        DELETE FROM prd_requirement_acceptance
+        WHERE workspace_id = #{workspaceId} AND workitem_id = #{workitemId}
+    </delete>
+
+</mapper>

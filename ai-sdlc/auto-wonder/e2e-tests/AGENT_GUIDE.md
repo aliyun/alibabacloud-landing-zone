@@ -92,8 +92,8 @@ runtime_version="$(python3 ./e2e-tests/runtime_dispatch.py --print-recommended-v
   --project-root "$(pwd -P)" --state-dir "$run_state_dir" --base-url "$platform_url")" || exit 1
 runtime_prefix="$(mktemp -d "${TMPDIR:-/tmp}/aw-e2e-runtime.XXXXXX")" || exit 1
 env -u QODER_PERSONAL_ACCESS_TOKEN npm install --ignore-scripts --no-audit --no-fund \
-  --prefix "$runtime_prefix" "autowonder@$runtime_version" || exit 1
-export AW_E2E_RUNTIME_PACKAGE="$runtime_prefix/node_modules/autowonder"
+  --prefix "$runtime_prefix" "@alicloud/autowonder@$runtime_version" || exit 1
+export AW_E2E_RUNTIME_PACKAGE="$runtime_prefix/node_modules/@alicloud/autowonder"
 ```
 
 The print command reads configuration and the public API only; it requires no

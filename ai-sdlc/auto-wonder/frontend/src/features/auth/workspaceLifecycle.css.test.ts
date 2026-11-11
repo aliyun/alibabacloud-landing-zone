@@ -38,6 +38,7 @@ function expectInteractiveStates(selector: string) {
 describe('workspaceLifecycle.css', () => {
   it('styles the apply button with the shared appearance tokens', () => {
     const base = rule('.aw-apply-access-button');
+    expect(base).toContain('align-self: flex-end');
     expect(base).toContain('border: 1px solid var(--aw-accent-text)');
     expect(base).toContain('background: var(--aw-panel)');
     expect(base).toContain('color: var(--aw-accent-text)');

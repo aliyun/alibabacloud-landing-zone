@@ -622,7 +622,7 @@ class PreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory)
             (package / "vendor").mkdir()
-            (package / "package.json").write_text(json.dumps({"name": "autowonder", "version": "9.8.7"}))
+            (package / "package.json").write_text(json.dumps({"name": "@alicloud/autowonder", "version": "9.8.7"}))
             binary = package / "vendor/autowonder-daemon-darwin-arm64"
             binary.write_text("#!/bin/sh\nexit 1\n")
             binary.chmod(0o700)
@@ -635,10 +635,15 @@ class PreflightTests(unittest.TestCase):
                 self.assertEqual(runtime.preflight("9.8.7"), binary.resolve())
                 self.assertEqual(child.call_args.args[0][-2:], ["--expected-version", "9.8.7"])
                 self.assertEqual(child.call_args.kwargs["env"], {"PATH": os.environ.get("PATH", "")})
-                (package / "package.json").write_text(json.dumps({"name": "autowonder", "version": "1.0.0"}))
+                for name in ("autowonder", "unknown-runtime"):
+                    with self.subTest(rejectedPackage=name):
+                        (package / "package.json").write_text(json.dumps({"name": name, "version": "9.8.7"}))
+                        with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_VERSION_MISMATCH"):
+                            runtime.preflight("9.8.7")
+                (package / "package.json").write_text(json.dumps({"name": "@alicloud/autowonder", "version": "1.0.0"}))
                 with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_VERSION_MISMATCH"):
                     runtime.preflight("9.8.7")
-                (package / "package.json").write_text(json.dumps({"name": "autowonder", "version": "9.8.7"}))
+                (package / "package.json").write_text(json.dumps({"name": "@alicloud/autowonder", "version": "9.8.7"}))
                 completed.stdout = json.dumps({"package": "autowonder", "version": "1.0.0", "goos": "darwin", "goarch": "arm64"})
                 with self.assertRaisesRegex(runtime.CheckFailure, "RUNTIME_SELF_CHECK_FAILED"):
                     runtime.preflight("9.8.7")

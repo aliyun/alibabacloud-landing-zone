@@ -97,7 +97,7 @@ public class ExecutorController {
 
     @GetMapping("/executor-model-catalogs/{provider}")
     public Result<ProviderModelCatalogVO> getModelCatalog(@PathVariable String provider) {
-        return Result.ok(providerModelCatalogService.read(provider));
+        return Result.ok(providerModelCatalogService.read(currentWorkspaceId(), provider));
     }
 
     @GetMapping("/executors/{id}/token")

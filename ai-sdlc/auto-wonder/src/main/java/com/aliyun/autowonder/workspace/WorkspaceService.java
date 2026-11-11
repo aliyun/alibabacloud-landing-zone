@@ -21,11 +21,13 @@ import com.aliyun.autowonder.workspace.dto.WorkspaceUpdateRequest;
 import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.aliyun.autowonder.workspace.dto.SwitchWorkspaceResponse;
 import com.aliyun.autowonder.agent.PlatformAgentSeeder;
+import com.aliyun.autowonder.workspace.event.WorkspaceCreatedEvent;
 import com.aliyun.autowonder.workspace.event.WorkspaceDeletedEvent;
 import com.aliyun.autowonder.statemachine.StatusTemplateSeeder;
 import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
+import com.aliyun.autowonder.user.WorkspaceCreationPermissionService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -63,6 +65,7 @@ public class WorkspaceService {
     private final SystemAdminService systemAdminService;
     private final WorkspaceDeletionLinkage deletionLinkage;
     private final ApplicationEventPublisher eventPublisher;
+    private final WorkspaceCreationPermissionService workspaceCreationPermissionService;
 
     public WorkspaceService(WorkspaceDao workspaceDao, WorkspaceMemberDao workspaceMemberDao,
                       StatusTemplateSeeder statusTemplateSeeder,
@@ -70,7 +73,8 @@ public class WorkspaceService {
                       UserDao userDao, AuditLogService auditLogService,
                       SystemAdminService systemAdminService,
                       WorkspaceDeletionLinkage deletionLinkage,
-                      ApplicationEventPublisher eventPublisher, WorkspaceRoleService roleService) {
+                      ApplicationEventPublisher eventPublisher, WorkspaceRoleService roleService,
+                      WorkspaceCreationPermissionService workspaceCreationPermissionService) {
         this.roleService = roleService;
         this.workspaceDao = workspaceDao;
         this.workspaceMemberDao = workspaceMemberDao;
@@ -82,10 +86,13 @@ public class WorkspaceService {
         this.systemAdminService = systemAdminService;
         this.deletionLinkage = deletionLinkage;
         this.eventPublisher = eventPublisher;
+        this.workspaceCreationPermissionService = workspaceCreationPermissionService;
     }
 
     @Transactional
     public WorkspaceVO create(CreateWorkspaceRequest req, long ownerUserId) {
+        // 平台级权限判断先于任何写操作与初始化副作用：页面打开后被撤权或直接调用接口同样拒绝。
+        workspaceCreationPermissionService.assertCanCreate(ownerUserId);
         if (req == null) {
             throw new BizException(ErrorCode.WORKSPACE_NAME_REQUIRED);
         }
@@ -126,6 +133,11 @@ public class WorkspaceService {
 
         statusTemplateSeeder.seed(workspace.getId(), ownerUserId);
         platformAgentSeeder.seed(workspace.getId(), ownerUserId);
+
+        // Only workspaces created after this feature exists become eligible; the guide record is
+        // registered by a post-commit listener so a failure there cannot roll back the creation.
+        eventPublisher.publishEvent(new WorkspaceCreatedEvent(
+                workspace.getId(), workspace.getName(), ownerUserId));
 
         WorkspaceVO result = toVO(workspace);
         result.setAccessLevel(WorkspaceAccessLevel.ADMIN);

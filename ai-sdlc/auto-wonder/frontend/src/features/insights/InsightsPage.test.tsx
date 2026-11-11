@@ -37,9 +37,29 @@ const pipelineHealthHandler = http.get('/api/dashboard/pipeline-health', () =>
 
 beforeEach(() => {
   window.localStorage.clear();
+  // Existing realtime cases exercise that tab explicitly; new users now land on delivery analytics.
+  window.localStorage.setItem('aw:insights:v1:anonymous:none:tab', JSON.stringify('realtime'));
 });
 
 describe('InsightsPage', () => {
+  it('defaults to delivery analytics without fetching unrelated tabs', async () => {
+    window.localStorage.clear();
+    const unrelated: string[] = [];
+    server.use(
+      http.get('/api/insights/delivery-analysis', ({ request }) => {
+        expect(new URL(request.url).searchParams.get('days')).toBe('90');
+        return HttpResponse.json(ok({ status: 'COMPUTING', report: null, errorCode: null }));
+      }),
+      http.get('/api/insights/metrics', () => { unrelated.push('metrics'); return HttpResponse.json(ok(null)); }),
+      http.get('/api/insights/audit', () => { unrelated.push('audit'); return HttpResponse.json(ok(null)); }),
+      http.get('/api/insights/workers', () => { unrelated.push('workers'); return HttpResponse.json(ok([])); }),
+    );
+    const { container } = renderPage();
+    expect(await screen.findByText('正在计算交付数据…')).toBeInTheDocument();
+    expect(container.querySelector('.ant-segmented-item-selected')?.textContent).toBe('交付数据分析');
+    await waitPastTooltipDelay();
+    expect(unrelated).toEqual([]);
+  });
   it('falls back from the retired requirement delivery tab to work item delivery and rewrites the preference', async () => {
     const legacyRequests: string[] = [];
     server.use(
@@ -179,6 +199,7 @@ describe('InsightsPage realtime credits cost', () => {
   beforeEach(() => {
     // 偏好按用户维度落在 localStorage：切 tab / 筛选会跨用例残留，这里逐个用例复位。
     window.localStorage.clear();
+    window.localStorage.setItem('aw:insights:v1:anonymous:none:tab', JSON.stringify('realtime'));
   });
 
   it('renders the credits cost card on the default realtime dashboard path', async () => {
@@ -273,13 +294,10 @@ describe('InsightsPage realtime credits cost', () => {
     // 切员工后构成条锁定为全员口径
     expect(screen.getByTestId('cost-composition-chip')).toHaveTextContent('全部数字员工口径 · 不随上方员工筛选联动');
 
-    // 成本筛选写的是 realtime.cost.*，页面级 audit 查询仍沿用 audit.* 的默认值
-    await waitFor(() => {
-      expect(auditRequests.length).toBeGreaterThan(0);
-      const latestAuditRequest = auditRequests[auditRequests.length - 1];
-      expect(latestAuditRequest).toContain('time_range=30d');
-      expect(latestAuditRequest).not.toContain('worker_id');
-    });
+    // Cost filters must neither fetch the hidden audit tab nor write its preferences.
+    expect(auditRequests).toEqual([]);
+    expect(window.localStorage.getItem('aw:insights:v1:anonymous:none:audit.range')).toBeNull();
+    expect(window.localStorage.getItem('aw:insights:v1:anonymous:none:audit.worker')).toBeNull();
   });
 
   it('keeps the realtime dashboard usable when the cost query fails', async () => {

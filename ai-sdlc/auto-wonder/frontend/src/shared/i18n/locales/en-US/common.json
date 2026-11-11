@@ -1,4 +1,5 @@
 {
+  "failure": {"loading": "Loading…", "title": "This content is temporarily unavailable", "description": "Try again, or use navigation to continue elsewhere.", "retry": "Try again"},
   "language": { "switch": "Switch language", "syncFailed": "Could not save your language preference. Your selection is still active in this browser." },
   "overlay": { "close": "Close" },
   "appearance": { "dark": "Dark", "light": "Light", "system": "System", "switch": "Switch appearance", "current": "Appearance: {{mode}}", "scope": "Appearance applies only to this browser." },

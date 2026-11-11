@@ -17,6 +17,9 @@ import com.aliyun.autowonder.im.dto.ImConflictWorkspaceView;
 import com.aliyun.autowonder.im.dto.ImIdentityConflictView;
 import com.aliyun.autowonder.workitem.WorkitemInOtherWorkspaceException;
 import com.aliyun.autowonder.workitem.dto.WorkitemOwningWorkspaceVO;
+import com.aliyun.autowonder.user.RegistrationReviewPendingException;
+import com.aliyun.autowonder.user.dto.AdministratorContactVO;
+import com.aliyun.autowonder.workspace.WorkspaceCreationDeniedException;
 import com.aliyun.autowonder.workspace.WorkspaceService;
 import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
@@ -106,6 +109,24 @@ public class GlobalExceptionHandler {
             // Without a resolvable caller or readable membership nothing may be disclosed.
         }
         return result;
+    }
+
+    /**
+     * 待审核登录与创建空间无权限都按原 HTTP 200 业务失败返回，
+     * data 内附可用平台管理员联系方式（仅这两个受控路径下发）。
+     */
+    @ExceptionHandler(RegistrationReviewPendingException.class)
+    public Result<RegistrationReviewDeniedVO> handleRegistrationReviewPending(
+            RegistrationReviewPendingException ex) {
+        RegistrationReviewDeniedVO view = new RegistrationReviewDeniedVO(ex.getAdministratorContacts());
+        return Result.failKeyed(ex.getCode(), ex.getMessageKey(), ex.getMessageArgs(), ex.getMessage(), view);
+    }
+
+    @ExceptionHandler(WorkspaceCreationDeniedException.class)
+    public Result<RegistrationReviewDeniedVO> handleWorkspaceCreationDenied(
+            WorkspaceCreationDeniedException ex) {
+        RegistrationReviewDeniedVO view = new RegistrationReviewDeniedVO(ex.getAdministratorContacts());
+        return Result.failKeyed(ex.getCode(), ex.getMessageKey(), ex.getMessageArgs(), ex.getMessage(), view);
     }
 
     @ExceptionHandler(BizException.class)

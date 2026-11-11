@@ -117,6 +117,19 @@
     "titlePlaceholder": "请输入工单标题",
     "descriptionPlaceholder": "请输入工单描述（支持 Markdown）"
   },
+  "duplicateCheck": {
+    "title": "发现重复工单",
+    "description": "以下工单可能与当前需求重复。打开链接不会丢失当前输入，你也可以忽略提醒继续操作。",
+    "id": "ID：{{id}}",
+    "open": "在新标签页查看",
+    "dismiss": "忽略提醒，继续",
+    "truncated": "同名工单过多，仅展示部分结果。",
+    "partial": "重复意图检测未覆盖全部候选工单。",
+    "matchType": {
+      "exactTitle": "同名",
+      "sameIntent": "同意图"
+    }
+  },
   "scope": {
     "all": "全部",
     "pending": "待我决策",
@@ -179,7 +192,15 @@
     "tagConditionNoOptions": "暂无可选标签",
     "tagConditionOptionsLoadFailed": "标签加载失败",
     "tagConditionSummary": "标签条件：{{op}} {{tags}}",
-    "clearTagCondition": "清除标签条件"
+    "clearTagCondition": "清除标签条件",
+    "squadLabel": "交付小队",
+    "squadPlaceholder": "选择交付小队（可多选）",
+    "squadUnassigned": "未归属小队",
+    "squadNoData": "暂无交付小队",
+    "squadLoadFailed": "交付小队列表加载失败",
+    "clearSquadFilter": "清除交付小队筛选",
+    "squadFilterNames": "交付小队：{{names}}",
+    "squadFilterMore": "交付小队：{{names}}（共 {{total}} 队）"
   },
   "recycleBin": {
     "title": "工单回收站",
@@ -254,7 +275,8 @@
     "documentsUploaded": "需求文档已上传",
     "documentUploadFailed": "需求文档上传失败",
     "documentDeleted": "需求文档已删除",
-    "documentDeleteFailed": "需求文档删除失败"
+    "documentDeleteFailed": "需求文档删除失败",
+    "executionRestartLatestRequested": "已请求按最新流程重启"
   },
   "transition": {
     "updated": "状态已更新为「{{name}}」",
@@ -348,7 +370,11 @@
     "removeAttachment": "移除附件 {{name}}",
     "attachmentHint": "支持任意类型文件、拖拽和粘贴截图；单个最大 5 MB。",
     "attachmentStorageHint": "发送时上传至工单需求与设计附件，共享最多 10 个、总计 20 MB 的额度；上传成功后会保留，可在附件区删除。",
-    "uploadingAttachments": "正在上传附件…"
+    "uploadingAttachments": "正在上传附件…",
+    "mentionSquadName": "（{{squad}}）",
+    "mentionGroupCurrentSquad": "当前交付小队：{{squad}}",
+    "mentionGroupCurrentSquadUnknown": "当前交付小队",
+    "mentionGroupOthers": "其他小队成员"
   },
   "interaction": {
     "loadError": "执行记录暂时无法加载，回复状态以评论结果为准。",
@@ -381,7 +407,17 @@
     "lastActivity_other": "最近一次活动在 {{count}} 秒前",
     "stale": "最近一次活动在 {{count}} 秒前 · 尚未收到新事件，当前进展未知",
     "underlyingError": "底层原始错误",
-    "underlyingErrorDispatch": "底层原始错误 · 执行 #{{id}}"
+    "underlyingErrorDispatch": "底层原始错误 · 执行 #{{id}}",
+    "stopEnd": "结束本次执行",
+    "stopForce": "强制结束",
+    "ending": "正在结束",
+    "endingHint": "结束请求已发出，等待执行器确认停止",
+    "stopPending": "平台已结束，执行器停止未确认",
+    "endConfirmTitle": "结束执行 #{{id}}？",
+    "endConfirmBody": "只结束这条评论中该数字人的本次交互，其他交互和正式交付不受影响。已提交的产物会保留；重新 @ 可创建新交互。",
+    "forceConfirmTitle": "强制结束执行 #{{id}}？",
+    "stopFailed": "结束请求失败。当前状态未确认，请刷新状态后重试。",
+    "refresh": "刷新状态"
   },
   "collaboration": {
     "title": "外部协作",
@@ -459,6 +495,8 @@
     "completed": "执行已完成"
   },
   "timeline": {
+    "earlierPage": "查看更早的记录",
+    "newerPage": "查看较新的记录",
     "justNow": "刚刚",
     "minutes_other": "{{count}}分钟前",
     "hours_other": "{{count}}小时前",
@@ -514,12 +552,12 @@
     "execution": "第 {{number}} 次执行 · {{status}}",
     "previewName": "预览产物 {{name}}",
     "downloadName": "下载产物 {{name}}",
+    "openName": "打开产物 {{name}}",
+    "meta": "{{size}} · {{type}}",
     "executionSummary_other": "{{latest}}{{label}} · {{count}} 个产物",
     "latest": "最近 · ",
     "categoryCount": "{{label}}（{{count}}）",
-    "agentCount_other": "产物（{{count}} artifacts）",
-    "fileSummary": "{{name}} · {{type}}{{size}}",
-    "bytes": " · {{size}} bytes"
+    "agentCount_other": "产物（{{count}} artifacts）"
   },
   "debug": {
     "title": "Debug 日志",
@@ -622,7 +660,9 @@
       "running": "当前执行仍在运行",
       "online": "执行仍在线，不能继续",
       "notResumable": "当前执行不能继续或重试"
-    }
+    },
+    "restartLatest": "按最新流程重启",
+    "restartLatestBody": "使用该数字员工当前启用的流程，从入口新建一轮。历史产物和操作回执会保留；原会话和暂停点不用于新轮次。"
   },
   "executionControl": {
     "loadEarlier_other": "加载更早的 {{count}} 条记录",
@@ -780,9 +820,14 @@
     "retryCount": "自动重试 {{number}}/{{maximum}}",
     "retryScheduled": "自动重试 {{number}}/{{maximum}}，下次尝试：{{time}}",
     "rounds": "交付重启轮次（{{count}}）",
-    "startedDispatchRound": "已启动第 {{number}} 轮交付（Dispatch #{{id}}）"
+    "startedDispatchRound": "已启动第 {{number}} 轮交付（Dispatch #{{id}}）",
+    "roundSource": "源执行 #{{id}}",
+    "roundWorkflow": "流程 #{{id}}"
   },
   "runtimeLog": {
+    "windowHint": "每次显示最多 200 条日志；搜索仅限当前窗口。",
+    "earlierWindow": "查看更早日志",
+    "latestWindow": "回到最新日志",
     "compactStarted": "上下文压缩开始",
     "compactCompleted": "上下文压缩完成",
     "compactAuto": "自动触发",
@@ -970,7 +1015,8 @@
     "commentRework": "评论重做",
     "continue": "继续",
     "humanHandoff": "交接真人",
-    "commentReworkId": "用户返工（评论 #{{id}}）"
+    "commentReworkId": "用户返工（评论 #{{id}}）",
+    "restart": "交付重启"
   },
   "clarification": {
     "ownedNotice": {
@@ -1011,6 +1057,10 @@
     "previousQuestion": "上一题",
     "submit": "提交",
     "nextQuestion": "下一题",
+    "cancel": "取消",
+    "unansweredTitle": "还有题目未作答",
+    "unansweredBody": "以下题目还没有作答，确认提交后数字员工将按现有答案继续：",
+    "unansweredTag_other": "{{count}} 题未作答",
     "questionTitle": "第{{number}}题：{{label}}",
     "questionCount": "第 {{current}}/{{total}} 题",
     "collapseCard": "收起问题卡片",
@@ -1057,6 +1107,7 @@
     "historyStale": "历史刷新失败，以下为最近一次成功加载的内容。",
     "replyEndedSyncing": "回复已结束，正在同步会话状态，输入暂不可用。",
     "loadingHistory": "正在加载历史消息…",
+    "loadingLatestConversation": "正在打开最近一次会话…",
     "noHistory": "暂无历史消息",
     "bottom": "回到底部",
     "resizeInput": "调整输入框高度",
@@ -1350,5 +1401,7 @@
     "preview": "查看内容",
     "nextPage": "下一页",
     "file": "{{name}} · {{size}} B"
-  }
+  },
+  "clarificationBrowserTitle": "工单 #{{id}} 有问题等待回答",
+  "clarificationBrowserBody": "点击返回对应的澄清会话。"
 }

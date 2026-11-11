@@ -16,6 +16,10 @@ const next = () => screen.getByTestId('elicitation-next-r1');
 const prev = () => screen.getByTestId('elicitation-prev-r1');
 const stepDot = (i: number) => screen.getByTestId(`elicitation-step-r1-${i}`);
 const advance = () => act(() => { vi.advanceTimersByTime(320); });
+/** 跨进最后一题后的主按钮静默期（400ms），过后才允许真正提交。 */
+const settle = () => act(() => { vi.advanceTimersByTime(420); });
+const submitBtn = () => screen.getByTestId('elicitation-submit-r1');
+const clickSubmit = () => fireEvent.click(submitBtn());
 
 describe('ElicitationWizard', () => {
   beforeEach(() => { vi.useFakeTimers(); });
@@ -66,7 +70,8 @@ describe('ElicitationWizard', () => {
     const onReply = vi.fn();
     render(<ElicitationWizard requestId="r1" schema={schema} onReply={onReply} />);
     fireEvent.click(stepDot(2));
-    fireEvent.click(screen.getByTestId('elicitation-submit-r1'));
+    settle();
+    clickSubmit();
     expect(onReply).not.toHaveBeenCalled();
     expect(screen.getByTestId('elicitation-count-r1')).toHaveTextContent('第 1/3 题');
     expect(screen.getByTestId('elicitation-error-q0')).toBeInTheDocument();
@@ -79,8 +84,9 @@ describe('ElicitationWizard', () => {
     advance();
     fireEvent.click(screen.getByTestId('elicitation-option-q1-0'));
     fireEvent.click(next());
+    settle();
     fireEvent.change(screen.getByTestId('elicitation-field-q2'), { target: { value: '备注' } });
-    fireEvent.click(screen.getByTestId('elicitation-submit-r1'));
+    clickSubmit();
     expect(onReply).toHaveBeenCalledWith({ action: 'accept', content: { q0: 'B', q1: ['C'], q2: '备注' } });
   });
 
@@ -99,7 +105,12 @@ describe('ElicitationWizard', () => {
     fireEvent.click(next());
     fireEvent.click(screen.getByTestId('elicitation-option-q1-0'));
     fireEvent.click(next());
-    fireEvent.click(screen.getByTestId('elicitation-submit-r1'));
+    settle();
+    clickSubmit();
+    // 可选第 3 题未答：先确认，确认后提交已答字段。
+    expect(onReply).not.toHaveBeenCalled();
+    expect(screen.getByTestId('elicitation-unanswered-r1')).toHaveTextContent('补充');
+    fireEvent.click(screen.getByTestId('elicitation-confirm-submit-r1'));
     expect(onReply).toHaveBeenCalledWith({ action: 'accept', content: { q0: '自定义', q1: ['C'] } });
   });
 
@@ -140,7 +151,9 @@ describe('ElicitationWizard', () => {
     fireEvent.click(screen.getByTestId('elicitation-option-q1-other'));
     fireEvent.change(screen.getByTestId('elicitation-other-input-q1'), { target: { value: '要离线' } });
     fireEvent.click(next());
-    fireEvent.click(screen.getByTestId('elicitation-submit-r1'));
+    settle();
+    clickSubmit();
+    fireEvent.click(screen.getByTestId('elicitation-confirm-submit-r1'));
     expect(onReply).toHaveBeenCalledWith({
       action: 'accept',
       content: { q0: 'A', q1: ['C', '要离线'] },
@@ -159,6 +172,53 @@ describe('ElicitationWizard', () => {
     advance();
     expect(screen.getByTestId('elicitation-submit-r1')).toBeInTheDocument();
     expect(onReply).not.toHaveBeenCalled();
+  });
+
+  // 回归：主按钮在「下一题」与「提交」之间原位复用同一节点，用户连点第二下
+  // （或焦点未移出时回车）会把上一步的意图落到提交上，导致部分答案被静默提交。
+  it('跨进最后一题时主按钮短暂静默：连点第二下不会提交', () => {
+    const onReply = vi.fn();
+    render(<ElicitationWizard requestId="r1" schema={schema} onReply={onReply} />);
+    fireEvent.click(screen.getByTestId('elicitation-option-q0-0'));
+    advance();
+    fireEvent.click(screen.getByTestId('elicitation-option-q1-0'));
+    fireEvent.click(next());
+    expect(submitBtn()).toBeDisabled();
+    clickSubmit();
+    clickSubmit();
+    expect(onReply).not.toHaveBeenCalled();
+    expect(screen.getByTestId('elicitation-count-r1')).toHaveTextContent('第 3/3 题');
+  });
+
+  it('跨进最后一题后焦点被移出主按钮，回车不会落到提交上', () => {
+    render(<ElicitationWizard requestId="r1" schema={schema} onReply={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('elicitation-option-q0-0'));
+    advance();
+    fireEvent.click(screen.getByTestId('elicitation-option-q1-0'));
+    const nextButton = next();
+    nextButton.focus();
+    expect(nextButton).toHaveFocus();
+    fireEvent.click(nextButton);
+    expect(submitBtn()).not.toHaveFocus();
+  });
+
+  it('有未作答题目时先确认：取消不提交且已答内容保留，确认后才回传', () => {
+    const onReply = vi.fn();
+    render(<ElicitationWizard requestId="r1" schema={schema} onReply={onReply} />);
+    fireEvent.click(screen.getByTestId('elicitation-option-q0-1'));
+    advance();
+    fireEvent.click(screen.getByTestId('elicitation-option-q1-0'));
+    fireEvent.click(next());
+    settle();
+    clickSubmit();
+    expect(onReply).not.toHaveBeenCalled();
+    expect(screen.getByTestId('elicitation-unanswered-r1')).toHaveTextContent('补充');
+    fireEvent.click(screen.getByTestId('elicitation-confirm-cancel-r1'));
+    expect(onReply).not.toHaveBeenCalled();
+    expect(screen.getByTestId('elicitation-count-r1')).toHaveTextContent('第 3/3 题');
+    clickSubmit();
+    fireEvent.click(screen.getByTestId('elicitation-confirm-submit-r1'));
+    expect(onReply).toHaveBeenCalledWith({ action: 'accept', content: { q0: 'B', q1: ['C'] } });
   });
 });
 
@@ -214,7 +274,9 @@ describe('ElicitationWizard 收起/展开（工单 56330）', () => {
     expect(screen.getByTestId('elicitation-count-r1')).toHaveTextContent('第 2/3 题');
     fireEvent.click(screen.getByTestId('elicitation-option-q1-0'));
     fireEvent.click(next());
-    fireEvent.click(screen.getByTestId('elicitation-submit-r1'));
+    settle();
+    clickSubmit();
+    fireEvent.click(screen.getByTestId('elicitation-confirm-submit-r1'));
     expect(onReply).toHaveBeenCalledWith({ action: 'accept', content: { q0: 'B', q1: ['C'] } });
   });
 
@@ -316,7 +378,10 @@ describe('Elicitation live locale changes', () => {  afterEach(async () => { awa
     fireEvent.click(screen.getByTestId('elicitation-option-q1-0'));
     fireEvent.click(next());
     await act(async () => { await i18n.changeLanguage('en-US'); });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    // 该 describe 用真实计时器：等过跨进最后一题后的主按钮静默期。
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
+    fireEvent.click(screen.getByTestId('elicitation-submit-r1'));
+    fireEvent.click(screen.getByTestId('elicitation-confirm-submit-r1'));
     expect(reply).toHaveBeenCalledWith({ action: 'accept', content: { q0: '<b>我的方案</b>', q1: ['C'] } });
   });
   it('refreshes memoized unsupported-schema fallback and required labels', async () => {

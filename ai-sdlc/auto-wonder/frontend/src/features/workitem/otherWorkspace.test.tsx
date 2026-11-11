@@ -74,7 +74,7 @@ function failed(code: string, text: string, data: unknown = null) {
 /** 错误态与成功态都会挂载的详情页查询，按 id 兜底；成功态另需模板详情与恢复信息。 */
 function pageHandlers() {
   return [
-    http.get('/api/workitems/55698/unified-timeline', () => ok([])),
+    http.get('/api/workitems/55698/unified-timeline/window', () => ok([])),
     http.get('/api/workitems/55698/participants', () => ok([])),
     http.get('/api/workitems/55698/mention-candidates', () => ok([])),
     http.get('/api/workitems/55698/delivery-progress', () => ok({ steps: [], agents: [] })),

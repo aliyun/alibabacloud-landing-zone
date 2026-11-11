@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.prd.PrdDesignDao">
+
+    <sql id="cols">
+        id, workspace_id, workitem_id, target_repo_id, target_profile_id, target_app_root,
+        target_commit_sha, target_config_json, confirmed_version_id, delivery_mode, latest_version_no, content_language,
+        version, creator_id, modifier_id, gmt_create, gmt_modified
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.prd.PrdDesignDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO prd_design
+            (workspace_id, workitem_id, target_repo_id, target_profile_id, target_app_root,
+             target_commit_sha, delivery_mode, latest_version_no, content_language, version, creator_id)
+        VALUES
+            (#{workspaceId}, #{workitemId}, #{targetRepoId}, #{targetProfileId}, #{targetAppRoot},
+             #{targetCommitSha}, #{deliveryMode}, #{latestVersionNo}, #{contentLanguage}, 0, #{creatorId})
+    </insert>
+
+    <select id="findById" resultType="com.aliyun.autowonder.prd.PrdDesignDO">
+        SELECT <include refid="cols"/> FROM prd_design
+        WHERE id = #{id} AND workspace_id = #{workspaceId}
+    </select>
+
+    <select id="findByWorkitem" resultType="com.aliyun.autowonder.prd.PrdDesignDO">
+        SELECT <include refid="cols"/> FROM prd_design
+        WHERE workspace_id = #{workspaceId} AND workitem_id = #{workitemId}
+        LIMIT 1
+    </select>
+
+    <update id="updateTarget">
+        UPDATE prd_design
+        SET target_repo_id = #{targetRepoId},
+            target_profile_id = #{targetProfileId},
+            target_app_root = #{targetAppRoot},
+            target_commit_sha = #{targetCommitSha},
+            target_config_json = NULL,
+            version = version + 1
+            <if test="modifierId != null">, modifier_id = #{modifierId}</if>
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+    <update id="updateManualTarget">
+        UPDATE prd_design
+        SET target_repo_id = #{targetRepoId}, target_profile_id = NULL,
+            target_app_root = #{targetAppRoot}, target_commit_sha = NULL,
+            target_config_json = #{targetConfigJson}, version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+    <update id="updateDeliveryMode">
+        UPDATE prd_design
+        SET delivery_mode = #{deliveryMode},
+            version = version + 1
+            <if test="modifierId != null">, modifier_id = #{modifierId}</if>
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+    <update id="updateContentLanguage">
+        UPDATE prd_design
+        SET content_language = #{contentLanguage},
+            version = version + 1
+            <if test="modifierId != null">, modifier_id = #{modifierId}</if>
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+    <update id="incrementLatestVersionNo">
+        UPDATE prd_design
+        SET latest_version_no = latest_version_no + 1,
+            version = version + 1
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+    <update id="confirmVersion">
+        UPDATE prd_design
+        SET confirmed_version_id = #{confirmedVersionId},
+            version = version + 1
+            <if test="modifierId != null">, modifier_id = #{modifierId}</if>
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+</mapper>

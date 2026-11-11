@@ -62,6 +62,18 @@ public class WorkitemVO {
     private String sourceProvider;
     /** Preferred external workitem URL for list/card presentation. */
     private String sourceUrl;
+    /**
+     * MCP 新建/编辑成功后的同名提醒；仅在调用方（MCP 工具）填充时出现，
+     * Web 接口保持原有响应字段不变。
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private List<com.aliyun.autowonder.workitem.duplicate.DuplicateMatchVO> duplicateWarnings;
+    /** 与 duplicateWarnings 同批返回：同名命中总数（可能大于返回条数）。 */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Long duplicateWarningTotal;
+    /** 同名候选超过服务端扫描上限时为 true，调用方不得宣称结果完整。 */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean duplicateWarningTruncated;
     /** Whether the current workitem can be deleted by a human user. */
     private Boolean deletable;
     /** Human-readable reason when deletable is false. */

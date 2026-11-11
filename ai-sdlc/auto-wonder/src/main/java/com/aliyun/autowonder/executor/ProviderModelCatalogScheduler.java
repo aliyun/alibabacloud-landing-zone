@@ -14,7 +14,7 @@ public class ProviderModelCatalogScheduler {
 
     @Scheduled(fixedDelayString = "${autowonder.provider-model-catalog.refresh-fixed-delay-ms:86400000}")
     public void refreshDueCatalogs() {
-        service.requestRefreshIfDue("qoder");
-        service.requestRefreshIfDue("qodercn");
+        // One round per workspace/provider pair that still has a live executor; no request context is involved.
+        service.requestRefreshForDueTenants();
     }
 }

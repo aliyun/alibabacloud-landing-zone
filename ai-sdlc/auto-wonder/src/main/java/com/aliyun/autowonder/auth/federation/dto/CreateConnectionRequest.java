@@ -28,6 +28,12 @@ public class CreateConnectionRequest {
     private String subjectClaim;
     private String nameClaim;
     private String emailClaim;
+    /** 认证结果中的飞书 user_id 属性名；null 或空串表示不同步。 */
+    private String feishuUserIdClaim;
+    /** 首次登录自动创建账号，null 默认关闭。 */
+    private Integer autoProvision;
+    /** 是否设为全平台默认登录连接；默认关闭。 */
+    private Boolean defaultLogin;
     private String allowedTenants;
     private Integer sortOrder;
 }

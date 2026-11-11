@@ -13,6 +13,7 @@ import {
   hasPersistedReplyForTurn,
   findPairedInboundTurnId,
   useClarificationConversation,
+  useLatestClarificationConversation,
   isClarificationReplyingStatus,
   clarificationConversationRefetchInterval,
   clarificationQueryRetry,
@@ -28,10 +29,12 @@ import type { ConversationRealtimeEvent } from './types';
 type RealtimeCallback = (event: { type: string; payload: unknown }) => void;
 
 let capturedCallback: RealtimeCallback | null = null;
+let capturedReconnect: (() => void) | undefined;
 
 vi.mock('@/shared/realtime/useRealtime', () => ({
-  useRealtime: (_channel: unknown, opts: { onEvent: RealtimeCallback }) => {
+  useRealtime: (_channel: unknown, opts: { onEvent: RealtimeCallback; onReconnect?: () => void }) => {
     capturedCallback = opts.onEvent;
+    capturedReconnect = opts.onReconnect;
   },
 }));
 
@@ -68,6 +71,118 @@ function emitTurnEvent(cb: RealtimeCallback, ev: ConversationRealtimeEvent) {
 describe('useClarificationEvents', () => {
   beforeEach(() => {
     capturedCallback = null;
+  });
+
+  it('restores persisted process events without a websocket frame and deduplicates live delivery', async () => {
+    server.use(http.get('/api/workitems/100/clarification-conversations/1/turns/10/events', () => HttpResponse.json({
+      success: true, code: '0', data: [{ id: 11, turnId: 10, dispatchAttempt: 1, eventSeq: 1,
+        chunkIndex: 0, chunkCount: 1, eventType: 'thinking',
+        payloadFragment: JSON.stringify({ type: 'thinking', content: 'Recovered analysis' }) }],
+    })));
+    const { result } = renderHook(() => useClarificationEvents('100', 1, 10), { wrapper });
+    await waitFor(() => expect(result.current.timeline.some(node => node.text === 'Recovered analysis')).toBe(true));
+    act(() => emitTurnEvent(capturedCallback!, { ...makeEvent(10, 1, 'thinking', 'Recovered analysis'), dispatchAttempt: 1 }));
+    expect(result.current.timeline.filter(node => node.kind === 'thinking')).toHaveLength(1);
+    expect(result.current.timeline.find(node => node.kind === 'thinking')?.text).toBe('Recovered analysis');
+  });
+
+  it('recovers pages serially, joins split events and resumes from the DB cursor', async () => {
+    const cursors: number[] = [];
+    server.use(http.get('/api/workitems/100/clarification-conversations/1/turns/10/events', ({ request }) => {
+      const cursor = Number(new URL(request.url).searchParams.get('afterId'));
+      cursors.push(cursor);
+      const rows = cursor === 0 ? Array.from({ length: 500 }, (_, i) => ({
+        id: i + 1, turnId: 10, dispatchAttempt: 1, eventSeq: i + 1,
+        chunkIndex: 0, chunkCount: i === 499 ? 2 : 1, eventType: i === 499 ? 'thinking' : 'status',
+        payloadFragment: i === 499 ? '{"type":"thinking","content":' : '{}',
+      })) : cursor === 500 ? [{ id: 501, turnId: 10, dispatchAttempt: 1, eventSeq: 500,
+        chunkIndex: 1, chunkCount: 2, eventType: 'thinking', payloadFragment: '"restored"}' }] : [];
+      return HttpResponse.json({ success: true, code: '0', data: rows });
+    }));
+    const { result } = renderHook(() => useClarificationEvents('100', 1, 10), { wrapper });
+    await waitFor(() => expect(result.current.timeline.some(node => node.text === 'restored')).toBe(true));
+    expect(cursors).toEqual([0, 500]);
+    act(() => { capturedReconnect?.(); });
+    await waitFor(() => expect(cursors).toEqual([0, 500, 501]));
+    expect(result.current.timeline.filter(node => node.kind === 'thinking')).toHaveLength(1);
+  });
+
+  it('rechecks after reconnect when an older recovery request was already in flight', async () => {
+    let release!: () => void;
+    let started!: () => void;
+    let calls = 0;
+    const entered = new Promise<void>(r => { started = r; });
+    server.use(http.get('/api/workitems/100/clarification-conversations/1/turns/10/events', async () => {
+      calls++;
+      if (calls === 1) {
+        started();
+        await new Promise<void>(r => { release = r; });
+        return HttpResponse.json({ success: true, code: '0', data: [] });
+      }
+      return HttpResponse.json({ success: true, code: '0', data: [{ id: 1, turnId: 10,
+        eventSeq: 1, chunkIndex: 0, chunkCount: 1, eventType: 'text', payloadFragment: '{"content":"gap recovered"}' }] });
+    }));
+    const { result } = renderHook(() => useClarificationEvents('100', 1, 10), { wrapper });
+    await entered;
+    act(() => capturedReconnect?.());
+    release();
+    await waitFor(() => expect(result.current.streamedText).toBe('gap recovered'));
+    expect(calls).toBe(2);
+  });
+
+  it('does not poll persisted events while live events keep arriving', async () => {
+    let calls = 0;
+    server.use(http.get('/api/workitems/100/clarification-conversations/1/turns/10/events', () => {
+      calls++;
+      return HttpResponse.json({ success: true, code: '0', data: [] });
+    }));
+    vi.useFakeTimers();
+    const { unmount } = renderHook(() => useClarificationEvents('100', 1, 10), { wrapper });
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+      expect(calls).toBe(1);
+      for (let i = 1; i <= 12; i++) {
+        act(() => emitTurnEvent(capturedCallback!, makeEvent(10, i, 'thinking', '.')));
+        await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+      }
+      expect(calls).toBe(1);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops recovery after permission denial, including reconnect notifications', async () => {
+    let calls = 0;
+    server.use(http.get('/api/workitems/100/clarification-conversations/1/turns/10/events', () => {
+      calls++;
+      return HttpResponse.json({ success: false, code: ErrorCodes.NOT_FOUND, message: 'not accessible' });
+    }));
+    const { result } = renderHook(() => useClarificationEvents('100', 1, 10), { wrapper });
+    await waitFor(() => expect(calls).toBe(1));
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    act(() => capturedReconnect?.());
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    expect(calls).toBe(1);
+    expect(result.current.timeline).toEqual([]);
+  });
+
+  it('ignores recovery from a conversation that was left while the request was in flight', async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>(r => { started = r; });
+    server.use(http.get('/api/workitems/100/clarification-conversations/1/turns/10/events', async () => {
+      started();
+      await new Promise<void>(r => { release = r; });
+      return HttpResponse.json({ success: true, code: '0', data: [{ id: 1, turnId: 10,
+        eventSeq: 1, chunkIndex: 0, chunkCount: 1, eventType: 'text', payloadFragment: '{"content":"old conversation"}' }] });
+    }));
+    const { result, rerender } = renderHook(({ conversationId }) => useClarificationEvents('100', conversationId, 10),
+      { wrapper, initialProps: { conversationId: 1 } });
+    await entered;
+    rerender({ conversationId: 2 });
+    await act(async () => { release(); await new Promise(r => setTimeout(r, 30)); });
+    expect(result.current.timeline).toEqual([]);
   });
 
   it('falls back to the latest turn when processingTurnId is null', () => {
@@ -938,5 +1053,73 @@ describe('clarificationQueryRetry（工单 55411 有界重试）', () => {
     const unknown = new ApiError('99999', '未知错误', null);
     expect(isClarificationNonRetryableError(unknown)).toBe(false);
     expect(clarificationQueryRetry(0, unknown)).toBe(true);
+  });
+});
+
+describe('useLatestClarificationConversation（工单 57463）', () => {
+  const LATEST_URL = '/api/workitems/100/clarification-conversations/latest';
+
+  it('stays idle until the panel is allowed to resolve the latest conversation', async () => {
+    let calls = 0;
+    server.use(http.get(LATEST_URL, () => {
+      calls += 1;
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
+    }));
+
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useLatestClarificationConversation('100', enabled),
+      { wrapper, initialProps: { enabled: false } },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(calls).toBe(0);
+    expect(result.current.data).toBeUndefined();
+
+    rerender({ enabled: true });
+    await waitFor(() => expect(calls).toBe(1));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    // 该工单没有任何会话：data 为 null 而不是错误，调用方继续走本地记忆/选人页。
+    expect(result.current.data).toBeNull();
+  });
+
+  it('returns the workitem latest conversation so the panel can open it directly', async () => {
+    const latest = { id: 8, agentId: 42, agentName: 'Agent-X' };
+    server.use(http.get(LATEST_URL, () =>
+      HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: latest })));
+
+    const { result } = renderHook(() => useLatestClarificationConversation('100', true), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual(latest));
+  });
+
+  it('retries transient failures with the bounded clarification policy', async () => {
+    let calls = 0;
+    server.use(http.get(LATEST_URL, () => {
+      calls += 1;
+      return HttpResponse.json(
+        { success: false, code: '10000', message: 'boom', traceId: null, data: null },
+        { status: 500 },
+      );
+    }));
+
+    const { result } = renderHook(() => useLatestClarificationConversation('100', true), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 5_000 });
+    expect(calls).toBe(CLARIFICATION_QUERY_MAX_RETRY + 1);
+  });
+
+  it('does not retry permission failures', async () => {
+    let calls = 0;
+    server.use(http.get(LATEST_URL, () => {
+      calls += 1;
+      return HttpResponse.json(
+        { success: false, code: ErrorCodes.NO_PERMISSION, message: 'denied', traceId: null, data: null },
+        { status: 403 },
+      );
+    }));
+
+    const { result } = renderHook(() => useLatestClarificationConversation('100', true), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(calls).toBe(1);
   });
 });

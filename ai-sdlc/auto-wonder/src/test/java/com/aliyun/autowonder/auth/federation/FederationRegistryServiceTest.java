@@ -47,6 +47,7 @@ class FederationRegistryServiceTest {
     private SecretCrypto secretCrypto;
     private FederationProtocolAdapter samlAdapter;
     private FederationProtocolAdapter oidcAdapter;
+    private PlatformAuthConfigService authConfigService;
     private FederationRegistryService service;
 
     @BeforeEach
@@ -65,8 +66,9 @@ class FederationRegistryServiceTest {
             return plain == null ? null : "kc:v1:cipher";
         });
         when(secretCrypto.mask(anyString())).thenReturn("********");
+        authConfigService = mock(PlatformAuthConfigService.class);
         service = new FederationRegistryService(idpDao, connectionDao, identityDao, secretCrypto,
-                List.of(samlAdapter, oidcAdapter));
+                List.of(samlAdapter, oidcAdapter), authConfigService);
     }
 
     @Test
@@ -317,7 +319,7 @@ class FederationRegistryServiceTest {
         properties.setMasterKey(Base64.getEncoder().encodeToString(new byte[32]));
         secretCrypto = new AesGcmSecretCrypto(properties);
         service = new FederationRegistryService(idpDao, connectionDao, identityDao, secretCrypto,
-                List.of(samlAdapter, oidcAdapter));
+                List.of(samlAdapter, oidcAdapter), authConfigService);
     }
 
     @Test
@@ -523,6 +525,90 @@ class FederationRegistryServiceTest {
         assertNull(inserted.get().getSubjectClaim());
         assertEquals(0, inserted.get().getSortOrder());
         assertEquals(1, inserted.get().getEnabled());
+    }
+
+    @Test
+    void connectionListingDerivesDefaultLoginFromPlatformConfig() {
+        when(idpDao.listAll()).thenReturn(List.of(idp(IDP_ID, "AD FS 生产", 1)));
+        FederationConnectionDO first = connection(PROVIDER_ID, IDP_ID, "统一认证", "SAML2");
+        FederationConnectionDO second = connection(8L, IDP_ID, "备用认证", "SAML2");
+        when(connectionDao.listAll()).thenReturn(List.of(first, second));
+        when(authConfigService.defaultProviderId()).thenReturn(PROVIDER_ID);
+
+        List<FederationConnectionVO> connections = service.listConnections();
+
+        assertTrue(connections.get(0).getDefaultLogin());
+        assertFalse(connections.get(1).getDefaultLogin());
+    }
+
+    @Test
+    void createConnectionStoresNewSwitchesAndSetsTheDefaultEntry() {
+        stubIdp();
+        AtomicReference<FederationConnectionDO> inserted = new AtomicReference<>();
+        doAnswer(invocation -> {
+            FederationConnectionDO row = invocation.getArgument(0);
+            row.setId(PROVIDER_ID);
+            inserted.set(row);
+            return 1;
+        }).when(connectionDao).insert(any());
+        when(connectionDao.findById(PROVIDER_ID)).thenAnswer(invocation -> inserted.get());
+
+        CreateConnectionRequest create = oidcRequest("Entra 租户 A 登录");
+        create.setAutoProvision(1);
+        create.setFeishuUserIdClaim("  feishu_user_id  ");
+        create.setDefaultLogin(true);
+        when(authConfigService.defaultProviderId()).thenReturn(PROVIDER_ID);
+
+        FederationConnectionVO created = service.createConnection(create);
+
+        assertEquals(1, inserted.get().getAutoProvision());
+        assertEquals("feishu_user_id", inserted.get().getFeishuUserIdClaim());
+        verify(authConfigService).setDefaultProvider(PROVIDER_ID);
+        assertTrue(created.getDefaultLogin());
+        assertTrue(created.getAutoProvision());
+    }
+
+    @Test
+    void createConnectionRejectsDefaultLoginWhenTheConnectionIsDisabled() {
+        stubIdp();
+        CreateConnectionRequest create = oidcRequest("Entra 租户 A 登录");
+        create.setEnabled(0);
+        create.setDefaultLogin(true);
+
+        assertParamInvalidKey("federation.default_login_requires_enabled",
+                () -> service.createConnection(create));
+        verify(authConfigService, never()).setDefaultProvider(anyLong());
+    }
+
+    @Test
+    void updateConnectionTogglesTheDefaultEntry() {
+        stubIdp();
+        FederationConnectionDO stored = connection(PROVIDER_ID, IDP_ID, "Entra 租户 A 登录", "OIDC");
+        when(connectionDao.findById(PROVIDER_ID)).thenReturn(stored);
+        when(authConfigService.defaultProviderId()).thenReturn(null);
+
+        UpdateConnectionRequest makeDefault = new UpdateConnectionRequest();
+        makeDefault.setDefaultLogin(true);
+        service.updateConnection(PROVIDER_ID, makeDefault);
+        verify(authConfigService).setDefaultProvider(PROVIDER_ID);
+
+        when(authConfigService.defaultProviderId()).thenReturn(PROVIDER_ID);
+        UpdateConnectionRequest clearDefault = new UpdateConnectionRequest();
+        clearDefault.setDefaultLogin(false);
+        service.updateConnection(PROVIDER_ID, clearDefault);
+        verify(authConfigService).clearDefaultProviderIfMatches(PROVIDER_ID);
+    }
+
+    @Test
+    void deletingADefaultConnectionClearsThePlatformReference() {
+        FederationConnectionDO stored = connection(PROVIDER_ID, IDP_ID, "Entra 租户 A 登录", "OIDC");
+        when(connectionDao.findById(PROVIDER_ID)).thenReturn(stored);
+        when(identityDao.countByProvider(PROVIDER_ID)).thenReturn(0L);
+
+        service.deleteConnection(PROVIDER_ID);
+
+        verify(connectionDao).deleteById(PROVIDER_ID);
+        verify(authConfigService).clearDefaultProviderIfMatches(PROVIDER_ID);
     }
 
     private void stubIdp() {

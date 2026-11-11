@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS agent_version (
     responsibilities    CLOB         DEFAULT NULL,
     sdlc_id             BIGINT       DEFAULT NULL,
     identity_json       CLOB         DEFAULT NULL,
+    submit_note         VARCHAR(512) DEFAULT NULL,
     reviewer_id         BIGINT       DEFAULT NULL,
     review_comment      VARCHAR(512) DEFAULT NULL,
     reviewed_at         TIMESTAMP    DEFAULT NULL,

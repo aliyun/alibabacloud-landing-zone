@@ -1,0 +1,45 @@
+{
+  "manifestVersion": 1,
+  "templateKey": "software-delivery",
+  "version": "1.0.0",
+  "name": "软件研发交付小队",
+  "description": "自动化软件研发交付小队，适用于各类需求、BugFix等研发类任务（官方初始化模板母版）",
+  "schemaVersion": 2,
+  "configPath": "harness/harness-config.json",
+  "configSha256": "d631e1cf22fab6a6ec2ea8d5507a18369f2006f030486e3a44775b41a9d5cd79",
+  "skillPackagePath": "harness/skill",
+  "defaultRoleModelFamily": "DEEPSEEK_FLASH",
+  "roleModelFamilies": {
+    "AW_AUTO_CR": "GLM_FLASH"
+  },
+  "modelFamilies": {
+    "GLM_FLASH": {
+      "labelContains": ["GLM", "Flash"],
+      "idPrefixes": ["gf"],
+      "excludeIds": ["auto"]
+    },
+    "GLM_MAIN": {
+      "labelContains": ["GLM"],
+      "labelExcludes": ["Flash"],
+      "idPrefixes": ["g"],
+      "idPrefixExcludes": ["gf"],
+      "excludeIds": ["auto"]
+    },
+    "DEEPSEEK_FLASH": {
+      "labelContains": ["DeepSeek", "Flash"],
+      "idPrefixes": ["df"],
+      "excludeIds": ["auto"]
+    }
+  },
+  "executorDefaults": {
+    "contextWindow": "1000000",
+    "reasoningEffort": "medium",
+    "maxConcurrentDispatches": 10,
+    "memoryMode": "platform",
+    "nameSuffix": "默认执行器"
+  },
+  "repoPermissionRoles": {
+    "READ": ["AW_AUTO_CR", "AW_AUTO_REQ_CLARIFIER", "AW_AUTO_PM"],
+    "WRITE": ["AW_AUTO_FS_DEV", "AW_AUTO_QA"]
+  }
+}

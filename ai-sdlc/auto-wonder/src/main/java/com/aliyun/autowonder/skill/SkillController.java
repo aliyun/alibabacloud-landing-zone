@@ -39,6 +39,14 @@ public class SkillController {
     private final SkillPackageService skillPackageService;
     private final SkillConnectionTestService skillConnectionTestService;
     private final CategoryService categoryService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.aliyun.autowonder.prd.PrdBrowserService prdBrowsers;
+
+    @PostMapping("/browser")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建技能", actionKey = "access.action.create_a_skill")
+    public Result<SkillVO> createBrowser(@RequestBody com.aliyun.autowonder.prd.PrdBrowserService.Create request) {
+        return Result.ok(prdBrowsers.create(request, currentWorkspaceId(), currentUserId()));
+    }
 
     public SkillController(SkillService skillService, SkillPackageService skillPackageService,
                            SkillConnectionTestService skillConnectionTestService,

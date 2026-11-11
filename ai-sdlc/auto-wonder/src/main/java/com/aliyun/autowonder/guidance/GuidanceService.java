@@ -6,6 +6,8 @@ import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchRecoveryService;
 import com.aliyun.autowonder.dispatch.DispatchService;
+import com.aliyun.autowonder.dispatch.DispatchStatus;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
 import com.aliyun.autowonder.common.error.BizException;
@@ -23,6 +25,7 @@ import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
 import com.aliyun.autowonder.workitem.WorkitemCommentDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.aliyun.autowonder.workitem.DispatchEndControlPolicy;
 import com.aliyun.autowonder.workitem.WorkitemService;
 import com.aliyun.autowonder.workitem.dto.CommentInteractionVO;
 import com.aliyun.autowonder.workitem.dto.CommentVO;
@@ -41,6 +44,7 @@ import java.util.Set;
 import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -74,6 +78,18 @@ public class GuidanceService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.context.annotation.Lazy
     private ScheduledTaskRunCommentService scheduledTaskRunCommentService;
+    private DispatchRecoveryService recoveryService;
+    private ExecutionAvailabilityService executionAvailabilityService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryService(DispatchRecoveryService value) {
+        recoveryService = value;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setExecutionAvailabilityService(ExecutionAvailabilityService value) {
+        executionAvailabilityService = value;
+    }
 
     public GuidanceService(GuidanceDao guidanceDao, WorkitemDao workitemDao, WorkitemCommentDao commentDao,
             AgentDao agentDao,
@@ -165,6 +181,11 @@ public class GuidanceService {
         WorkitemCommentDO comment = commentDao.findBySourceAndId(workspaceId,
                 ExecutionSourceType.SCHEDULED_TASK_RUN.name(), runId, commentId);
         if (comment == null) throw new KeyedIllegalArgumentException("guidance.validation.comment_wrong_run", new Object[0], "guidance comment does not belong to scheduled run");
+        if (executionAvailabilityService != null) {
+            // The Run's frozen ledger decides the effective flow; a frozen version never
+            // bypasses the current management state for a new interaction execution.
+            executionAvailabilityService.requireStartable(workspaceId, targetAgentId, run.getSdlcId());
+        }
         GuidanceDO guidance = new GuidanceDO();
         guidance.setTenantId(workspaceId);
         guidance.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
@@ -361,11 +382,16 @@ public class GuidanceService {
             guidanceDao.insert(guidance);
             return guidance;
         }
+        Long sdlcId = sdlcResolver.resolveSdlcId(workspaceId, targetAgentId);
+        if (executionAvailabilityService != null) {
+            // A new server-side interaction execution is subject to the same management state
+            // as formal delivery, so reject before writing the guidance row.
+            executionAvailabilityService.requireStartable(workspaceId, targetAgentId, sdlcId);
+        }
         guidance.setStatus(GuidanceStatus.QUEUED);
         guidanceDao.insert(guidance);
         List<DispatchDO> dispatches = dispatchDao.listByWorkitem(workspaceId, workitemId);
         DispatchDO prior = latestForAgent(dispatches, targetAgentId);
-        Long sdlcId = sdlcResolver.resolveSdlcId(workspaceId, targetAgentId);
         SdlcStepDO firstStep = sdlcId == null ? null : sdlcResolver.firstStep(workspaceId, sdlcId);
         if (prior == null && !hasWorkerHistory(dispatches, targetAgentId)
                 && isMentionOnly(commentContentMd, agent.getName())
@@ -569,6 +595,7 @@ public class GuidanceService {
             return;
         }
         Set<Long> nestedReplyCommentIds = new HashSet<>();
+        List<CommentInteractionVO> controllable = new ArrayList<>();
         for (GuidanceDO guidance : rows) {
             if (GuidanceStatus.APPLIED.equals(guidance.getStatus()) && guidance.getReplyCommentId() == null) {
                 continue;
@@ -593,6 +620,10 @@ public class GuidanceService {
                     interaction.setStatus("CANCELED".equals(execution.getStatus()) ? "CANCELED" : "FAILED");
                     interaction.setError(execution.getError());
                 }
+                if (commentControlEligible(execution, workitemId, guidance)) {
+                    interaction.setControlEligible(true);
+                    controllable.add(interaction);
+                }
             }
             if (guidance.getReplyCommentId() != null) {
                 TimelineItemVO reply = comments.get(guidance.getReplyCommentId());
@@ -608,9 +639,39 @@ public class GuidanceService {
             }
             comment.getInteractions().add(interaction);
         }
+        attachInteractionControl(workspaceId, controllable);
         if (!nestedReplyCommentIds.isEmpty()) {
             timeline.removeIf(item -> item != null && "comment".equals(item.getType())
                     && nestedReplyCommentIds.contains(item.getId()));
+        }
+    }
+
+    /** Only the dispatch really bound to this workitem interaction may expose comment-side control. */
+    private boolean commentControlEligible(DispatchDO execution, long workitemId, GuidanceDO guidance) {
+        // The caller already rejected dispatches from another workspace.
+        return execution.getId() != null
+                && Objects.equals(execution.getWorkitemId(), workitemId)
+                && execution.executionSourceType() == ExecutionSourceType.WORKITEM
+                && DispatchService.isInteractionDispatchValue(execution)
+                && Objects.equals(execution.getAgentId(), guidance.getTargetAgentId());
+    }
+
+    private void attachInteractionControl(long workspaceId, List<CommentInteractionVO> interactions) {
+        if (interactions.isEmpty() || recoveryService == null) {
+            return;
+        }
+        Set<Long> dispatchIds = new LinkedHashSet<>();
+        for (CommentInteractionVO interaction : interactions) {
+            dispatchIds.add(interaction.getDispatchId());
+        }
+        Map<Long, DispatchRecoveryService.ControlState> states = recoveryService.controlStates(workspaceId, dispatchIds);
+        for (CommentInteractionVO interaction : interactions) {
+            DispatchRecoveryService.ControlState state = states.getOrDefault(interaction.getDispatchId(),
+                    DispatchRecoveryService.ControlState.none());
+            interaction.setCancelRequested(state.cancelRequested());
+            interaction.setStopPending(state.stopPending());
+            interaction.setControl(DispatchEndControlPolicy.endCapabilities(
+                    DispatchStatus.isTerminal(interaction.getExecutionStatus()), state.cancelRequested()));
         }
     }
 

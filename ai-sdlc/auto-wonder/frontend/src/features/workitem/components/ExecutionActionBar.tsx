@@ -13,7 +13,7 @@ interface ExecutionActionBarProps {
 
 function actionIcon(action: ExecutionActionKind) {
   if (action === 'pause') return <PauseCircleOutlined aria-hidden="true" />;
-  if (action === 'resume') return <PlayCircleOutlined aria-hidden="true" />;
+  if (action === 'resume' || action === 'restartLatest') return <PlayCircleOutlined aria-hidden="true" />;
   if (action === 'forceEnd') return <WarningOutlined aria-hidden="true" />;
   return <StopOutlined aria-hidden="true" />;
 }
@@ -27,6 +27,16 @@ export function ExecutionActionBar({ attempt, pending, onAction }: ExecutionActi
     pending?.dispatchId === attempt.dispatchId && pending.action === action;
 
   const request = (action: ExecutionActionKind) => {
+    if (action === 'restartLatest') {
+      Modal.confirm({
+        title: t('delivery.restartLatest'),
+        content: t('delivery.restartLatestBody'),
+        okText: t('delivery.restartLatest'),
+        cancelText: t('delivery.cancelAction'),
+        onOk: () => onAction(action),
+      });
+      return;
+    }
     if (action === 'resume') {
       const resume = attempt.control?.resume;
       const target = resume?.targetDispatchId ?? attempt.dispatchId;

@@ -14,6 +14,7 @@ import java.util.zip.Inflater;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -98,6 +99,17 @@ class Saml2FederationAdapterTest {
         fixture.attributes.put("employeeId", "E-1001");
 
         assertEquals("E-1001", identify(fixture).subject());
+    }
+
+    @Test
+    void feishuUserIdIsMappedOnlyWhenTheConnectionDeclaresTheClaim() throws Exception {
+        SamlResponseFixture fixture = new SamlResponseFixture();
+        fixture.attributes.put("feishu_user_id", "f8c21d6a");
+
+        assertNull(identify(fixture).feishuUserId());
+
+        connection.setFeishuUserIdClaim("feishu_user_id");
+        assertEquals("f8c21d6a", identify(fixture).feishuUserId());
     }
 
     @Test

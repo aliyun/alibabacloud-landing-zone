@@ -1,5 +1,5 @@
 import { i18n } from '@/shared/i18n';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { UnifiedTimeline } from './UnifiedTimeline';
@@ -27,6 +27,31 @@ function makeComment(overrides: Partial<TimelineItem>): TimelineItem {
 }
 
 describe('UnifiedTimeline copy entries', () => {
+  it('navigates bounded server windows without rendering the lookahead record or retaining the old page', async () => {
+    const changePage = vi.fn();
+    const first = Array.from({ length: 51 }, (_, id) => makeComment({ id, content: `window-first-${id}` }));
+    const { rerender } = render(<UnifiedTimeline items={first} page={0} hasMore onPageChange={changePage} />);
+    expect(screen.getAllByTestId('timeline-item')).toHaveLength(50);
+    expect(screen.queryByText('window-first-50')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '查看更早的记录' }));
+    expect(changePage).toHaveBeenCalledWith(1);
+    rerender(<UnifiedTimeline items={[makeComment({ content: 'window-history' })]} page={1} onPageChange={changePage} />);
+    expect(screen.queryByText('window-first-0')).toBeNull();
+    expect(screen.getAllByTestId('timeline-item')).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: '查看较新的记录' }));
+    expect(changePage).toHaveBeenCalledWith(0);
+  });
+  it('keeps history reachable when nested replies leave fewer than 50 visible rows', async () => {
+    const changePage = vi.fn();
+    const first = Array.from({ length: 45 }, (_, id) => makeComment({ id }));
+    const { rerender } = render(<UnifiedTimeline items={first} page={0} hasMore onPageChange={changePage} />);
+    await userEvent.click(screen.getByRole('button', { name: '查看更早的记录' }));
+    expect(changePage).toHaveBeenCalledWith(1);
+    rerender(<UnifiedTimeline items={[]} page={1} hasMore onPageChange={changePage} />);
+    expect(screen.getByRole('button', { name: '查看更早的记录' })).toBeInTheDocument();
+    rerender(<UnifiedTimeline items={first} page={2} hasMore={false} onPageChange={changePage} />);
+    expect(screen.queryByRole('button', { name: '查看更早的记录' })).toBeNull();
+  });
   beforeEach(() => {
     copyMock.mockReset();
     copyMock.mockResolvedValue(true);
@@ -88,6 +113,43 @@ describe('UnifiedTimeline copy entries', () => {
   });
 });
 
+describe('UnifiedTimeline server window navigation', () => {
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it('starts each server window from the top once the new page has rendered', () => {
+    const scrollSpy = vi.fn();
+    (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = scrollSpy;
+    const changePage = vi.fn();
+    const { rerender } = render(
+      <UnifiedTimeline items={[makeComment({ id: 1, content: 'window-0' })]} page={0} hasMore onPageChange={changePage} />,
+    );
+    expect(scrollSpy).not.toHaveBeenCalled();
+
+    rerender(<UnifiedTimeline items={[]} page={1} hasMore loading onPageChange={changePage} />);
+    expect(scrollSpy).not.toHaveBeenCalled();
+
+    rerender(<UnifiedTimeline items={[makeComment({ id: 2, content: 'window-1' })]} page={1} hasMore onPageChange={changePage} />);
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    expect(scrollSpy).toHaveBeenCalledWith({ block: 'start' });
+    expect(screen.getByText('window-1')).toBeInTheDocument();
+  });
+
+  it('keeps the newer-window entry pinned and reachable on older windows', async () => {
+    const changePage = vi.fn();
+    const { rerender } = render(
+      <UnifiedTimeline items={[makeComment({ id: 1 })]} page={0} hasMore onPageChange={changePage} />,
+    );
+    expect(screen.queryByTestId('timeline-newer-page-bar')).toBeNull();
+
+    rerender(<UnifiedTimeline items={[makeComment({ id: 2 })]} page={2} hasMore onPageChange={changePage} />);
+    expect(screen.getByTestId('timeline-newer-page-bar')).toHaveStyle({ position: 'sticky', top: '0px' });
+    await userEvent.click(screen.getByRole('button', { name: '查看较新的记录' }));
+    expect(changePage).toHaveBeenCalledWith(1);
+  });
+});
+
 describe('UnifiedTimeline null participant names', () => {
   it('renders comments without crashing when a participant name is null', () => {
     const participants: Participant[] = [
@@ -125,7 +187,7 @@ describe('UnifiedTimeline null participant names', () => {
   });
 });
 
-describe('UnifiedTimeline batching and render containment', () => {
+describe('UnifiedTimeline batching and accessibility', () => {
   // 后端 unified-timeline 按 gmtCreate DESC, id DESC 返回，数组头是最新评论。
   function makeManyComments(count: number): TimelineItem[] {
     return Array.from({ length: count }, (_, index) => makeComment({
@@ -185,13 +247,16 @@ describe('UnifiedTimeline batching and render containment', () => {
     expect(screen.queryByTestId('timeline-load-earlier')).not.toBeInTheDocument();
   });
 
-  it('marks every rendered entry as content-visibility contained', () => {
+  it('keeps timeline entries out of display locking for native accessibility updates', () => {
     render(<UnifiedTimeline items={makeManyComments(2)} />);
 
     for (const item of screen.getAllByTestId('timeline-item')) {
       const style = item.getAttribute('style') ?? '';
-      expect(style).toContain('content-visibility: auto');
-      expect(style).toContain('contain-intrinsic-size: auto 120px');
+      // Chrome's AXBlockFlowData neighbor traversal can encounter detached text
+      // fragments when changing inline content under content-visibility:auto.
+      // The real-browser regression exercises the crash; this guards the CSS.
+      expect(style).not.toContain('content-visibility');
+      expect(style).not.toContain('contain-intrinsic-size');
     }
   });
 
@@ -283,7 +348,7 @@ it('switches held external fallback names and values without a new query or losi
     makeComment({ id: 603, authorName: '<b>authored</b>', authorType: 'EXTERNAL', ...{ authorNameFallback: { ...fallback, displayName: '<b>authored</b>' } } }),
     { ...makeComment({ id: 604 }), type: 'system' as const, eventType: 'EXTERNAL_BUSINESS_OWNER_CHANGE', fromValDisplay: raw, toValDisplay: raw, ...{ fromValNameFallback: fallback, toValNameFallback: fallback } },
   ];
-  server.use(http.get('/api/workitems/601/unified-timeline', () => {
+  server.use(http.get('/api/workitems/601/unified-timeline/window', () => {
     requests += 1; return HttpResponse.json({ success: true, code: '0', message: '', data: items });
   }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -303,4 +368,22 @@ it('switches held external fallback names and values without a new query or losi
   expect(screen.getAllByText(raw)).toHaveLength(2);
   expect(requests).toBe(1);
   view.unmount(); client.clear();
+});
+
+
+it('renders interaction actions only when the page supplies the slot', () => {
+  const item = makeComment({
+    id: 801,
+    content: '请检查兼容性',
+    interactions: [{
+      guidanceId: 9, dispatchId: 91, targetAgentId: 40013, targetAgentName: 'AW全栈开发',
+      status: 'APPLIED', replyContent: '已完成',
+    }],
+  });
+
+  const { rerender } = render(<UnifiedTimeline items={[item]} />);
+  expect(screen.queryByRole('button', { name: '结束本次执行' })).not.toBeInTheDocument();
+
+  rerender(<UnifiedTimeline items={[item]} renderInteractionActions={() => <button type="button">结束本次执行</button>} />);
+  expect(screen.getByRole('button', { name: '结束本次执行' })).toBeInTheDocument();
 });

@@ -9,18 +9,23 @@ import com.aliyun.autowonder.auth.session.SessionService;
 import com.aliyun.autowonder.common.crypto.PasswordEncoderUtil;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.feature.PlatformFeatureSwitchService;
 import com.aliyun.autowonder.user.dto.ChangePasswordRequest;
 import com.aliyun.autowonder.user.dto.LoginRequest;
 import com.aliyun.autowonder.user.dto.LoginResponse;
 import com.aliyun.autowonder.user.dto.LogoutRequest;
 import com.aliyun.autowonder.user.dto.RegisterRequest;
+import com.aliyun.autowonder.user.dto.RegisterResponse;
 import com.aliyun.autowonder.user.dto.UpdateProfileRequest;
 import com.aliyun.autowonder.user.dto.UserVO;
 import com.aliyun.autowonder.user.dto.UserProfileVO;
+import com.aliyun.autowonder.user.event.UserRegistrationReviewRequestedEvent;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -46,12 +51,18 @@ public class UserService {
     private final WorkspaceMemberDao workspaceMemberDao;
     private final SystemAdminService systemAdminService;
     private final SessionIssuanceService sessionIssuanceService;
+    private final PlatformFeatureSwitchService featureSwitchService;
+    private final WorkspaceCreationPermissionService workspaceCreationPermissionService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public UserService(UserDao userDao, JwtService jwtService,
                        SessionService sessionService, JwtProperties jwtProperties,
                        WorkspaceMemberDao workspaceMemberDao,
                        SystemAdminService systemAdminService,
-                       SessionIssuanceService sessionIssuanceService) {
+                       SessionIssuanceService sessionIssuanceService,
+                       PlatformFeatureSwitchService featureSwitchService,
+                       WorkspaceCreationPermissionService workspaceCreationPermissionService,
+                       ApplicationEventPublisher eventPublisher) {
         this.userDao = userDao;
         this.jwtService = jwtService;
         this.sessionService = sessionService;
@@ -59,9 +70,17 @@ public class UserService {
         this.workspaceMemberDao = workspaceMemberDao;
         this.systemAdminService = systemAdminService;
         this.sessionIssuanceService = sessionIssuanceService;
+        this.featureSwitchService = featureSwitchService;
+        this.workspaceCreationPermissionService = workspaceCreationPermissionService;
+        this.eventPublisher = eventPublisher;
     }
 
-    public UserVO register(RegisterRequest req) {
+    /**
+     * 自助注册：审核开关在事务内只读取一次，据此写入待审核或正常状态。
+     * 开关关闭时保留原注册后跳转；已存在的待审账号不因开关变化而被改写。
+     */
+    @Transactional
+    public RegisterResponse register(RegisterRequest req) {
         if (req.getUsername() == null || req.getUsername().isBlank()) {
             throw BizException.keyed(ErrorCode.PARAM_INVALID, "user.username_required", null,
                     "用户名不能为空");
@@ -75,12 +94,15 @@ public class UserService {
             throw BizException.keyed(ErrorCode.CONFLICT, "user.username_exists", null,
                     "用户名已存在");
         }
+        boolean reviewRequired = featureSwitchService.registrationReviewEnabled();
         UserDO user = new UserDO();
         user.setUsername(req.getUsername());
         user.setEmail(req.getEmail());
         user.setNickname(req.getNickname());
         user.setPasswordHash(PasswordEncoderUtil.encode(req.getPassword()));
-        user.setStatus(0);
+        user.setStatus(reviewRequired
+                ? UserAccountStates.STATUS_PENDING_REVIEW
+                : UserAccountStates.STATUS_NORMAL);
         try {
             userDao.insert(user);
         } catch (DuplicateKeyException e) {
@@ -88,16 +110,20 @@ public class UserService {
                     "邮箱已被使用");
         }
         // New-install initialization: the first active user registered on a platform that has
-        // no admin yet becomes the platform admin. A no-op once any admin exists, so later
-        // registrations never change the roster and a demoted first user is never re-granted.
-        systemAdminService.ensureSystemAdmin();
+        // no admin yet becomes the platform admin. Pending registrations never become admins.
+        if (!reviewRequired) {
+            systemAdminService.ensureSystemAdmin();
+        }
 
-        UserVO vo = new UserVO();
-        vo.setId(user.getId());
-        vo.setUsername(user.getUsername());
-        vo.setNickname(user.getNickname());
-        vo.setEmail(user.getEmail());
-        return vo;
+        RegisterResponse response = RegisterResponse.from(toUserVO(user));
+        if (reviewRequired) {
+            response.setReviewRequired(true);
+            response.setAdministratorContacts(workspaceCreationPermissionService.availableAdministratorContacts());
+            // 提交后监听器负责按接收者语言发送平台站内通知；单条失败不影响注册结果。
+            eventPublisher.publishEvent(new UserRegistrationReviewRequestedEvent(
+                    user.getId(), user.getNickname(), user.getUsername()));
+        }
+        return response;
     }
 
     public LoginResponse login(LoginRequest req) {
@@ -108,9 +134,13 @@ public class UserService {
             throw BizException.keyed(ErrorCode.UNAUTHORIZED, "user.credentials_incorrect", null,
                     "用户名或密码错误");
         }
-        if (user.getStatus() != null && user.getStatus() == 1
-                && "DEACTIVATED".equals(user.getPasswordHash())) {
+        if (UserAccountStates.isLegacyDeactivated(user)) {
             throw new BizException(ErrorCode.DEACTIVATION_ACCOUNT_DISABLED);
+        }
+        // 正确凭据下待审账号不签发会话，只返回审核提示与管理员联系方式；错误凭据保持原错误。
+        if (UserAccountStates.isPendingReview(user)) {
+            throw new RegistrationReviewPendingException(
+                    workspaceCreationPermissionService.availableAdministratorContacts());
         }
         return sessionIssuanceService.issue(user);
     }
@@ -121,13 +151,38 @@ public class UserService {
         }
     }
 
+    /** 后台轮询与自动重连只换发访问令牌，不顺延会话到期时间。 */
     public String refreshAccessToken(String refreshToken, Long workspaceId) {
+        return refreshAccessToken(refreshToken, workspaceId, false);
+    }
+
+    public String refreshAccessToken(String refreshToken, Long workspaceId, boolean userActivity) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw BizException.keyed(ErrorCode.PARAM_INVALID, "user.refresh_token_required", null,
                     "refreshToken 不能为空");
         }
         Long userId = sessionService.getUserIdByRefresh(refreshToken);
         if (userId == null) {
+            throw BizException.keyed(ErrorCode.UNAUTHORIZED, "user.refresh_token_expired", null,
+                    "刷新令牌无效或已过期");
+        }
+        // 待审或已删除账号即使仍持有刷新令牌也不能换发访问令牌。
+        UserDO sessionUser = userDao.findById(userId);
+        if (sessionUser == null) {
+            throw BizException.keyed(ErrorCode.UNAUTHORIZED, "user.refresh_token_expired", null,
+                    "刷新令牌无效或已过期");
+        }
+        if (UserAccountStates.isPendingReview(sessionUser)) {
+            throw new RegistrationReviewPendingException(
+                    workspaceCreationPermissionService.availableAdministratorContacts());
+        }
+        if (UserAccountStates.isLegacyDeactivated(sessionUser)) {
+            throw new BizException(ErrorCode.DEACTIVATION_ACCOUNT_DISABLED);
+        }
+        if (userActivity && sessionService.extendRefreshSession(
+                refreshToken, (int) jwtProperties.getRefreshTtlSeconds())
+                == SessionService.RenewalOutcome.SESSION_MISSING) {
+            // 读取会话后、顺延前被登出或撤销：不能为已失效的会话签出新的访问令牌。
             throw BizException.keyed(ErrorCode.UNAUTHORIZED, "user.refresh_token_expired", null,
                     "刷新令牌无效或已过期");
         }
@@ -267,6 +322,17 @@ public class UserService {
         vo.setNickname(user.getNickname());
         vo.setEmail(user.getEmail());
         vo.setPhone(user.getPhone());
+        vo.setCanCreateWorkspace(workspaceCreationPermissionService.canCreate(user));
+        return vo;
+    }
+
+    private UserVO toUserVO(UserDO user) {
+        UserVO vo = new UserVO();
+        vo.setId(user.getId());
+        vo.setUsername(user.getUsername());
+        vo.setNickname(user.getNickname());
+        vo.setEmail(user.getEmail());
+        vo.setIsAdmin(Integer.valueOf(1).equals(user.getIsAdmin()));
         return vo;
     }
 }

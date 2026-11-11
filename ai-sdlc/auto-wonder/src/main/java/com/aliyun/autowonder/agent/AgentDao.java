@@ -12,6 +12,8 @@ public interface AgentDao {
     void insert(AgentDO agent);
     AgentDO findById(@Param("id") Long id);
     Long lockByIdForUpdate(@Param("tenantId") Long tenantId, @Param("id") Long id);
+    /** Locking read returning the row: admission must judge status from the locked version, never a stale snapshot. */
+    AgentDO findByIdForUpdate(@Param("tenantId") Long tenantId, @Param("id") Long id);
     List<AgentDO> findByExactName(@Param("tenantId") Long tenantId, @Param("name") String name);
     List<AgentDO> list(@Param("tenantId") Long tenantId, @Param("status") String status,
             @Param("kind") String kind,

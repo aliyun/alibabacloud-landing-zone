@@ -17,6 +17,7 @@ import com.aliyun.autowonder.dashboard.dto.RunningTaskVO;
 import com.aliyun.autowonder.dashboard.dto.RunningWorkitemVO;
 import com.aliyun.autowonder.dashboard.dto.SquadLineVO;
 import com.aliyun.autowonder.dashboard.dto.SuccessSubVO;
+import com.aliyun.autowonder.dashboard.dto.TodayCreatedWorkitemVO;
 import com.aliyun.autowonder.dashboard.dto.WorkstationVO;
 import com.aliyun.autowonder.insights.InsightsDao;
 import com.aliyun.autowonder.insights.dto.InsightMetricsVO;
@@ -218,6 +219,10 @@ public class DashboardService {
 
     public List<CompletedWorkitemVO> getTodayCompleted(long tenantId) {
         return dao.listTodayCompletedWorkitems(tenantId);
+    }
+
+    public List<TodayCreatedWorkitemVO> getTodayCreatedWorkitems(long tenantId) {
+        return dao.listTodayCreatedWorkitems(tenantId);
     }
 
     public List<CompletedWorkitemVO> getWeekCompleted(long tenantId) {

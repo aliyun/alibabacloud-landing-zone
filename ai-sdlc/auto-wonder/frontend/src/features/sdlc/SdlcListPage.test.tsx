@@ -25,13 +25,57 @@ function renderPage() {
   );
 }
 
+function useSquadsAndSdlcs(sdlcs: unknown[]) {
+  server.use(
+    http.get('/api/squads', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null,
+      data: { list: [{ id: 7, name: 'Squad A' }, { id: 8, name: 'Squad B' }], total: 2, pageNum: 1, pageSize: 100 },
+    })),
+    http.get('/api/sdlcs/page', () => sdlcPageResponse({
+      success: true, code: '0', message: '', traceId: null, data: sdlcs,
+    })),
+    http.get('/api/squad-templates', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: [],
+    })),
+  );
+}
+
+function sdlcRow(id: number | string, name: string, squadIds?: number[] | null, squadNames?: string[] | null,
+                 overrides: Record<string, unknown> = {}) {
+  return {
+    id, name, description: '', status: 'ENABLED', workType: 'REQ', isDefault: 0,
+    entryStepId: null, version: 1, gmtCreate: '2026-07-01', steps: [], squadIds, squadNames,
+    ...overrides,
+  };
+}
+
+function mockSquads(squads: { id: number; name: string }[]) {
+  server.use(http.get('/api/squads', () => HttpResponse.json({
+    success: true, code: '0', message: '', traceId: null,
+    data: { list: squads, total: squads.length, pageNum: 1, pageSize: 100 },
+  })));
+}
+
+function resetPageState() {
+  useAuthStore.getState().clear();
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  window.localStorage.removeItem('autowonder.sdlcs.view');
+  window.localStorage.removeItem('autowonder.sdlcs.pageSize');
+  vi.restoreAllMocks();
+}
+
 describe('SdlcListPage', () => {
-  beforeEach(() => {
-    useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
-    window.localStorage.removeItem('autowonder.sdlcs.view');
-    window.localStorage.removeItem('autowonder.sdlcs.pageSize');
-    vi.restoreAllMocks();
+  beforeEach(resetPageState);
+
+  it('shows only the SDLC and squad workflow tabs', async () => {
+    useSquadsAndSdlcs([sdlcRow(1, 'Example SDLC', [7], ['Squad A'])]);
+    renderPage();
+
+    expect(await screen.findByText('Example SDLC')).toBeInTheDocument();
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
+      i18n.t('sdlc:list.templates'),
+      i18n.t('sdlc:workflow.tab'),
+    ]);
   });
 
   it('keeps invalid create confirmation inline with the raw description and no POST', async () => {
@@ -102,7 +146,7 @@ describe('SdlcListPage', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: /新建$/ }));
 
-    expect(error).toHaveBeenCalledWith('当前为只读权限，新建 SDLC 模版需要读写权限');
+    expect(error).toHaveBeenCalledWith('当前为只读权限，新建 SDLC流程需要读写权限');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
@@ -132,35 +176,13 @@ describe('SdlcListPage', () => {
     expect(deleteIcon).toBeTruthy();
     await userEvent.click(deleteIcon!.closest('button')!);
 
-    await screen.findByText('确定删除该模版？');
+    await screen.findByText('确定删除该流程？');
     await userEvent.click(screen.getByRole('button', { name: /^(OK|确\s*定)$/ }));
 
     await waitFor(() => expect(error).toHaveBeenCalledWith(backendMessage));
   });
 
-  function useSquadsAndSdlcs(sdlcs: unknown[]) {
-    server.use(
-      http.get('/api/squads', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null,
-        data: { list: [{ id: 7, name: 'Squad A' }, { id: 8, name: 'Squad B' }], total: 2, pageNum: 1, pageSize: 100 },
-      })),
-      http.get('/api/sdlcs/page', () => sdlcPageResponse({
-        success: true, code: '0', message: '', traceId: null, data: sdlcs,
-      })),
-      http.get('/api/squad-templates', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [],
-      })),
-    );
-  }
 
-  function sdlcRow(id: number, name: string, squadIds?: number[] | null, squadNames?: string[] | null,
-                   overrides: Record<string, unknown> = {}) {
-    return {
-      id, name, description: '', status: 'ENABLED', workType: 'REQ', isDefault: 0,
-      entryStepId: null, version: 1, gmtCreate: '2026-07-01', steps: [], squadIds, squadNames,
-      ...overrides,
-    };
-  }
 
   it('shows the owning squads in the 所属小队 column', async () => {
     window.localStorage.setItem('autowonder.sdlcs.view', 'list');
@@ -261,16 +283,18 @@ describe('SdlcListPage', () => {
     const { container } = renderPage();
     expect(await screen.findByText('全栈交付')).toBeInTheDocument();
 
-    await waitFor(() => expect(container.querySelectorAll('.sdlc-squad-group-header')).toHaveLength(1));
+    await waitFor(() => expect(container.querySelectorAll('.sdlc-squad-group-header')).toHaveLength(2));
     expect(container.querySelector('.sdlc-squad-group-header')).toHaveTextContent('Squad A');
   });
 
-  it('shows an empty state instead of a blank grouped view when there is no template', async () => {
+  it('renders one group per squad with the empty prompt when there is no template', async () => {
     useSquadsAndSdlcs([]);
 
-    renderPage();
+    const { container } = renderPage();
 
-    expect(await screen.findByText('暂无 SDLC 模版')).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelectorAll('.sdlc-squad-group-header')).toHaveLength(2));
+    expect(screen.getAllByText('暂无 SDLC流程')).toHaveLength(2);
+    expect(screen.getByText('共 0 条')).toBeInTheDocument();
   });
 
   async function rowOf(name: string) {
@@ -323,8 +347,8 @@ describe('SdlcListPage', () => {
 });
 
 describe('SDLC server pagination', () => {
-  it.each(['grouped', 'list'])('recovers when the last page disappears in %s view', async (view) => {
-    window.localStorage.setItem('autowonder.sdlcs.view', view);
+  it('recovers when the last page disappears in list view', async () => {
+    window.localStorage.setItem('autowonder.sdlcs.view', 'list');
     window.localStorage.removeItem('autowonder.sdlcs.pageSize');
     let shrunk = false;
     const seen: number[] = [];
@@ -347,36 +371,230 @@ describe('SDLC server pagination', () => {
     expect(screen.getByText('共 10 条')).toBeInTheDocument();
   });
 
-  it.each(['grouped', 'list'])('reaches the eleventh flow in %s view', async (view) => {
-    window.localStorage.setItem('autowonder.sdlcs.view', view);
+  it('reaches the eleventh flow through the pager in list view', async () => {
+    window.localStorage.setItem('autowonder.sdlcs.view', 'list');
     window.localStorage.removeItem('autowonder.sdlcs.pageSize');
     const rows = Array.from({ length: 11 }, (_, index) => ({
       id: String(40024 - index), name: index === 10 ? 'AW自迭代-研发SDLC' : `流程-${index}`,
       description: '', status: 'ENABLED', stepCount: 4, squadIds: [], squadNames: [],
     }));
-    const requests: number[] = [];
-    const respond = (request: Request, paged: boolean) => {
+    const pages: number[] = [];
+    server.use(http.get('/api/sdlcs/page', ({ request }) => {
       const params = new URL(request.url).searchParams;
       const page = Number(params.get('page') || 1);
       const size = Number(params.get('size') || 10);
-      requests.push(page);
-      const list = rows.slice((page - 1) * size, page * size);
-      return HttpResponse.json({ success: true, code: '0', data: paged
-        ? { list, total: rows.length, pageNum: page, pageSize: size } : list });
-    };
-    server.use(
-      http.get('/api/sdlcs', ({ request }) => respond(request, false)),
-      http.get('/api/sdlcs/page', ({ request }) => respond(request, true)),
-    );
+      pages.push(page);
+      return HttpResponse.json({ success: true, code: '0', data: {
+        list: rows.slice((page - 1) * size, page * size), total: rows.length, pageNum: page, pageSize: size,
+      } });
+    }));
     renderPage();
     await screen.findByText('流程-0');
     expect(screen.getByText('共 11 条')).toBeInTheDocument();
     await userEvent.click(screen.getByTitle('2'));
     expect(await screen.findByText('AW自迭代-研发SDLC')).toBeInTheDocument();
-    expect(requests).toContain(2);
-    expect(screen.getByText('共 11 条')).toBeInTheDocument();
+    expect(pages).toContain(2);
     await userEvent.click(screen.getByTitle('1'));
     expect(await screen.findByText('流程-0')).toBeInTheDocument();
+  });
+});
+
+describe('grouped squad view', () => {
+  beforeEach(resetPageState);
+
+  it('loads every page into one squad group and renders no pager', async () => {
+    mockSquads([{ id: 7, name: 'Squad A' }]);
+    const rows = Array.from({ length: 11 }, (_, index) => sdlcRow(40024 - index, `流程-${index}`, [7], ['Squad A']));
+    const pages: number[] = [];
+    server.use(http.get('/api/sdlcs/page', ({ request }) => {
+      const page = Number(new URL(request.url).searchParams.get('page') || 1);
+      pages.push(page);
+      // Simulates a server that returns fewer rows than the requested page size.
+      return HttpResponse.json({ success: true, code: '0', data: {
+        list: page === 1 ? rows.slice(0, 10) : rows.slice(10),
+        total: rows.length, pageNum: page, pageSize: 100,
+      } });
+    }));
+
+    const { container } = renderPage();
+
+    expect(await screen.findByText('流程-10')).toBeInTheDocument();
+    expect(pages).toEqual([1, 2]);
+    expect(container.querySelectorAll('.sdlc-squad-group-header')).toHaveLength(1);
+    expect(container.querySelector('.sdlc-squad-group-header')).toHaveTextContent('Squad A');
+    expect(screen.getByText('共 11 条')).toBeInTheDocument();
+    expect(screen.queryByTitle('2')).not.toBeInTheDocument();
+  });
+
+  it('requests one wide page for the grouped view', async () => {
+    mockSquads([{ id: 7, name: 'Squad A' }]);
+    const sizes: number[] = [];
+    server.use(http.get('/api/sdlcs/page', ({ request }) => {
+      sizes.push(Number(new URL(request.url).searchParams.get('size')));
+      return sdlcPageResponse({
+        success: true, code: '0', message: '', traceId: null,
+        data: [sdlcRow(1, '全栈交付', [7], ['Squad A'])],
+      });
+    }));
+
+    renderPage();
+
+    expect(await screen.findByText('全栈交付')).toBeInTheDocument();
+    expect(sizes).toEqual([100]);
+  });
+
+  it('repeats a multi-squad workflow in each group and keeps the total deduplicated', async () => {
+    mockSquads([{ id: 7, name: 'Squad A' }, { id: 8, name: 'Squad B' }]);
+    server.use(http.get('/api/sdlcs/page', () => sdlcPageResponse({
+      success: true, code: '0', message: '', traceId: null,
+      data: [sdlcRow(1, '共享流程', [7, 8], ['Squad A', 'Squad B'])],
+    })));
+
+    const { container } = renderPage();
+
+    expect(await screen.findAllByText('共享流程')).toHaveLength(2);
+    expect(container.querySelectorAll('.sdlc-squad-group-header')).toHaveLength(2);
+    // The total counts deduplicated workflows, not rendered rows.
+    expect(screen.getByText('共 1 条')).toBeInTheDocument();
+  });
+
+  it('omits the ungrouped bucket when every workflow belongs to a squad', async () => {
+    mockSquads([{ id: 7, name: 'Squad A' }]);
+    server.use(http.get('/api/sdlcs/page', () => sdlcPageResponse({
+      success: true, code: '0', message: '', traceId: null,
+      data: [sdlcRow(1, '全栈交付', [7], ['Squad A'])],
+    })));
+
+    renderPage();
+
+    expect(await screen.findByText('全栈交付')).toBeInTheDocument();
+    expect(screen.queryByText('未分组')).not.toBeInTheDocument();
+  });
+
+  it('orders groups by size, then name, and keeps ungrouped last', async () => {
+    mockSquads([
+      { id: 7, name: 'Alpha' },
+      { id: 8, name: 'Beta' },
+      { id: 9, name: 'Gamma' },
+    ]);
+    server.use(http.get('/api/sdlcs/page', () => sdlcPageResponse({
+      success: true, code: '0', message: '', traceId: null,
+      data: [
+        sdlcRow(1, 'alpha-1', [7]),
+        sdlcRow(2, 'beta-1', [8]),
+        sdlcRow(3, 'beta-2', [8]),
+        sdlcRow(4, 'loose', []),
+      ],
+    })));
+
+    const { container } = renderPage();
+
+    await screen.findByText('loose');
+    const headers = [...container.querySelectorAll('.sdlc-squad-group-header')]
+      .map((header) => header.textContent ?? '');
+    expect(headers).toHaveLength(4);
+    expect(headers[0]).toContain('Beta');
+    expect(headers[1]).toContain('Alpha');
+    expect(headers[2]).toContain('Gamma');
+    expect(headers[3]).toContain('未分组');
+  });
+
+  it('shows an empty group for a squad without workflows', async () => {
+    mockSquads([{ id: 7, name: 'Squad A' }, { id: 9, name: 'Empty Squad' }]);
+    server.use(http.get('/api/sdlcs/page', () => sdlcPageResponse({
+      success: true, code: '0', message: '', traceId: null,
+      data: [sdlcRow(1, '全栈交付', [7], ['Squad A'])],
+    })));
+
+    const { container } = renderPage();
+
+    await screen.findByText('全栈交付');
+    expect(container.querySelectorAll('.sdlc-squad-group-header')).toHaveLength(2);
+    expect(screen.getByText('Empty Squad')).toBeInTheDocument();
+    expect(screen.getAllByText('暂无 SDLC流程')).toHaveLength(1);
+  });
+
+  it('collapses and expands a group from its keyboard-operable header', async () => {
+    const user = userEvent.setup();
+    mockSquads([{ id: 7, name: 'Squad A' }]);
+    server.use(http.get('/api/sdlcs/page', () => sdlcPageResponse({
+      success: true, code: '0', message: '', traceId: null,
+      data: [sdlcRow(1, '全栈交付', [7], ['Squad A'])],
+    })));
+
+    renderPage();
+
+    await screen.findByText('全栈交付');
+    const toggle = screen.getByRole('button', { name: '收起分组' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAttribute('aria-controls', 'sdlc-group-body-squad-7');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await waitFor(() => expect(screen.queryByText('全栈交付')).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '展开分组' }));
+    expect(await screen.findByText('全栈交付')).toBeInTheDocument();
+
+    // The header row itself is clickable too, not only the toggle button.
+    await user.click(screen.getByText('1 个'));
+    await waitFor(() => expect(screen.queryByText('全栈交付')).not.toBeInTheDocument());
+  });
+
+  it('shows an error with a retry instead of a partial grouped view', async () => {
+    mockSquads([{ id: 7, name: 'Squad A' }]);
+    let fail = true;
+    server.use(http.get('/api/sdlcs/page', () => (fail
+      ? HttpResponse.json(
+        { success: false, code: '500', message: 'boom', traceId: null, data: null },
+        { status: 500 },
+      )
+      : sdlcPageResponse({
+        success: true, code: '0', message: '', traceId: null,
+        data: [sdlcRow(1, '全栈交付', [7], ['Squad A'])],
+      }))));
+
+    renderPage();
+
+    expect(await screen.findByText('加载失败')).toBeInTheDocument();
+    expect(screen.queryByText('全栈交付')).not.toBeInTheDocument();
+
+    fail = false;
+    await userEvent.click(screen.getByRole('button', { name: '请稍后重试' }));
+
+    expect(await screen.findByText('全栈交付')).toBeInTheDocument();
+  });
+
+  it('shows only the selected squad group when filtering', async () => {
+    mockSquads([{ id: 7, name: 'Squad A' }, { id: 8, name: 'Squad B' }]);
+    const rows = [
+      sdlcRow(1, '共享流程', [7, 8]),
+      sdlcRow(2, '仅B流程', [8]),
+      sdlcRow(3, '未归属流程', []),
+    ];
+    server.use(http.get('/api/sdlcs/page', ({ request }) => {
+      const squadParam = new URL(request.url).searchParams.get('squadIds');
+      const selectedIds = squadParam ? squadParam.split(',').map(Number) : null;
+      const list = selectedIds
+        ? rows.filter((row) => (row.squadIds ?? []).some((id) => selectedIds.includes(id)))
+        : rows;
+      return HttpResponse.json({ success: true, code: '0', data: {
+        list, total: list.length, pageNum: 1, pageSize: 100,
+      } });
+    }));
+
+    const { container } = renderPage();
+    await screen.findByText('仅B流程');
+
+    await userEvent.click(screen.getByRole('combobox', { name: '按小队筛选' }));
+    await userEvent.click(await screen.findByText('Squad A', { selector: '.ant-select-item-option-content' }));
+
+    await waitFor(() => expect(container.querySelectorAll('.sdlc-squad-group-header')).toHaveLength(1));
+    expect(container.querySelector('.sdlc-squad-group-header')).toHaveTextContent('Squad A');
+    expect(screen.getAllByText('共享流程')).toHaveLength(1);
+    expect(screen.queryByText('仅B流程')).not.toBeInTheDocument();
+    expect(screen.queryByText('未归属流程')).not.toBeInTheDocument();
+    expect(screen.getByText('共 1 条')).toBeInTheDocument();
   });
 });
 
@@ -426,8 +644,8 @@ it('switches a cached SDLC route and open create errors while preserving draft a
   await screen.findByText('<b>我的流程</b>');
   await userEvent.click(screen.getByRole('button', { name: /新建$/ }));
   await userEvent.type(screen.getByLabelText('描述'), '原始 draft <i>内容</i>');
-  await userEvent.type(screen.getByLabelText('模版名称'), 'x');
-  await userEvent.clear(screen.getByLabelText('模版名称'));
+  await userEvent.type(screen.getByLabelText('流程名称'), 'x');
+  await userEvent.clear(screen.getByLabelText('流程名称'));
   await screen.findByText('请输入名称');
   await act(async () => { await i18n.changeLanguage('en-US'); });
   expect(await screen.findByText('Enter a name')).toBeInTheDocument();
@@ -439,7 +657,10 @@ it('switches a cached SDLC route and open create errors while preserving draft a
   expect(screen.getAllByText('constructor')).toHaveLength(2);
   expect(screen.getByText('2 workflows total')).toBeInTheDocument();
   expect(requests).toBe(1);
-  expect(client.getQueryCache().findAll({ queryKey: ['sdlcs'] })).toHaveLength(1);
+  // Both the list and the grouped query are registered, but only the active view fetched.
+  const loadedQueries = client.getQueryCache().findAll({ queryKey: ['sdlcs'] })
+    .filter((query) => query.state.data !== undefined);
+  expect(loadedQueries).toHaveLength(1);
   await act(async () => { await i18n.changeLanguage('zh-CN'); });
 });
 

@@ -160,8 +160,8 @@
     <!--
       管理列表：全量含已删除用户。keyword 同时匹配删除前快照（deleted_username / deleted_email），
       否则按原名搜不到已删除用户。状态口径与列表展示一致：
-        NORMAL      正常（未逻辑删除且非存量匿名化）
-        DEACTIVATED 存量已注销（匿名化：password_hash = 'DEACTIVATED'，只读、不可恢复）
+        NORMAL      正常（未逻辑删除、非待审、非停用）
+        DEACTIVATED 存量已注销/停用（status = 1 且 password_hash 为空或 'DEACTIVATED'，只读、不可恢复）
         DELETED     已逻辑删除（可恢复）
       排序按 id 倒序，即注册时间倒序。
     -->
@@ -179,10 +179,13 @@
                 )
             </if>
             <if test="status == 'NORMAL'">
-                AND is_deleted = 0 AND (status &lt;&gt; 1 OR password_hash &lt;&gt; 'DEACTIVATED')
+                AND is_deleted = 0 AND status &lt;&gt; 2 AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))
+            </if>
+            <if test="status == 'PENDING_REVIEW'">
+                AND is_deleted = 0 AND status = 2
             </if>
             <if test="status == 'DEACTIVATED'">
-                AND is_deleted = 0 AND status = 1 AND password_hash = 'DEACTIVATED'
+                AND is_deleted = 0 AND status = 1 AND (password_hash IS NULL OR password_hash = 'DEACTIVATED')
             </if>
             <if test="status == 'DELETED'">
                 AND is_deleted = 1
@@ -192,6 +195,22 @@
             </if>
             <if test="type == 'USER'">
                 AND is_admin = 0
+            </if>
+            <if test="canCreateWorkspace != null">
+                <choose>
+                    <when test="canCreateWorkspace">
+                        AND is_deleted = 0 AND status &lt;&gt; 2
+                        AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))
+                        AND (is_admin = 1 OR workspace_creation_granted = 1
+                             OR #{workspaceCreationDefaultAllowed} = TRUE)
+                    </when>
+                    <otherwise>
+                        AND NOT (is_deleted = 0 AND status &lt;&gt; 2
+                                 AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))
+                                 AND (is_admin = 1 OR workspace_creation_granted = 1
+                                      OR #{workspaceCreationDefaultAllowed} = TRUE))
+                    </otherwise>
+                </choose>
             </if>
         </where>
         ORDER BY id DESC
@@ -213,10 +232,13 @@
                 )
             </if>
             <if test="status == 'NORMAL'">
-                AND is_deleted = 0 AND (status &lt;&gt; 1 OR password_hash &lt;&gt; 'DEACTIVATED')
+                AND is_deleted = 0 AND status &lt;&gt; 2 AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))
+            </if>
+            <if test="status == 'PENDING_REVIEW'">
+                AND is_deleted = 0 AND status = 2
             </if>
             <if test="status == 'DEACTIVATED'">
-                AND is_deleted = 0 AND status = 1 AND password_hash = 'DEACTIVATED'
+                AND is_deleted = 0 AND status = 1 AND (password_hash IS NULL OR password_hash = 'DEACTIVATED')
             </if>
             <if test="status == 'DELETED'">
                 AND is_deleted = 1
@@ -226,6 +248,22 @@
             </if>
             <if test="type == 'USER'">
                 AND is_admin = 0
+            </if>
+            <if test="canCreateWorkspace != null">
+                <choose>
+                    <when test="canCreateWorkspace">
+                        AND is_deleted = 0 AND status &lt;&gt; 2
+                        AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))
+                        AND (is_admin = 1 OR workspace_creation_granted = 1
+                             OR #{workspaceCreationDefaultAllowed} = TRUE)
+                    </when>
+                    <otherwise>
+                        AND NOT (is_deleted = 0 AND status &lt;&gt; 2
+                                 AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))
+                                 AND (is_admin = 1 OR workspace_creation_granted = 1
+                                      OR #{workspaceCreationDefaultAllowed} = TRUE))
+                    </otherwise>
+                </choose>
             </if>
         </where>
     </select>
@@ -279,5 +317,47 @@
             is_deleted = 0,
             gmt_modified = NOW(3)
         WHERE id = #{id} AND is_deleted = 1
+    </update>
+
+    <!-- ================= 自助注册审核与平台级空间创建权限 ================= -->
+
+    <!-- 可用平台管理员 = 未删除 + 正常 + 平台管理员标记；通知发件人与联系人列表共用这一个口径。
+         “正常”与 UserAccountStates.NORMAL 同源：排除待审（status = 2）与停用（status = 1 且
+         password_hash 为空或 'DEACTIVATED'），仍可正常登录的 legacy 账号不会被漏掉。
+         待审账号即使持 is_admin 也不会被选中（首个管理员初始化只对正常账号执行）。 -->
+    <select id="listAvailablePlatformAdmins" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        WHERE is_deleted = 0
+          AND status &lt;&gt; 2
+          AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))
+          AND is_admin = 1
+        ORDER BY id ASC
+    </select>
+
+    <!-- 通过审核：status = 2 守卫让并发的通过/拒绝/常规删除只有一笔生效。 -->
+    <update id="approvePendingReview">
+        UPDATE `user`
+        SET status = 0, gmt_modified = NOW(3)
+        WHERE id = #{id} AND is_deleted = 0 AND status = 2
+    </update>
+
+    <!-- 拒绝审核：复用逻辑删除（释放用户名与邮箱），额外用 status = 2 守卫限定仅待审记录。 -->
+    <update id="logicalDeletePendingReview">
+        UPDATE `user`
+        SET deleted_username = username,
+            username = CONCAT('#deleted-', id),
+            deleted_email = email,
+            email = NULL,
+            deleted_at = #{deletedAt},
+            deleted_by = #{deletedBy},
+            is_deleted = 1,
+            gmt_modified = NOW(3)
+        WHERE id = #{id} AND is_deleted = 0 AND status = 2
+    </update>
+
+    <update id="updateWorkspaceCreationGranted">
+        UPDATE `user`
+        SET workspace_creation_granted = #{granted}, gmt_modified = NOW(3)
+        WHERE id = #{id} AND is_deleted = 0 AND status = 0
     </update>
 </mapper>

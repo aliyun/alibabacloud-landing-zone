@@ -9,5 +9,5 @@ export function LanguageSwitch() {
     selectable: true, selectedKeys: [locale],
     items: [{ key: 'zh-CN', label: '中文' }, { key: 'en-US', label: 'English' }],
     onClick: ({ key }) => { if (key === 'zh-CN' || key === 'en-US') setLocale(key); },
-  }}><Button icon={<GlobalOutlined aria-hidden="true" />} aria-label={t('language.switch')} title={t('language.switch')} /></Dropdown>;
+  }}><Button type="text" icon={<GlobalOutlined aria-hidden="true" />} aria-label={t('language.switch')} title={t('language.switch')} /></Dropdown>;
 }

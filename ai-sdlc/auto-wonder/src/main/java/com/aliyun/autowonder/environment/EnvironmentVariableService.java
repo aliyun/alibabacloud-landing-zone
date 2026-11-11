@@ -30,7 +30,9 @@ public class EnvironmentVariableService {
     }
 
     public List<EnvironmentVariableVO> list(long tenantId) {
-        return dao.listActive(tenantId).stream().map(this::toVO).toList();
+        return dao.listActive(tenantId).stream()
+                .map(variable -> toVO(variable, variable.getOnlineMountCount(), variable.getDraftMountCount()))
+                .toList();
     }
 
     @Transactional
@@ -57,7 +59,7 @@ public class EnvironmentVariableService {
         }
         EnvironmentVariableDO persisted = requireActive(tenantId, variable.getId());
         audit(tenantId, userId, "CREATE", persisted);
-        return toVO(persisted);
+        return toVO(persisted, 0, 0);
     }
 
     @Transactional
@@ -93,7 +95,11 @@ public class EnvironmentVariableService {
         }
         EnvironmentVariableDO persisted = requireActive(tenantId, id);
         audit(tenantId, userId, "UPDATE", persisted);
-        return toVO(persisted);
+        List<EnvironmentVariableDO> mounts = dao.countMounts(tenantId, id);
+        EnvironmentVariableDO mount = mounts == null || mounts.isEmpty() ? null : mounts.get(0);
+        return mount == null
+                ? toVO(persisted, 0, 0)
+                : toVO(persisted, mount.getOnlineMountCount(), mount.getDraftMountCount());
     }
 
     @Transactional
@@ -151,10 +157,15 @@ public class EnvironmentVariableService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    private EnvironmentVariableVO toVO(EnvironmentVariableDO variable) {
+    private EnvironmentVariableVO toVO(EnvironmentVariableDO variable, Integer onlineMountCount,
+                                       Integer draftMountCount) {
         return new EnvironmentVariableVO(variable.getId(), variable.getName(), MASK,
                 variable.getDescription(), variable.getGmtCreate(), variable.getGmtModified(),
-                variable.getVersion());
+                variable.getVersion(), mountCount(onlineMountCount), mountCount(draftMountCount));
+    }
+
+    private static int mountCount(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private void audit(long tenantId, long userId, String action, EnvironmentVariableDO variable) {

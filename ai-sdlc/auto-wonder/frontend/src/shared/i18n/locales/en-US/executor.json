@@ -236,5 +236,13 @@
   "restartWhenIdle": "Restart when idle",
   "restartWhenIdleHelp": "Restart when idle: stop accepting new work, wait for current tasks and conversations to finish, then restart with the saved settings.",
   "restartForceHelp": "Force restart interrupts current tasks and conversations. Tasks will prepare again or resume from the latest available checkpoint using existing recovery data; some work may repeat. Conversations may not resume. The workspace cannot change while work is active.",
-  "restartPolicyTimedOut": "No client progress or restart heartbeat was received for the online application. Check the client."
+  "restartPolicyTimedOut": "No client progress or restart heartbeat was received for the online application. Check the client.",
+  "agentParamInvalid": "The agent parameter in this link is invalid. All executors are shown instead.",
+  "agentParamClear": "Clear invalid parameter",
+  "directAgentUnavailable": "The target agent does not exist or you cannot access it; other agents are not shown.",
+  "listLoadFailed": "Could not load executors",
+  "retry": "Retry",
+  "noExecutors": "No executors",
+  "noExecutorsForAgent": "This agent has no executors",
+  "agentIdFallback": "#{{id}}"
 }

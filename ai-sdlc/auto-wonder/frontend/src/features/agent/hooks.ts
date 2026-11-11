@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import * as api from './api';
+import { listAllSdlcTemplatesFlat, type SdlcTemplate } from '@/features/sdlc/api';
 import { listWorkitems } from '@/features/workitem/api';
 
 import { useAuthStore } from '@/shared/auth/store';
@@ -50,6 +52,48 @@ export function useCreateAgent() {
   });
 }
 
+const SDLC_STATUS_LABEL_KEYS = {
+  DRAFT: 'sdlcStatus.DRAFT',
+  ENABLED: 'sdlcStatus.ENABLED',
+  DISABLED: 'sdlcStatus.DISABLED',
+} as const;
+
+export interface AgentSdlcOption {
+  value: number;
+  name: string;
+  status: SdlcTemplate['status'];
+  label: string;
+}
+
+/**
+ * Agent create and edit share one option source: every workflow in the workspace (all pages, all
+ * statuses) so a draft or disabled workflow can be bound, labelled with its status. A load failure
+ * surfaces as `isError` and never blocks creating an agent without a workflow.
+ */
+export function useAgentSdlcOptions() {
+  const { t } = useTranslation('agent');
+  const workspaceId = useAuthStore((state) => state.currentWorkspace?.id);
+  const query = useQuery({
+    // Workspace in the key: switching workspace must not reuse the previous workspace's options.
+    queryKey: ['sdlcs', 'agent-options', workspaceId],
+    queryFn: () => listAllSdlcTemplatesFlat(),
+    enabled: Boolean(workspaceId),
+    staleTime: 60_000,
+  });
+  const options = useMemo<AgentSdlcOption[]>(() => (query.data ?? []).map((row) => ({
+    value: Number(row.id),
+    name: row.name,
+    status: row.status,
+    label: t('namedLabel', { name: row.name, label: t(SDLC_STATUS_LABEL_KEYS[row.status]) }),
+  })), [query.data, t]);
+  return {
+    options,
+    isLoading: query.isLoading,
+    isError: query.isError,
+    refetch: query.refetch,
+  };
+}
+
 export function useEditConfig() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -81,9 +125,10 @@ export function useUpdateAgent() {
 export function useSubmitForReview() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (agentId: number) => api.submitForReview(agentId),
-    onSuccess: (_d, agentId) => {
-      queryClient.invalidateQueries({ queryKey: ['agent', agentId] });
+    mutationFn: ({ agentId, note }: { agentId: number; note?: string }) =>
+      api.submitForReview(agentId, note),
+    onSuccess: (_d, v) => {
+      queryClient.invalidateQueries({ queryKey: ['agent', v.agentId] });
       queryClient.invalidateQueries({ queryKey: ['agents'] });
       queryClient.invalidateQueries({ queryKey: PENDING_REVIEWS_QUERY_KEY });
     },

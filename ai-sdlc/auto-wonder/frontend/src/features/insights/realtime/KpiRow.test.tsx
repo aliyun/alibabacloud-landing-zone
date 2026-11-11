@@ -25,18 +25,16 @@ describe('KpiRow', () => {
     expect(values).toEqual(['9', '4', '12', '57']);
 
     const hints = Array.from(container.querySelectorAll('.insight-kpi-hint')).map((node) => node.textContent);
-    expect(hints).toEqual(['今日创建工单', '执行中工单', '工单', '工单']);
+    expect(hints).toEqual(['今日创建工单（不含已取消）', '执行中工单', '工单', '工单']);
   });
 
-  it('makes only the three drill-down KPIs clickable', () => {
+  it('makes all four drill-down KPIs clickable', () => {
     render(<KpiRow kpi={sampleKpi} onKpiClick={() => {}} />);
 
-    for (const label of ['正在运行', '今日完成', '本周完成']) {
+    for (const label of ['今日新建', '正在运行', '今日完成', '本周完成']) {
       expect(kpiCard(label)).toHaveAttribute('role', 'button');
       expect(kpiCard(label)).toHaveStyle({ cursor: 'pointer' });
     }
-    expect(kpiCard('今日新建')).not.toHaveAttribute('role');
-    expect(kpiCard('今日新建')).toHaveStyle({ cursor: 'default' });
   });
 
   it('calls onKpiClick with the matching detail key', async () => {
@@ -52,6 +50,9 @@ describe('KpiRow', () => {
 
     await user.click(screen.getByText('正在运行'));
     expect(handleClick).toHaveBeenCalledWith('runningWorkitems');
+
+    await user.click(screen.getByText('今日新建'));
+    expect(handleClick).toHaveBeenCalledWith('todayCreatedWorkitems');
   });
 
   it('opens the drill-down from the keyboard with Enter and Space', async () => {
@@ -66,15 +67,10 @@ describe('KpiRow', () => {
     expect(handleClick).toHaveBeenNthCalledWith(2, 'runningWorkitems');
     await user.keyboard('{a}');
     expect(handleClick).toHaveBeenCalledTimes(2);
-  });
 
-  it('does not fire for the non drill-down KPI', async () => {
-    const handleClick = vi.fn();
-    render(<KpiRow kpi={sampleKpi} onKpiClick={handleClick} />);
-
-    const user = userEvent.setup();
-    await user.click(screen.getByText('今日新建'));
-    expect(handleClick).not.toHaveBeenCalled();
+    kpiCard('今日新建').focus();
+    await user.keyboard('{Enter}');
+    expect(handleClick).toHaveBeenNthCalledWith(3, 'todayCreatedWorkitems');
   });
 
   it('keeps every KPI static when no drill-down owner is provided', () => {

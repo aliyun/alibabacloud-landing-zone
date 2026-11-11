@@ -17,6 +17,11 @@
         WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
         FOR UPDATE
     </select>
+    <select id="findByIdForUpdate" resultType="com.aliyun.autowonder.agent.AgentDO" useCache="false" flushCache="true">
+        SELECT * FROM agent
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+        LIMIT 1 FOR UPDATE
+    </select>
     <select id="findPlatformAgent" resultType="com.aliyun.autowonder.agent.AgentDO">
         SELECT * FROM agent
         WHERE tenant_id = #{tenantId}

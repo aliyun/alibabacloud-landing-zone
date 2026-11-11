@@ -23,6 +23,7 @@ import com.aliyun.autowonder.workitem.dto.UpdateTagsRequest;
 import com.aliyun.autowonder.workitem.dto.WatchStateVO;
 import com.aliyun.autowonder.workitem.dto.WorkitemOwningWorkspaceVO;
 import com.aliyun.autowonder.workitem.dto.WorkitemVO;
+import javax.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -90,6 +91,8 @@ public class WorkitemController {
      * createdFrom/createdTo 为创建时间高级筛选边界（ISO-8601 瞬间）：前者含下界，后者为排他上界。
      * creatorIds 为创建者高级筛选（本地 creator_id，逗号分隔的正整数列表），缺省表示不过滤。
      * tagConditions 为标签逻辑条件（JSON 数组字符串，支持 AND/OR/IN/NOT），缺省表示不过滤。
+     * squadIds 为交付小队高级筛选（逗号分隔的正整数 id，多值 OR），unassignedSquad 表示只看「未归属小队」；
+     * 两者互斥，归属按当前小队成员关系统计派发与澄清/PRD 会话，缺省表示不过滤。
      */
     @GetMapping
     public Result<PageResult<WorkitemVO>> list(
@@ -107,11 +110,14 @@ public class WorkitemController {
             @RequestParam(value = "createdTo", required = false) String createdTo,
             @RequestParam(value = "creatorIds", required = false) List<Long> creatorIds,
             @RequestParam(value = "tagConditions", required = false) String tagConditions,
+            @RequestParam(value = "squadIds", required = false) String squadIds,
+            @RequestParam(value = "unassignedSquad", defaultValue = "false") boolean unassignedSquad,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         PageResult<WorkitemVO> result = workitemService.list(workType, statusNodeId, statusCategory, assigneeType,
                 assigneeRef, pendingDecisionOnly, mineScope, currentWorkspaceId(), currentUserId(), keyword, tag,
-                scheduledStart, createdFrom, createdTo, creatorIds, tagConditions, page, size);
+                scheduledStart, createdFrom, createdTo, creatorIds, tagConditions, squadIds, unassignedSquad,
+                page, size);
         workitemWatcherService.applyWatchState(result.getList(), currentWorkspaceId(), currentUserId());
         return Result.ok(result);
     }
@@ -214,6 +220,18 @@ public class WorkitemController {
         List<TimelineItemVO> timeline = workitemService.getUnifiedTimeline(id);
         guidanceService.attachInteractionStatuses(currentWorkspaceId(), id, timeline);
         return Result.ok(timeline);
+    }
+
+    @GetMapping("/{id}/unified-timeline/window")
+    public Result<List<TimelineItemVO>> timelineWindow(@PathVariable("id") Long id,
+            @RequestParam(value = "page", defaultValue = "0") int page, HttpServletResponse response) {
+        List<TimelineItemVO> window = workitemService.getTimelineWindow(id, page);
+        // Reply nesting removes rows; pagination must use the raw window's lookahead.
+        boolean hasMore = window.size() > 50;
+        if (hasMore) window = new java.util.ArrayList<>(window.subList(0, 50));
+        response.setHeader("X-Timeline-Has-More", Boolean.toString(hasMore));
+        guidanceService.attachInteractionStatuses(currentWorkspaceId(), id, window);
+        return Result.ok(window);
     }
 
     @GetMapping("/{id}/delivery-progress")

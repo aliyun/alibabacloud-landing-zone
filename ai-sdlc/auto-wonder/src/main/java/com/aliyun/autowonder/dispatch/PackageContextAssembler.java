@@ -63,6 +63,10 @@ import java.util.Set;
  */
 @Component
 public class PackageContextAssembler {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DispatchWorkflowSnapshotStore workflowSnapshots;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DeliveryExternalOperationService externalOperations;
 
     private static final Logger log = LoggerFactory.getLogger(PackageContextAssembler.class);
     private final WorkitemDao workitemDao;
@@ -87,6 +91,14 @@ public class PackageContextAssembler {
     private final StatusNodeDao statusNodeDao;
     private final DispatchCheckpointService checkpointService;
     private ExecutionSubjectRegistry subjectRegistry;
+
+    /**
+     * Optional so the many existing constructor call sites and non-Spring test composition are
+     * unaffected. When absent, PRD-driven packaging is simply not attempted and every workitem
+     * keeps its original delivery path.
+     */
+    @Autowired(required = false)
+    private com.aliyun.autowonder.prd.PrdDeliveryFreezeService prdDeliveryFreezeService;
 
     @Autowired
     public PackageContextAssembler(WorkitemDao workitemDao, ClarificationDao clarificationDao,
@@ -218,10 +230,19 @@ public class PackageContextAssembler {
                 dispatch.getAgentId() == null ? null : agentDao.findById(dispatch.getAgentId())));
         ctx.setRepoMap(buildRepoMap(tenantId, ctx.getRepos()));
         ctx.setSkills(buildCapabilities(skillDao, skillCatalogDao, tenantId, version.getId()));
-        ctx.setSdlc(buildSdlc(tenantId, dispatch.getSdlcStepId()));
-        boolean interaction = "COMMENT_INTERACTION".equals(dispatch.getResumeMode())
-                || "SIDE_INTERACTION".equals(dispatch.getResumeMode())
-                || "CANONICAL_INTERACTION".equals(dispatch.getResumeMode());
+        boolean interaction = DispatchService.isInteractionDispatchValue(dispatch);
+        var snapshot = workflowSnapshots == null ? null : workflowSnapshots.require(dispatch);
+        if (snapshot != null) {
+            ctx.setSdlcId(snapshot.sdlcId());
+            ctx.setSdlc(snapshot.workflow());
+            ctx.setDeliveryRoundId(snapshot.roundId());
+            ctx.setWorkflowSnapshotSha256(snapshot.sha256());
+            if (externalOperations != null) ctx.setExternalOperations(externalOperations.list(tenantId, dispatch.getWorkitemId()));
+        } else {
+            SdlcStepDO current = workitemStep(dispatch);
+            if (interaction) ctx.setSdlcId(current == null ? null : current.getSdlcId());
+            ctx.setSdlc(buildSdlc(tenantId, dispatch.getSdlcStepId(), current));
+        }
         boolean commentRework = "COMMENT_REWORK".equals(dispatch.getResumeMode());
         Long legacySourceDispatchId = interaction || commentRework
                 ? dispatch.getResumeFromDispatchId() : parseSourceDispatchId(dispatch.getIdempotencyKey());
@@ -230,8 +251,11 @@ public class PackageContextAssembler {
         boolean recoverySource = "RECOVERY".equals(dispatch.getResumeMode())
                 || interaction
                 || commentRework
+                || (dispatch.getIdempotencyKey() != null && dispatch.getIdempotencyKey().startsWith("restart:"))
                 || (dispatch.getIdempotencyKey() != null && dispatch.getIdempotencyKey().startsWith("continue:"));
         ctx.setSourceDispatchId(sourceDispatchId);
+        if (snapshot != null && snapshot.sourceDispatchId() != null) ctx.setSourceDispatchId(snapshot.sourceDispatchId());
+        ctx.setPrdDesign(resolvePrdDesign(tenantId, dispatch, version.getId(), sourceDispatchId));
         ctx.setTeammates(buildTeammates(tenantId, dispatch.getWorkitemId(), dispatch.getId(),
                 sourceDispatchId, recoverySource));
         ctx.setSourceRevisionArtifacts(buildSourceRevisionArtifacts(tenantId,
@@ -375,6 +399,20 @@ public class PackageContextAssembler {
         } catch (NumberFormatException ignored) {
             return null;
         }
+    }
+
+    /**
+     * Resolve the frozen PRD inputs for this dispatch, or null when the workitem has no design or
+     * keeps its legacy delivery path. Failures propagate: a PRD-driven dispatch must not be packaged
+     * from anything other than the confirmed version, so packaging stops instead of degrading.
+     */
+    private com.aliyun.autowonder.taskpackage.PrdDesignPackage resolvePrdDesign(
+            long tenantId, DispatchDO dispatch, Long agentVersionId, Long sourceDispatchId) {
+        if (prdDeliveryFreezeService == null) {
+            return null;
+        }
+        return prdDeliveryFreezeService.resolve(tenantId, dispatch.getId(), dispatch.getWorkitemId(),
+                agentVersionId, dispatch.getCreatorId(), sourceDispatchId);
     }
 
     private List<TaskArtifactRef> buildRequirementDocuments(long tenantId, long workitemId) {
@@ -749,110 +787,24 @@ public class PackageContextAssembler {
         return capabilities;
     }
 
-    private Map<String, Object> buildSdlc(long tenantId, Long stepId) {
-        Map<String, Object> sdlc = new LinkedHashMap<>();
-        if (stepId == null) {
-            sdlc.put("workflow", "interaction-only");
-            sdlc.put("currentStepId", "interaction");
-            Map<String, Object> root = new LinkedHashMap<>();
-            root.put("id", "interaction");
-            root.put("name", "用户评论交互");
-            root.put("kind", "interaction");
-            root.put("required", true);
-            root.put("checklist", new ArrayList<>());
-            root.put("gatePolicy", new LinkedHashMap<>());
-            sdlc.put("steps", List.of(root));
-            sdlc.put("outputContract", new LinkedHashMap<>());
-            return sdlc;
+    /** Guidance pins the target worker's entry step on the interaction, independently of the workitem cursor. */
+    SdlcStepDO workitemStep(DispatchDO dispatch) {
+        if (dispatch.getSdlcStepId() == null) {
+            return null;
         }
-        SdlcStepDO current = stepDao.findById(stepId);
-        if (current == null || tenantId != current.getTenantId()) {
-            return sdlc;
+        SdlcStepDO step = stepDao.findById(dispatch.getSdlcStepId());
+        if (step != null && dispatch.getTenantId().equals(step.getTenantId()) && step.getSdlcId() != null) {
+            return step;
         }
-        sdlc.put("sdlcId", String.valueOf(current.getSdlcId()));
-        sdlc.put("workflow", "agent-internal-workflow");
-        sdlc.put("currentStepId", String.valueOf(current.getId()));
-
-        List<Map<String, Object>> steps = new ArrayList<>();
-        for (SdlcStepDO step : stepDao.listBySdlc(current.getSdlcId())) {
-            if (step == null || tenantId != step.getTenantId()) {
-                continue;
-            }
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", String.valueOf(step.getId()));
-            m.put("name", step.getName());
-            m.put("kind", step.getKind());
-            m.put("required", step.getRequired() == null || step.getRequired());
-            m.put("instruction", step.getInstructionMd());
-            m.put("checklist", buildChecklist(step.getChecklistJson()));
-            m.put("gatePolicy", parseJsonMap(step.getGatePolicyJson()));
-            if (step.getTimeoutSeconds() != null) {
-                m.put("timeoutSeconds", step.getTimeoutSeconds());
-            }
-            if (step.getRetryBudget() != null) {
-                m.put("retryBudget", step.getRetryBudget());
-            }
-            steps.add(m);
+        if (DispatchService.isInteractionDispatchValue(dispatch)) {
+            throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
         }
-        sdlc.put("steps", steps);
-        Map<String, Object> outputContract = new LinkedHashMap<>();
-        outputContract.put("reviewerHandoffRequired", true);
-        sdlc.put("outputContract", outputContract);
-        return sdlc;
+        return null;
     }
 
-    private List<Object> parseJsonList(String json) {
-        if (json == null || json.isBlank()) {
-            return new ArrayList<>();
-        }
-        try {
-            return new ArrayList<>(JSON.parseArray(json));
-        } catch (Exception e) {
-            log.warn("invalid sdlc checklist json ignored");
-            return new ArrayList<>();
-        }
-    }
-
-    private Map<String, Object> parseJsonMap(String json) {
-        if (json == null || json.isBlank()) {
-            return new LinkedHashMap<>();
-        }
-        try {
-            return new LinkedHashMap<>(JSON.parseObject(json));
-        } catch (Exception e) {
-            log.warn("invalid sdlc gate policy json ignored");
-            return new LinkedHashMap<>();
-        }
-    }
-
-    private List<Map<String, Object>> buildChecklist(String json) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        if (json == null || json.isBlank()) {
-            return result;
-        }
-        try {
-            List<Object> raw = new ArrayList<>(JSON.parseArray(json));
-            for (int i = 0; i < raw.size(); i++) {
-                Object item = raw.get(i);
-                Map<String, Object> m = new LinkedHashMap<>();
-                if (item instanceof String) {
-                    m.put("id", "cl_" + i);
-                    m.put("text", item);
-                    m.put("checked", false);
-                } else if (item instanceof Map) {
-                    m.putAll((Map<String, Object>) item);
-                }
-                // A definition cannot pre-complete a new dispatch. Preserve only
-                // applicability policy; runtime owns checked/status/reason results.
-                m.put("checked", false);
-                m.remove("status");
-                m.remove("reason");
-                result.add(m);
-            }
-        } catch (Exception e) {
-            log.warn("invalid sdlc checklist json ignored");
-        }
-        return result;
+    private Map<String, Object> buildSdlc(long tenantId, Long stepId, SdlcStepDO current) {
+        if (stepId != null && current == null) return new LinkedHashMap<>();
+        return SdlcSnapshotBuilder.build(tenantId, stepId, stepDao);
     }
 
     private Long parseSourceDispatchId(String idempotencyKey) {

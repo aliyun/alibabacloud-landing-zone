@@ -87,7 +87,7 @@ class AoneOutboxServiceTest {
                 mock(ExternalActorIdentityResolver.class));
 
         service.onContentUpdated(new WorkitemContentUpdatedEvent(10000L, 500L,
-                "新标题", "新正文", 7L));
+                "新标题", "新正文", 7L, true));
 
         verify(outboxDao, never()).insert(argThat(outbox -> true));
         verify(linkDao, never()).listByWorkitem(10000L, 500L);

@@ -1,5 +1,6 @@
 import { apiClient } from '@/shared/api/client';
 import type { LoginResponse, UserInfo } from '@/shared/types/common';
+import type { AdministratorContact } from '@/shared/types/administrator';
 
 export interface LoginParams {
   username: string;
@@ -18,8 +19,13 @@ export async function login(params: LoginParams): Promise<LoginResponse> {
   return resp.data;
 }
 
-export async function register(params: RegisterParams): Promise<UserInfo> {
-  const resp = await apiClient.post<UserInfo>('/api/auth/register', params);
+export interface RegisterResult extends UserInfo {
+  reviewRequired: boolean;
+  administratorContacts: AdministratorContact[] | null;
+}
+
+export async function register(params: RegisterParams): Promise<RegisterResult> {
+  const resp = await apiClient.post<RegisterResult>('/api/auth/register', params);
   return resp.data;
 }
 

@@ -110,6 +110,47 @@ describe('CommentInput mention menu', () => {
     expect(menu).toBeInTheDocument();
     expect(screen.getAllByRole('menuitem')).toHaveLength(2);
   });
+
+  it('groups the current delivery squad first and labels every squad name', () => {
+    const candidates: Participant[] = [
+      { userId: 42, name: '优化测试-全栈开发工程师', role: 'AGENT', roleName: '全栈', isAgent: true, online: true, squadName: '优化测试', currentSquad: true },
+      { userId: 43, name: '优化测试-代码评审', role: 'AGENT', roleName: '评审', isAgent: true, online: true, squadName: '优化测试', currentSquad: true },
+      { userId: 44, name: '另一名数字员工', role: 'AGENT', roleName: '开发', isAgent: true, online: true, squadName: '其他小队', currentSquad: false },
+    ];
+    mentionCandidatesMock.mockReturnValue(candidates);
+    render(<CommentInput workitemId="1" />);
+    const menu = openMentionMenu();
+
+    expect(within(menu).getByText('当前交付小队：优化测试')).toBeInTheDocument();
+    expect(within(menu).getByText('其他小队成员')).toBeInTheDocument();
+
+    const items = screen.getAllByRole('menuitem');
+    expect(items).toHaveLength(3);
+    expect(items[0]).toHaveTextContent('优化测试-全栈开发工程师（优化测试）');
+    expect(items[2]).toHaveTextContent('另一名数字员工（其他小队）');
+
+    fireEvent.click(items[0]);
+    expect(composer().value).toBe('@优化测试-全栈开发工程师 ');
+  });
+
+  it('falls back to a bare current-squad header when the squad name is missing', () => {
+    mentionCandidatesMock.mockReturnValue([
+      { userId: 42, name: '匿名小队员工', role: 'AGENT', roleName: '开发', isAgent: true, online: true, currentSquad: true, squadName: null },
+    ]);
+    render(<CommentInput workitemId="1" />);
+    const menu = openMentionMenu();
+    expect(within(menu).getByText('当前交付小队')).toBeInTheDocument();
+    expect(screen.getAllByRole('menuitem')).toHaveLength(1);
+  });
+
+  it('keeps the flat menu when candidates carry no squad information', () => {
+    mentionCandidatesMock.mockReturnValue(buildCandidates(2));
+    render(<CommentInput workitemId="1" />);
+    const menu = openMentionMenu();
+    expect(within(menu).queryByText(/当前交付小队/)).not.toBeInTheDocument();
+    expect(within(menu).queryByText('其他小队成员')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2);
+  });
 });
 
 describe('CommentInput mention candidate loading', () => {

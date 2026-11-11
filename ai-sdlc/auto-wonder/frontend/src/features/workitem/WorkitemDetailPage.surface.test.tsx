@@ -39,7 +39,7 @@ function surfaceHandlers() {
   return [
     http.get('/api/workitems/1/dispatch-requests', () => ok([])),
     http.get('/api/workitems/1', () => ok(mockWorkitem)),
-    http.get('/api/workitems/1/unified-timeline', () => ok([])),
+    http.get('/api/workitems/1/unified-timeline/window', () => ok([])),
     http.get('/api/workitems/1/participants', () => ok([])),
     http.get('/api/workitems/1/mention-candidates', () => ok([])),
     http.get('/api/workitems/1/delivery-progress', () => ok({ steps: [] })),

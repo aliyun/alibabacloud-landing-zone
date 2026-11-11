@@ -10,12 +10,18 @@ import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.memory.MemoryDO;
+import com.aliyun.autowonder.memory.MemoryDao;
 import com.aliyun.autowonder.repo.RepoDO;
 import com.aliyun.autowonder.repo.RepoDao;
+import com.aliyun.autowonder.sdlc.SdlcDO;
+import com.aliyun.autowonder.sdlc.SdlcDao;
 import com.aliyun.autowonder.skill.SkillDO;
 import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.squad.SquadAttributionService;
 import com.aliyun.autowonder.squad.SquadMemberDao;
+import com.aliyun.autowonder.user.UserDO;
+import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +45,7 @@ class AgentServiceTest {
     SkillDao capabilityDao;
     RepoDao repoDao;
     SquadMemberDao squadMemberDao;
+    SdlcDao sdlcDao;
     AgentService service;
 
     @BeforeEach
@@ -54,8 +61,31 @@ class AgentServiceTest {
         capabilityDao = mock(SkillDao.class);
         repoDao = mock(RepoDao.class);
         squadMemberDao = mock(SquadMemberDao.class);
+        sdlcDao = mock(SdlcDao.class);
         service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 executorDao, executorRegistry);
+    }
+
+    /** Creation-time SDLC binding needs the reference resolver; production wires it through the same constructor. */
+    private AgentService serviceWithSdlc() {
+        return new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
+                executorDao, executorRegistry, capabilityDao, sdlcDao);
+    }
+
+    private SdlcDO sdlc(long id, long tenantId, String status) {
+        SdlcDO row = new SdlcDO();
+        row.setId(id);
+        row.setTenantId(tenantId);
+        row.setName("流程-" + id);
+        row.setStatus(status);
+        return row;
+    }
+
+    private void stubInserts() {
+        doAnswer(inv -> { ((AgentDO) inv.getArgument(0)).setId(1L); return null; })
+                .when(agentDao).insert(any());
+        doAnswer(inv -> { ((AgentVersionDO) inv.getArgument(0)).setId(2L); return null; })
+                .when(versionDao).insert(any());
     }
 
     /** 生产装配含能力目录依赖；默认 service 走旧构造器，用于验证依赖缺失时的兜底。 */
@@ -130,6 +160,103 @@ class AgentServiceTest {
         req.setName("  ");
         BizException ex = assertThrows(BizException.class, () -> service.create(req, 100L, 7L));
         assertEquals("14008", ex.getCode());
+    }
+
+    /** 创建时绑定：校验通过后写入初始 v1 草稿，草稿内保留同一 SDLC ID 且不自动提交。 */
+    @Test
+    void create_binds_sdlc_to_initial_draft_version() {
+        stubInserts();
+        when(sdlcDao.findByIdForUpdate(7L, 100L)).thenReturn(sdlc(7L, 100L, "ENABLED"));
+
+        CreateAgentRequest req = new CreateAgentRequest();
+        req.setName("绑定流程的员工");
+        req.setSdlcId(7L);
+
+        AgentVO vo = serviceWithSdlc().create(req, 100L, 7L);
+
+        assertEquals("DRAFT", vo.getStatus());
+        verify(sdlcDao).findByIdForUpdate(7L, 100L);
+        verify(versionDao).insert(argThat((AgentVersionDO v) ->
+                Long.valueOf(7L).equals(v.getSdlcId())
+                        && v.getVersionNo() == 1
+                        && "DRAFT".equals(v.getStatus())));
+    }
+
+    /** 草稿、启用、停用的流程都允许绑定；绑定不会改动流程本身的状态。 */
+    @Test
+    void create_accepts_draft_enabled_and_disabled_sdlc_statuses() {
+        for (String status : List.of("DRAFT", "ENABLED", "DISABLED")) {
+            reset(agentDao, versionDao, sdlcDao);
+            stubInserts();
+            when(sdlcDao.findByIdForUpdate(7L, 100L)).thenReturn(sdlc(7L, 100L, status));
+
+            CreateAgentRequest req = new CreateAgentRequest();
+            req.setName("员工-" + status);
+            req.setSdlcId(7L);
+
+            serviceWithSdlc().create(req, 100L, 7L);
+
+            verify(versionDao).insert(argThat((AgentVersionDO v) -> Long.valueOf(7L).equals(v.getSdlcId())));
+            verify(sdlcDao, never()).updateStatus(anyLong(), anyLong(), any(), any(), any(), any());
+        }
+    }
+
+    /** 省略新字段时保持旧客户端行为：不查流程、初始版本不带绑定。 */
+    @Test
+    void create_without_sdlc_keeps_unbound_and_skips_lookup() {
+        stubInserts();
+
+        CreateAgentRequest req = new CreateAgentRequest();
+        req.setName("未绑定流程的员工");
+
+        serviceWithSdlc().create(req, 100L, 7L);
+
+        verifyNoInteractions(sdlcDao);
+        verify(versionDao).insert(argThat((AgentVersionDO v) -> v.getSdlcId() == null));
+    }
+
+    /** 显式 null 与省略等价。 */
+    @Test
+    void create_with_null_sdlc_keeps_unbound_and_skips_lookup() {
+        stubInserts();
+
+        CreateAgentRequest req = new CreateAgentRequest();
+        req.setName("显式清空流程");
+        req.setSdlcId(null);
+
+        serviceWithSdlc().create(req, 100L, 7L);
+
+        verifyNoInteractions(sdlcDao);
+        verify(versionDao).insert(argThat((AgentVersionDO v) -> v.getSdlcId() == null));
+    }
+
+    /** 不存在、跨空间或已删除的流程被拒绝，且校验先于首次写入，不残留 Agent / AgentVersion。 */
+    @Test
+    void create_rejects_unresolvable_sdlc_reference_without_residue() {
+        when(sdlcDao.findByIdForUpdate(7L, 100L)).thenReturn(null);
+
+        CreateAgentRequest req = new CreateAgentRequest();
+        req.setName("非法流程引用");
+        req.setSdlcId(7L);
+
+        BizException ex = assertThrows(BizException.class, () -> serviceWithSdlc().create(req, 100L, 7L));
+
+        assertEquals("16001", ex.getCode());
+        verify(sdlcDao).findByIdForUpdate(7L, 100L);
+        verifyNoInteractions(agentDao, versionDao);
+    }
+
+    /** 未装配流程校验依赖时直接拒绝绑定，而不是写入未经校验的引用。 */
+    @Test
+    void create_rejects_sdlc_binding_when_resolver_is_missing() {
+        CreateAgentRequest req = new CreateAgentRequest();
+        req.setName("缺少校验依赖");
+        req.setSdlcId(7L);
+
+        BizException ex = assertThrows(BizException.class, () -> service.create(req, 100L, 7L));
+
+        assertEquals("16001", ex.getCode());
+        verifyNoInteractions(agentDao, versionDao);
     }
 
     @Test
@@ -1032,6 +1159,287 @@ class AgentServiceTest {
         assertEquals("coder", vo.getRoleName());
         assertEquals(Long.valueOf(9L), vo.getSdlcId());
         assertEquals("MANUAL", vo.getEvolutionMode());
+    }
+
+    @Test
+    void submit_persists_the_trimmed_note_with_the_next_lock_version() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L),
+                agentRow(1L, "PENDING_REVIEW", null, 10L));
+        AgentVersionDO draft = versionRow(10L, 1, "DRAFT");
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateStatus(eq(10L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), isNull(), isNull(), eq(0), eq(7L))).thenReturn(1);
+        when(versionDao.updateSubmitNote(eq(10L), eq(100L), eq("补充性能预算"), eq(1), eq(7L)))
+                .thenReturn(1);
+        when(agentDao.updateStatus(eq(1L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), eq(10L), eq(1), eq(0), eq(7L))).thenReturn(1);
+
+        service.submit(1L, 100L, 7L, "  补充性能预算  ");
+
+        verify(versionDao).updateSubmitNote(10L, 100L, "补充性能预算", 1, 7L);
+    }
+
+    @Test
+    void submit_treats_a_blank_note_as_absent() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L),
+                agentRow(1L, "PENDING_REVIEW", null, 10L));
+        AgentVersionDO draft = versionRow(10L, 1, "DRAFT");
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateStatus(eq(10L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), isNull(), isNull(), eq(0), eq(7L))).thenReturn(1);
+        when(agentDao.updateStatus(eq(1L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), eq(10L), eq(1), eq(0), eq(7L))).thenReturn(1);
+
+        service.submit(1L, 100L, 7L, "   \t  ");
+
+        verify(versionDao, never()).updateSubmitNote(anyLong(), anyLong(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void submit_rejects_a_note_longer_than_the_limit_before_touching_state() {
+        String tooLong = "x".repeat(AgentService.SUBMIT_NOTE_MAX_LENGTH + 1);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.submit(1L, 100L, 7L, tooLong));
+
+        assertEquals("10001", ex.getCode());
+        verify(versionDao, never()).updateStatus(anyLong(), anyLong(), any(), any(), any(), any(),
+                any(), anyLong());
+        verify(versionDao, never()).updateSubmitNote(anyLong(), anyLong(), any(), anyInt(), anyLong());
+        verify(agentDao, never()).updateStatus(anyLong(), anyLong(), any(), any(), any(), any(),
+                any(), anyLong());
+    }
+
+    @Test
+    void submitted_note_conflict_rolls_back_the_transition() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        AgentVersionDO draft = versionRow(10L, 1, "DRAFT");
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateStatus(eq(10L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), isNull(), isNull(), eq(0), eq(7L))).thenReturn(1);
+        when(versionDao.updateSubmitNote(eq(10L), eq(100L), eq("说明"), eq(1), eq(7L))).thenReturn(0);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.submit(1L, 100L, 7L, "说明"));
+
+        assertEquals("14003", ex.getCode());
+    }
+
+    @Test
+    void getVersion_resolves_memory_titles_and_the_submitter_name() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO v = versionRow(50L, 2, "APPROVED");
+        v.setCreatorId(7L);
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(v);
+        AgentMemoryRefDO ref = new AgentMemoryRefDO();
+        ref.setMemoryId(3L);
+        ref.setSource("DIRECT");
+        when(memoryRefDao.listByVersion(50L)).thenReturn(List.of(ref));
+        MemoryDao memoryDao = mock(MemoryDao.class);
+        MemoryDO memory = new MemoryDO();
+        memory.setId(3L);
+        memory.setTenantId(100L);
+        memory.setTitle("发布规范");
+        when(memoryDao.findById(3L)).thenReturn(memory);
+        UserDao userDao = mock(UserDao.class);
+        UserDO user = new UserDO();
+        user.setId(7L);
+        user.setNickname("蔡何");
+        user.setUsername("caihe");
+        when(userDao.findById(7L)).thenReturn(user);
+        service.setMemoryDao(memoryDao);
+        service.setUserDao(userDao);
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertEquals("发布规范", vo.getMemoryRefs().get(0).getTitle());
+        assertEquals(Long.valueOf(7L), vo.getCreatorId());
+        assertEquals("蔡何", vo.getCreatorName());
+    }
+
+    @Test
+    void getVersion_hides_cross_tenant_memory_titles_and_falls_back_to_the_username() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO v = versionRow(50L, 2, "APPROVED");
+        v.setCreatorId(7L);
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(v);
+        AgentMemoryRefDO ref = new AgentMemoryRefDO();
+        ref.setMemoryId(3L);
+        ref.setSource("DIRECT");
+        when(memoryRefDao.listByVersion(50L)).thenReturn(List.of(ref));
+        MemoryDao memoryDao = mock(MemoryDao.class);
+        MemoryDO memory = new MemoryDO();
+        memory.setId(3L);
+        memory.setTenantId(999L);
+        memory.setTitle("别的空间");
+        when(memoryDao.findById(3L)).thenReturn(memory);
+        UserDao userDao = mock(UserDao.class);
+        UserDO user = new UserDO();
+        user.setId(7L);
+        user.setNickname("  ");
+        user.setUsername("caihe");
+        when(userDao.findById(7L)).thenReturn(user);
+        service.setMemoryDao(memoryDao);
+        service.setUserDao(userDao);
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertNull(vo.getMemoryRefs().get(0).getTitle());
+        assertEquals("caihe", vo.getCreatorName());
+    }
+
+    @Test
+    void getVersion_leaves_names_null_when_the_optional_directories_are_missing() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO v = versionRow(50L, 2, "APPROVED");
+        v.setCreatorId(7L);
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(v);
+        AgentMemoryRefDO ref = new AgentMemoryRefDO();
+        ref.setMemoryId(3L);
+        ref.setSource("DIRECT");
+        when(memoryRefDao.listByVersion(50L)).thenReturn(List.of(ref));
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertNull(vo.getMemoryRefs().get(0).getTitle());
+        assertNull(vo.getCreatorName());
+    }
+
+    @Test
+    void submit_treats_a_missing_draft_version_as_zero() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L),
+                agentRow(1L, "PENDING_REVIEW", null, 10L));
+        AgentVersionDO draft = versionRow(10L, 1, "DRAFT");
+        draft.setVersion(null);
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateStatus(eq(10L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), isNull(), isNull(), eq(0), eq(7L))).thenReturn(1);
+        when(agentDao.updateStatus(eq(1L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), eq(10L), eq(1), eq(0), eq(7L))).thenReturn(1);
+
+        service.submit(1L, 100L, 7L);
+
+        verify(versionDao).updateStatus(eq(10L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), isNull(), isNull(), eq(0), eq(7L));
+    }
+
+    @Test
+    void getVersion_skips_titles_for_memory_refs_without_an_id() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(versionRow(50L, 2, "APPROVED"));
+        AgentMemoryRefDO ref = new AgentMemoryRefDO();
+        ref.setMemoryId(null);
+        ref.setSource("DIRECT");
+        when(memoryRefDao.listByVersion(50L)).thenReturn(List.of(ref));
+        service.setMemoryDao(mock(MemoryDao.class));
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertNull(vo.getMemoryRefs().get(0).getTitle());
+    }
+
+    @Test
+    void getVersion_skips_titles_when_the_version_has_no_tenant() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO v = versionRow(50L, 2, "APPROVED");
+        v.setTenantId(null);
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(v);
+        AgentMemoryRefDO ref = new AgentMemoryRefDO();
+        ref.setMemoryId(3L);
+        ref.setSource("DIRECT");
+        when(memoryRefDao.listByVersion(50L)).thenReturn(List.of(ref));
+        service.setMemoryDao(mock(MemoryDao.class));
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertNull(vo.getMemoryRefs().get(0).getTitle());
+    }
+
+    @Test
+    void getVersion_skips_titles_when_the_memory_no_longer_exists() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(versionRow(50L, 2, "APPROVED"));
+        AgentMemoryRefDO ref = new AgentMemoryRefDO();
+        ref.setMemoryId(3L);
+        ref.setSource("DIRECT");
+        when(memoryRefDao.listByVersion(50L)).thenReturn(List.of(ref));
+        MemoryDao memoryDao = mock(MemoryDao.class);
+        when(memoryDao.findById(3L)).thenReturn(null);
+        service.setMemoryDao(memoryDao);
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertNull(vo.getMemoryRefs().get(0).getTitle());
+    }
+
+    @Test
+    void getVersion_skips_titles_when_the_memory_has_no_tenant() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(versionRow(50L, 2, "APPROVED"));
+        AgentMemoryRefDO ref = new AgentMemoryRefDO();
+        ref.setMemoryId(3L);
+        ref.setSource("DIRECT");
+        when(memoryRefDao.listByVersion(50L)).thenReturn(List.of(ref));
+        MemoryDao memoryDao = mock(MemoryDao.class);
+        MemoryDO memory = new MemoryDO();
+        memory.setId(3L);
+        memory.setTenantId(null);
+        memory.setTitle("无空间记忆");
+        when(memoryDao.findById(3L)).thenReturn(memory);
+        service.setMemoryDao(memoryDao);
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertNull(vo.getMemoryRefs().get(0).getTitle());
+    }
+
+    @Test
+    void getVersion_has_no_creator_name_without_a_creator_id() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO v = versionRow(50L, 2, "APPROVED");
+        v.setCreatorId(null);
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(v);
+        service.setUserDao(mock(UserDao.class));
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertNull(vo.getCreatorId());
+        assertNull(vo.getCreatorName());
+    }
+
+    @Test
+    void getVersion_has_no_creator_name_when_the_user_is_missing() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO v = versionRow(50L, 2, "APPROVED");
+        v.setCreatorId(7L);
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(v);
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.findById(7L)).thenReturn(null);
+        service.setUserDao(userDao);
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertEquals(Long.valueOf(7L), vo.getCreatorId());
+        assertNull(vo.getCreatorName());
+    }
+
+    @Test
+    void getVersion_falls_back_to_the_username_when_the_nickname_is_null() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO v = versionRow(50L, 2, "APPROVED");
+        v.setCreatorId(7L);
+        when(versionDao.findByAgentAndNo(1L, 2)).thenReturn(v);
+        UserDao userDao = mock(UserDao.class);
+        UserDO user = new UserDO();
+        user.setId(7L);
+        user.setNickname(null);
+        user.setUsername("caihe");
+        when(userDao.findById(7L)).thenReturn(user);
+        service.setUserDao(userDao);
+
+        AgentVersionVO vo = service.getVersion(1L, 2, 100L);
+
+        assertEquals("caihe", vo.getCreatorName());
     }
 
     @Test

@@ -1,5 +1,5 @@
 import { formatDuration } from '../duration';
-import { formatDateTime } from '@/shared/i18n/format';
+import { formatDateTime, formatNumber } from '@/shared/i18n/format';
 import { i18n } from '@/shared/i18n';
 import { runtimeStatusLabel, dispatchExecutionLabel, runtimeEdgeLabel, artifactTypeLabel, subStepName, graphAgentName } from '../runtimeLabels';
 import { useTranslation } from 'react-i18next';
@@ -634,6 +634,12 @@ async function downloadArtifact(artifact: Artifact) {
   link.remove();
 }
 
+function formatFileSize(size: number): string {
+  if (size < 1024) return `${formatNumber(size)} B`;
+  if (size < 1024 * 1024) return `${formatNumber(size / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB`;
+  return `${formatNumber(size / 1024 / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
+}
+
 function ArtifactRows({
   artifacts,
   loading,
@@ -653,31 +659,28 @@ function ArtifactRows({
   return (
     <Space direction="vertical" size={4} style={{ width: '100%' }}>
       {artifacts.map((artifact) => (
-        <Tooltip
-          key={String(artifact.id)}
-          title={t('artifacts.fileSummary', { name: artifact.name, type: artifactTypeLabel(artifact.type), size: artifact.size != null ? t('artifacts.bytes', { size: artifact.size }) : '' })}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
-            <FileTextOutlined aria-hidden="true" style={{ color: 'var(--aw-muted)', flexShrink: 0 }} />
-            <Text
-              style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: 12,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
+        <Tooltip key={String(artifact.id)} title={artifact.name}>
+          <div className="delivery-artifact-row">
+            <FileTextOutlined aria-hidden="true" className="delivery-artifact-icon" />
+            <button
+              type="button"
+              className="delivery-artifact-name"
+              aria-label={t('artifacts.openName', { name: artifact.name })}
+              onClick={() => onPreview(artifact)}
             >
               {basename(artifact.name)}
-            </Text>
+            </button>
+            <span className="delivery-artifact-meta">
+              {artifact.size != null
+                ? t('artifacts.meta', { size: formatFileSize(artifact.size), type: artifactTypeLabel(artifact.type) })
+                : artifactTypeLabel(artifact.type)}
+            </span>
             <Button
               type="text"
               size="small"
               aria-label={t('artifacts.previewName', { name: artifact.name })}
               icon={<EyeOutlined aria-hidden="true" />}
               onClick={() => onPreview(artifact)}
-              style={{ flexShrink: 0 }}
             />
             <Button
               type="text"
@@ -685,7 +688,6 @@ function ArtifactRows({
               aria-label={t('artifacts.downloadName', { name: artifact.name })}
               icon={<DownloadOutlined aria-hidden="true" />}
               onClick={() => void downloadArtifact(artifact)}
-              style={{ flexShrink: 0 }}
             />
           </div>
         </Tooltip>

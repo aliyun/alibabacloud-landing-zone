@@ -86,7 +86,7 @@ describe('platform and about language boundaries', () => {
       http.get('/api/platform/im-channels', () => ok([{ provider, selected: true, enabled: true, appKey: '', robotCode: '', secretConfigured: false, ready: false }])),
       http.get('/api/platform/im-channels/selection', () => ok({ provider, generation: 2, activatedAt: null })),
     );
-    mount(<BrandingConfigPage />); await userEvent.click(screen.getByRole('tab', { name: '消息渠道' }));
+    mount(<BrandingConfigPage />); await userEvent.click(await screen.findByRole('tab', { name: '消息渠道' }));
     const key = await screen.findByLabelText(provider === 'FEISHU' ? 'App ID' : 'AppKey'); await waitFor(() => expect(key).toBeEnabled());
     const secret = screen.getByLabelText('AppSecret'); await userEvent.type(secret, ' raw secret ');
     await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ })); await screen.findByText('请输入 AppKey');
@@ -104,7 +104,7 @@ describe('platform and about language boundaries', () => {
     );
     let payload: unknown;
     server.use(http.put('/api/platform/im-channels/feishu', async ({ request }) => { payload = await request.json(); return ok({ provider: 'FEISHU', enabled: false, appKey: '', robotCode: '', secretConfigured: false, ready: false }); }));
-    mount(<BrandingConfigPage />); await userEvent.click(screen.getByRole('tab', { name: '消息渠道' }));
+    mount(<BrandingConfigPage />); await userEvent.click(await screen.findByRole('tab', { name: '消息渠道' }));
     await waitFor(() => expect(screen.getByLabelText('App ID')).toHaveValue('cli_raw'));
     await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ })); await screen.findByText('请输入 AppSecret');
     await language('en-US'); await screen.findByText('Enter AppSecret');
@@ -183,7 +183,7 @@ describe('platform decorative alert and confirmation icons', () => {
     const rawError = 'raw failure <b>保留</b>';
     server.use(http.get(kind === 'im' ? '/api/platform/im-channels' : '/api/platform/admins', () => HttpResponse.json({ success: false, code: '10500', message: rawError, data: null })));
     mount(kind === 'im' ? <BrandingConfigPage /> : <PlatformAdminPanel />);
-    if (kind === 'im') await userEvent.click(screen.getByRole('tab', { name: '消息渠道' }));
+    if (kind === 'im') await userEvent.click(await screen.findByRole('tab', { name: '消息渠道' }));
     await screen.findByText(rawError);
     for (const locale of ['zh-CN', 'en-US']) {
       await language(locale);

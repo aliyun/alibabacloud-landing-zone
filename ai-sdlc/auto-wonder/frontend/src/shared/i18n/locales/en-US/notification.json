@@ -17,6 +17,7 @@
   "retry": "Retry",
   "empty": "No notifications",
   "details": "Notification details",
+  "viewDetail": "Details",
   "openRelated": "Open related item",
   "noBody": "No body",
   "type": "Notification type",
@@ -24,6 +25,8 @@
   "related": "Related item",
   "unknownRef": "Unknown type",
   "close": "Close",
+  "submittedWorkitem": "Submitted work item",
+  "duplicateWorkitems": "Existing duplicate work items",
   "types": {
     "WORKITEM_ASSIGNED": "Work item assigned",
     "COMMENT_MENTION": "Comment mention",
@@ -50,7 +53,8 @@
     "SCHEDULED_TASK_RUN_TIMED_OUT": "Scheduled task run timed out",
     "SCHEDULED_TASK_RUN_CANCELED": "Scheduled task run canceled",
     "SCHEDULED_TASK_RUN_SKIPPED": "Scheduled task run skipped",
-    "PASSWORD_RESET_BY_ADMIN": "Password reset by admin"
+    "PASSWORD_RESET_BY_ADMIN": "Password reset by admin",
+    "DUPLICATE_INTENT": "Duplicate work item"
   },
   "refs": {
     "WORKITEM": "Work item",
@@ -58,5 +62,28 @@
     "SCHEDULED_TASK_RUN": "Scheduled task run"
   },
   "total_one": "{{count}} notification",
-  "total_other": "{{count}} notifications"
+  "total_other": "{{count}} notifications",
+  "reminders": "New notification",
+  "reminderCount_one": "{{count}} new notification",
+  "reminderCount_other": "{{count}} new notifications",
+  "reminderClose": "Dismiss reminder",
+  "reminderCloseAll": "Dismiss all reminders",
+  "reminderView": "View details",
+  "reminderExpand": "Expand",
+  "reminderCollapse": "Collapse",
+  "reminderDismissesIn_one": "Dismisses in {{count}}s",
+  "reminderDismissesIn_other": "Dismisses in {{count}}s",
+  "reminderPaused_one": "Expiry paused · collapses after {{count}}s of inactivity",
+  "reminderPaused_other": "Expiry paused · collapses after {{count}}s of inactivity",
+  "reminderLoading": "Loading notification…",
+  "reminderLoadFailed": "Could not load the notification",
+  "reminderRetry": "Retry",
+  "browserNotifications": "Browser notifications",
+  "browserPermissionDefault": "Not requested yet. Click to ask your browser.",
+  "browserPermissionGranted": "Notifications are allowed in this browser.",
+  "browserPermissionDenied": "Notifications are blocked. Change this in your browser site settings.",
+  "browserPermissionUnsupported": "Browser notifications are unavailable here. In-app reminders still work.",
+  "enableBrowserNotifications": "Enable browser notifications",
+  "notificationNotFound": "This notification no longer exists",
+  "detailLoadFailed": "Could not load the notification details"
 }

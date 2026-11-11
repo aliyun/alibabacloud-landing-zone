@@ -19,6 +19,15 @@ public class WsDispatchControlTransport implements DispatchControlTransport {
 
     @Override
     public void pause(DispatchDO dispatch) {
+        send(dispatch, false);
+    }
+
+    @Override
+    public void stop(DispatchDO dispatch) {
+        send(dispatch, true);
+    }
+
+    private void send(DispatchDO dispatch, boolean cancel) {
         if (dispatch.getExecutorId() == null) {
             throw new IllegalStateException("pause requires an assigned executor");
         }
@@ -26,6 +35,8 @@ public class WsDispatchControlTransport implements DispatchControlTransport {
         frame.put("type", "TASK_PAUSE");
         frame.put("dispatchId", dispatch.getId());
         frame.put("executorId", dispatch.getExecutorId());
+        // Older runtimes ignore the additive field and retain pause semantics.
+        if (cancel) frame.put("cancel", true);
         String payload = frame.toJSONString();
         ExecutorSession session = sessionRegistry.findByExecutorId(dispatch.getExecutorId());
         try {

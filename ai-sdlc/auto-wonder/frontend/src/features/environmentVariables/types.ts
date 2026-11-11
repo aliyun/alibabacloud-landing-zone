@@ -6,6 +6,8 @@ export interface EnvironmentVariable {
   gmtCreate: string;
   gmtModified: string;
   version: number;
+  onlineMountCount?: number;
+  draftMountCount?: number;
 }
 
 export interface CreateEnvironmentVariableInput {

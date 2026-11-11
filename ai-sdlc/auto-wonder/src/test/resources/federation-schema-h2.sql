@@ -27,12 +27,23 @@ CREATE TABLE IF NOT EXISTS federation_connection (
     subject_claim VARCHAR(128),
     name_claim VARCHAR(128),
     email_claim VARCHAR(128),
+    auto_provision TINYINT NOT NULL DEFAULT 0,
+    feishu_user_id_claim VARCHAR(128),
     allowed_tenants VARCHAR(1024),
     sort_order INT NOT NULL DEFAULT 0,
     gmt_create TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     gmt_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     CONSTRAINT uk_federation_connection_name UNIQUE (name)
+);
+
+CREATE TABLE IF NOT EXISTS platform_auth_config (
+    id BIGINT NOT NULL,
+    registration_enabled TINYINT NOT NULL DEFAULT 1,
+    default_provider_id BIGINT,
+    gmt_create TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
 );
 
 CREATE TABLE IF NOT EXISTS federated_identity (

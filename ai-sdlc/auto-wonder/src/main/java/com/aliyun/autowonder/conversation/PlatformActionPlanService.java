@@ -31,8 +31,8 @@ public class PlatformActionPlanService {
         catch (BizException denied) { return false; }
     }
     public record Action(String tool, Map<String,Object> arguments) {}
-    public record Plan(String id, String actionsJson, String payloadHash, String status, String resultJson, String expiresAt) {}
-    private static final String COLUMNS="id,canonical_payload_json,payload_sha256,status,expires_at";
+    public record Plan(String id, long turnId, String actionsJson, String payloadHash, String status, String resultJson, String expiresAt) {}
+    private static final String COLUMNS="id,turn_id,canonical_payload_json,payload_sha256,status,expires_at";
 
     @Transactional
     public Plan propose(long workspaceId,long userId,long conversationId,List<Action> actions) {
@@ -61,7 +61,7 @@ public class PlatformActionPlanService {
             jdbc.update("INSERT INTO conversation_action_step (tenant_id,plan_id,step_no,tool_name,arguments_json,arguments_sha256,idempotency_key,idempotent,status) VALUES (?,?,?,?,?,?,?,0,'PENDING')",
                     workspaceId,id,++step,action.tool(),args,hash(args),"chief:"+id+":"+step);
         }
-        return publicPlan(new Plan(String.valueOf(id),frozen,hash,"PENDING_CONFIRMATION",null,expires.toInstant().toString()));
+        return publicPlan(new Plan(String.valueOf(id),turn.getId(),frozen,hash,"PENDING_CONFIRMATION",null,expires.toInstant().toString()));
     }
     public List<Plan> list(long workspaceId,long userId,long conversationId) {
         access.requireBodyRead(workspaceId,conversationId,userId);
@@ -72,7 +72,7 @@ public class PlatformActionPlanService {
         jdbc.query("SELECT s.plan_id,s.result_summary_json FROM conversation_action_step s JOIN conversation_action_plan p ON p.id=s.plan_id AND p.tenant_id=s.tenant_id WHERE p.tenant_id=? AND p.workspace_id=? AND p.conversation_id=? AND p.owner_user_id=? AND p.id>=? AND s.result_summary_json IS NOT NULL ORDER BY s.plan_id,s.step_no",
                 (org.springframework.jdbc.core.RowCallbackHandler)row->results.computeIfAbsent(row.getString(1),ignored->new ArrayList<>()).add(JSON.parse(row.getString(2))),
                 workspaceId,workspaceId,conversationId,userId,plans.get(plans.size()-1).id());
-        return plans.stream().map(plan->publicPlan(new Plan(plan.id(),plan.actionsJson(),plan.payloadHash(),plan.status(),
+        return plans.stream().map(plan->publicPlan(new Plan(plan.id(),plan.turnId(),plan.actionsJson(),plan.payloadHash(),plan.status(),
                 results.containsKey(plan.id())?JSON.toJSONString(results.get(plan.id())):null,plan.expiresAt()))).toList();
     }
     public Plan resolve(long workspaceId,long userId,long conversationId,String id,String payloadHash,boolean confirm,
@@ -87,7 +87,7 @@ public class PlatformActionPlanService {
         int consumed=jdbc.update("UPDATE conversation_action_plan SET status=?,approved_by=?,approved_at=CURRENT_TIMESTAMP,consumed_at=CURRENT_TIMESTAMP,version=version+1 WHERE id=? AND tenant_id=? AND workspace_id=? AND conversation_id=? AND owner_user_id=? AND status='PENDING_CONFIRMATION' AND consumed_at IS NULL AND expires_at>CURRENT_TIMESTAMP",
                 confirm?"EXECUTING":"REJECTED",userId,id,workspaceId,workspaceId,conversationId,userId);
         if(consumed!=1) throw BizException.keyed(ErrorCode.CONFLICT,"chief.plan.consumed",null,"Action plan is expired or already consumed");
-        if(!confirm) return publicPlan(new Plan(id,plan.actionsJson(),plan.payloadHash(),"REJECTED",null,plan.expiresAt()));
+        if(!confirm) return publicPlan(new Plan(id,plan.turnId(),plan.actionsJson(),plan.payloadHash(),"REJECTED",null,plan.expiresAt()));
         List<Object> outcomes=new ArrayList<>();String status="SUCCEEDED";int step=0;
         for(Action action:JSON.parseArray(plan.actionsJson(),Action.class)) {
             ++step;
@@ -106,18 +106,18 @@ public class PlatformActionPlanService {
             if(failed) {jdbc.update("UPDATE conversation_action_step SET status='SKIPPED' WHERE plan_id=? AND tenant_id=? AND status='PENDING'",id,workspaceId);break;}
         }
         jdbc.update("UPDATE conversation_action_plan SET status=?,version=version+1 WHERE id=? AND tenant_id=? AND status='EXECUTING'",status,id,workspaceId);
-        return publicPlan(new Plan(id,plan.actionsJson(),plan.payloadHash(),status,JSON.toJSONString(outcomes),plan.expiresAt()));
+        return publicPlan(new Plan(id,plan.turnId(),plan.actionsJson(),plan.payloadHash(),status,JSON.toJSONString(outcomes),plan.expiresAt()));
     }
     private void requireActive(long workspaceId,long userId,long conversationId) {
         var conversation=access.requireBodyWrite(workspaceId,conversationId,userId);
         if(conversation.getArchivedAt()!=null || !"ACTIVE".equals(conversation.getStatus())) throw new BizException(ErrorCode.PLATFORM_CONVERSATION_ARCHIVED);
     }
     private Plan readPlan(ResultSet row,int index)throws SQLException {
-        return new Plan(row.getString(1),row.getString(2),row.getString(3),row.getString(4),null,row.getTimestamp(5).toInstant().toString());
+        return new Plan(row.getString(1),row.getLong(2),row.getString(3),row.getString(4),row.getString(5),null,row.getTimestamp(6).toInstant().toString());
     }
     private static Plan publicPlan(Plan plan) {
         String status=switch(plan.status()){case "PENDING_CONFIRMATION"->Instant.parse(plan.expiresAt()).isBefore(Instant.now())?"EXPIRED":"PENDING";case "SUCCEEDED"->"COMPLETED";case "REJECTED","CANCELED"->"CANCELED";case "PARTIAL_FAILED"->"FAILED";default->plan.status();};
-        return new Plan(plan.id(),PlatformEventProjection.payload("tool",plan.actionsJson()),plan.payloadHash(),status,
+        return new Plan(plan.id(),plan.turnId(),PlatformEventProjection.payload("tool",plan.actionsJson()),plan.payloadHash(),status,
                 PlatformEventProjection.payload("tool",plan.resultJson()),plan.expiresAt());
     }
     private static Object canonical(Object value) {

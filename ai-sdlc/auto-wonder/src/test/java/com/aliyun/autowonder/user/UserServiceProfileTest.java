@@ -35,7 +35,10 @@ class UserServiceProfileTest {
         JwtService jwtService = new JwtService(props);
         service = new UserService(userDao, jwtService, sessionService, props,
                 mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
-                new SessionIssuanceService(jwtService, sessionService, props));
+                new SessionIssuanceService(jwtService, sessionService, props),
+                mock(com.aliyun.autowonder.feature.PlatformFeatureSwitchService.class),
+                mock(WorkspaceCreationPermissionService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class));
     }
 
     private UserDO existingUser() {

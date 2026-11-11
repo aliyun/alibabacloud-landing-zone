@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Button } from 'antd';
+import { Button, Modal } from 'antd';
 import { DownOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { CLARIFICATION_THEME } from '../theme';
 import { elicitationMessage, parseElicitationSchema } from './schemaForm';
@@ -10,6 +10,7 @@ import {
   OTHER_SENTINEL,
   computeElicitationContent,
   isFieldAnswered,
+  unansweredFields,
   validateElicitation,
   type AnswerValues,
   type OtherText,
@@ -17,6 +18,8 @@ import {
 
 const PRIMARY = 'var(--aw-accent-text)';
 const AUTO_ADVANCE_MS = 300;
+/** 跨进最后一题后主按钮的静默期：挡住把「下一题」连点/回车落到刚变成的「提交」上。 */
+const SUBMIT_ARM_MS = 400;
 /** 收起/展开的高度过渡时长，与出现/消失动画同一量级，保持卡片动效风格统一。 */
 const FOLD_MS = 180;
 
@@ -54,7 +57,10 @@ export function ElicitationWizard({
   const [otherText, setOtherText] = useState<OtherText>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, true>>({});
   const [collapsed, setCollapsed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [submitArmed, setSubmitArmed] = useState(true);
   const autoAdvanceTimer = useRef<number | null>(null);
+  const settledStepRef = useRef(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const foldFromHeightRef = useRef<number | null>(null);
 
@@ -62,6 +68,18 @@ export function ElicitationWizard({
     () => () => { if (autoAdvanceTimer.current) window.clearTimeout(autoAdvanceTimer.current); },
     [],
   );
+
+  useEffect(() => {
+    const previous = settledStepRef.current;
+    settledStepRef.current = stepIndex;
+    // 主按钮在「下一题 → 提交」之间原位复用同一个 DOM 节点，焦点和连点会跨步带过去。
+    // 只在跨进最后一题那一帧短暂禁用并移出焦点，其余步进保持原样。
+    if (total === 0 || stepIndex !== total - 1 || previous === stepIndex) return;
+    setSubmitArmed(false);
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const timer = window.setTimeout(() => setSubmitArmed(true), SUBMIT_ARM_MS);
+    return () => window.clearTimeout(timer);
+  }, [stepIndex, total]);
 
   const toggleCollapsed = () => {
     if (!collapsible) return;
@@ -134,6 +152,12 @@ export function ElicitationWizard({
     }, AUTO_ADVANCE_MS);
   };
 
+  const send = () => {
+    setConfirming(false);
+    setFieldErrors({});
+    onReply({ action: 'accept', content: computeElicitationContent(fields, values, otherText) });
+  };
+
   const submit = () => {
     const { errors, firstInvalidIndex } = validateElicitation(fields, values, otherText);
     if (firstInvalidIndex >= 0) {
@@ -141,8 +165,12 @@ export function ElicitationWizard({
       setStepIndex(firstInvalidIndex);
       return;
     }
-    setFieldErrors({});
-    onReply({ action: 'accept', content: computeElicitationContent(fields, values, otherText) });
+    // 必答项齐了但仍有可选题没答：先让用户确认真要按现有答案提交，不静默丢弃。
+    if (unansweredFields(fields, values, otherText).length > 0) {
+      setConfirming(true);
+      return;
+    }
+    send();
   };
 
   const goNext = () => {
@@ -323,7 +351,7 @@ export function ElicitationWizard({
           <Button
             type="primary"
             size="small"
-            disabled={submitting}
+            disabled={submitting || !submitArmed}
             data-testid={`elicitation-submit-${requestId}`}
             onClick={submit}
             style={{ marginLeft: 'auto' }}
@@ -345,6 +373,41 @@ export function ElicitationWizard({
       </div>
       </>
       )}
+
+      <Modal
+        open={confirming}
+        title={t('clarification.unansweredTitle')}
+        onCancel={() => setConfirming(false)}
+        centered
+        footer={[
+          <Button
+            key="cancel"
+            size="small"
+            data-testid={`elicitation-confirm-cancel-${requestId}`}
+            onClick={() => setConfirming(false)}
+          >
+            {t('clarification.cancel')}
+          </Button>,
+          <Button
+            key="submit"
+            type="primary"
+            size="small"
+            data-testid={`elicitation-confirm-submit-${requestId}`}
+            onClick={send}
+          >
+            {t('clarification.submit')}
+          </Button>,
+        ]}
+      >
+        <div data-testid={`elicitation-unanswered-${requestId}`}>
+          <div style={{ marginBottom: 8 }}>{t('clarification.unansweredBody')}</div>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {unansweredFields(fields, values, otherText).map((item) => (
+              <li key={item.name}>{item.label}</li>
+            ))}
+          </ul>
+        </div>
+      </Modal>
     </div>
   );
 }

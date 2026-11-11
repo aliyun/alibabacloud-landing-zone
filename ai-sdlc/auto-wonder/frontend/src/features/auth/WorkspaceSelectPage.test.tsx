@@ -50,7 +50,7 @@ function renderPage() {
 
 function LocationProbe() {
   const location = useLocation();
-  return <span data-testid="location-path">{location.pathname}</span>;
+  return <span data-testid="location-path">{`${location.pathname}${location.search}`}</span>;
 }
 
 // jsdom has no layout, so EllipsisText cannot detect truncation on its own. These prototype
@@ -684,6 +684,57 @@ describe('WorkspaceSelectPage', () => {
     }
   });
 
+  it('returns to the saved in-site target after choosing a workspace', async () => {
+    const user = userEvent.setup();
+    mockMine([{ ...MANAGEABLE_WORKSPACE, id: 2, name: '目标空间' }]);
+    server.use(http.post('/api/workspaces/2/switch', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null,
+      data: { accessToken: 'token-2', accessLevel: 'READ_WRITE' },
+    })));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/workspaces?returnTo=%2Fworkitems%2F42%3Ftab%3Ddiscussion']}>
+          <WorkspaceSelectPage />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByTestId('workspace-card-2'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/workitems/42?tab=discussion');
+    });
+  });
+
+  it.each(['%2F%2Fevil.example.com%2Fsteal', '%2Flogin'])(
+    'ignores an unsafe return target %s and falls back to the default page',
+    async (returnTo) => {
+      const user = userEvent.setup();
+      mockMine([{ ...MANAGEABLE_WORKSPACE, id: 2, name: '目标空间' }]);
+      server.use(http.post('/api/workspaces/2/switch', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { accessToken: 'token-2', accessLevel: 'READ_WRITE' },
+      })));
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={[`/workspaces?returnTo=${returnTo}`]}>
+            <WorkspaceSelectPage />
+            <LocationProbe />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+
+      await user.click(await screen.findByTestId('workspace-card-2'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/$/);
+      });
+    },
+  );
+
   it('switches to a deep-linked workspace and returns to the allowed channel route', async () => {
     mockMine([MANAGEABLE_WORKSPACE, { ...MANAGEABLE_WORKSPACE, id: 2, name: '目标空间' }]);
     let switched = 0;
@@ -754,6 +805,135 @@ describe('WorkspaceSelectPage', () => {
       .toBeInTheDocument();
     expect(switched).toBe(0);
     expect(screen.getByTestId('location-path')).toHaveTextContent('/workspaces');
+  });
+  it('shows the denied dialog with contacts when the server revokes permission at submit time', async () => {
+    useAuthStore.getState().setUser({
+      id: 5, username: 'applicant', nickname: '阿杰', email: 'jie@example.com',
+    });
+    mockMine([MANAGEABLE_WORKSPACE]);
+    server.use(
+      http.get('/api/workspaces/creation-requests/me', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { canCreate: true, pending: false, administratorContacts: null },
+      })),
+      http.post('/api/workspaces', () => HttpResponse.json({
+        success: false,
+        code: '37015',
+        message: '无权限创建空间，请联系平台管理员开启',
+        data: { administratorContacts: [{ nickname: '周宁', email: 'zhou@example.com' }] },
+        traceId: null,
+      })),
+    );
+    renderPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByTestId('workspace-create-card'));
+    await user.type(await screen.findByLabelText('工作空间名称'), '新空间');
+    await user.click(screen.getByRole('button', { name: buttonName('创建') }));
+
+    expect(await screen.findByText('无权限创建空间，请联系平台管理员开启')).toBeInTheDocument();
+    expect(screen.getByText('zhou@example.com')).toBeInTheDocument();
+  });
+
+  it('degrades to the generic denied copy when the contact probe fails', async () => {
+    useAuthStore.getState().setUser({
+      id: 5, username: 'applicant', nickname: '阿杰', email: 'jie@example.com',
+    });
+    mockMine([MANAGEABLE_WORKSPACE]);
+    server.use(
+      http.get('/api/workspaces/creation-requests/me', ({ request }) => {
+        const includeContacts = new URL(request.url).searchParams
+          .get('includeAdministratorContacts') === 'true';
+        if (includeContacts) {
+          return HttpResponse.json({
+            success: false, code: '10000', message: 'boom', data: null, traceId: null,
+          });
+        }
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { canCreate: false, pending: false, administratorContacts: null },
+        });
+      }),
+    );
+    renderPage();
+
+    await userEvent.click(await screen.findByTestId('workspace-create-card'));
+
+    expect(await screen.findByText('无权限创建空间，请联系平台管理员开启')).toBeInTheDocument();
+    expect(screen.getByText('暂无可用平台管理员，请联系平台管理员处理。')).toBeInTheDocument();
+  });
+
+  it('keeps the request button disabled and reports a failed request', async () => {
+    useAuthStore.getState().setUser({
+      id: 5, username: 'applicant', nickname: '阿杰', email: 'jie@example.com',
+    });
+    mockMine([MANAGEABLE_WORKSPACE]);
+    server.use(
+      http.get('/api/workspaces/creation-requests/me', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { canCreate: false, pending: false, administratorContacts: null },
+      })),
+      http.post('/api/workspaces/creation-requests', () => HttpResponse.json({
+        success: false, code: '10000', message: '申请失败', data: null, traceId: null,
+      })),
+    );
+    renderPage();
+
+    const requestButton = await screen.findByTestId('workspace-request-permission');
+    await userEvent.click(requestButton);
+
+    await waitFor(() => expect(screen.getByTestId('workspace-request-permission')).toHaveTextContent('申请权限'));
+    expect(screen.getByTestId('workspace-request-permission')).toBeEnabled();
+  });
+
+  it('shows the creation denied dialog with administrator contacts and marks the request as requested', async () => {
+    useAuthStore.getState().setUser({
+      id: 5, username: 'applicant', nickname: '阿杰', email: 'jie@example.com',
+    });
+    mockMine([]);
+    let requested = false;
+    server.use(
+      http.get('/api/workspaces/creation-requests/me', ({ request }) => {
+        const includeContacts = new URL(request.url).searchParams
+          .get('includeAdministratorContacts') === 'true';
+        return HttpResponse.json({
+          success: true,
+          code: '0',
+          message: '',
+          traceId: null,
+          data: {
+            canCreate: false,
+            pending: requested,
+            administratorContacts: includeContacts
+              ? [{ nickname: '周宁', email: 'zhou@example.com' }]
+              : null,
+          },
+        });
+      }),
+      http.post('/api/workspaces/creation-requests', () => {
+        requested = true;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { canCreate: false, pending: true, administratorContacts: null },
+        });
+      }),
+    );
+    renderPage();
+
+    await userEvent.click(await screen.findByTestId('workspace-create-card'));
+
+    expect(await screen.findByText('无权限创建空间，请联系平台管理员开启')).toBeInTheDocument();
+    expect(screen.getByText('zhou@example.com')).toBeInTheDocument();
+    const requestButton = await screen.findByTestId('workspace-request-permission');
+    expect(requestButton).toHaveTextContent('申请权限');
+    expect(screen.getByTestId('workspace-create-card').parentElement).toContainElement(requestButton);
+    const dialog = screen.getByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /申请权限/ }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-request-permission')).toHaveTextContent('已申请'));
+    expect(screen.getByTestId('workspace-request-permission')).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /已申请/ })).toBeDisabled();
   });
 
 });

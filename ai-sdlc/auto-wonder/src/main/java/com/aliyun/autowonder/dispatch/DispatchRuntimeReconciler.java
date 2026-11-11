@@ -170,6 +170,10 @@ public class DispatchRuntimeReconciler {
                         if (replacement != null) {
                             dispatchService.recordRuntimeRecoveryEvent(row, replacement);
                         }
+                    } else if (!current.runningDispatchIds().contains(row.getId())
+                            && recovery.holdUndeliveredCompletion(row, expectedSessionId)) {
+                        log.info("held undelivered terminal execution dispatchId={} executorId={}",
+                                row.getId(), executorId);
                     }
                 } catch (RuntimeException e) {
                     log.warn("runtime abandoned execution recovery failed dispatchId={} executorId={}",

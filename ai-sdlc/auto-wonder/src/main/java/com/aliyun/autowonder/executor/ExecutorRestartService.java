@@ -59,7 +59,7 @@ public class ExecutorRestartService {
                 "executor.config.version_required", null, "缺少启动配置版本号");
         var config = launchConfigs.requireCompleteConfig(id, tenantId, version);
         JSONObject launch = new JSONObject(true);
-        String targetVersion = config.runtimeVersion == null ? presence.currentVersion(id) : config.runtimeVersion;
+        String targetVersion = Boolean.TRUE.equals(config.runtimeVersionPinned) ? config.runtimeVersion : presence.currentVersion(id);
         launch.put("runtimeVersion", targetVersion == null || targetVersion.isBlank() ? branding.recommendedRuntimeVersion() : targetVersion);
         launch.put("workspaceRoot", config.workspaceRoot);
         launch.put("daemonName", config.daemonName);

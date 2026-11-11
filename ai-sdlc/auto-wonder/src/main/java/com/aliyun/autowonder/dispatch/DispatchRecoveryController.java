@@ -23,6 +23,14 @@ public class DispatchRecoveryController {
 
     @org.springframework.beans.factory.annotation.Autowired
     private DispatchRecoveryService recoveryService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private LatestWorkflowRestartService latestWorkflowRestart;
+
+    @PostMapping("/{workitemId}/dispatches/{dispatchId}/restart-latest")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "按最新流程重启交付", actionKey = "access.action.restart_latest_workflow")
+    public Result<Map<String, Object>> restartLatest(@PathVariable long workitemId, @PathVariable long dispatchId) {
+        return Result.ok(latestWorkflowRestart.restart(currentWorkspaceId(), workitemId, dispatchId, currentUserId()));
+    }
 
     @GetMapping("/{workitemId}/recovery")
     public Result<Map<String, Object>> recovery(@PathVariable long workitemId) {

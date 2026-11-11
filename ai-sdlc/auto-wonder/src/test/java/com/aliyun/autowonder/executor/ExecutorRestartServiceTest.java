@@ -226,6 +226,7 @@ class ExecutorRestartServiceTest {
     @Test void appliesOnlySavedConfigurationAndConfirmsTheExactVersionAfterRestart() {
         var config = new ExecutorLaunchConfigService.LaunchConfig();
         config.runtimeVersion = "0.3.9";
+        config.runtimeVersionPinned = true;
         config.workspaceRoot = "/data/new workspace";
         config.memoryMode = "platform";
         config.maxConcurrentDispatches = 3;
@@ -249,6 +250,18 @@ class ExecutorRestartServiceTest {
         assertEquals("REQUESTED", service.status(7).getString("status"));
         hb.put("version", "0.3.9"); service.onHeartbeat(session, hb);
         assertEquals("COMPLETED", service.status(7).getString("status"));
+    }
+
+    @Test void historicalVersionWithoutAnExplicitPinDoesNotOverrideTheRunningVersion() {
+        var config = new ExecutorLaunchConfigService.LaunchConfig();
+        config.runtimeVersion = "0.3.9";
+        config.memoryMode = "platform";
+        when(launchConfigs.requireCompleteConfig(7L, 1L, 9)).thenReturn(config);
+        when(presence.currentVersion(7L)).thenReturn("0.3.35");
+        service.applyLaunchCommand(7, 1, 3, 9);
+        var payload = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(redis).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+        assertEquals("0.3.35", JSONObject.parseObject(payload.getValue()).getJSONObject("launch").getString("runtimeVersion"));
     }
 
     @Test void staleConfigurationAndLegacyClientsCannotApplyCommands() {

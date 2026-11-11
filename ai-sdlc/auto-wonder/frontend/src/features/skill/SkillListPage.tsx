@@ -131,6 +131,7 @@ export function SkillListPage() {
   const [form] = Form.useForm();
   useLocalizedValidation(form);
   const selectedType = Form.useWatch('type', form);
+  const isRuntimeHook = selectedType === 'HOOK';
 
   const [packageFiles, setPackageFiles] = useState<SkillPackageFile[]>([]);
   const [packageFilesLoading, setPackageFilesLoading] = useState(false);
@@ -1175,6 +1176,23 @@ export function SkillListPage() {
             }}
               options={creatableTypeOptions} />
           </Form.Item>
+          {isRuntimeHook && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={t('hookGuide.title')}
+              description={
+                <Space direction="vertical" size={4}>
+                  <span>{t('hookGuide.setup')}</span>
+                  <span>{t('hookGuide.examples')}</span>
+                  <a href="/help?chapter=runtime-hooks" target="_blank" rel="noopener noreferrer">{t('hookGuide.templates')}</a>
+                  <span>{t('hookGuide.qoderHint')}</span>
+                  <a href="https://docs.qoder.com/cli/hooks" target="_blank" rel="noopener noreferrer">{t('hookGuide.qoderDocs')}</a>
+                </Space>
+              }
+            />
+          )}
           {(selectedType === 'SKILL' || selectedType === 'PLUGIN' || selectedType === 'HOOK') && (
             <Form.Item label={t('access.label')}>
               <Radio.Group

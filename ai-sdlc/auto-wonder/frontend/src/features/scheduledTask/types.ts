@@ -120,6 +120,8 @@ export interface ScheduledRunMentionCandidate {
   isAgent?: boolean;
   online?: boolean;
   executorStatus?: string | null;
+  squadName?: string | null;
+  currentSquad?: boolean | null;
   mentionable?: boolean;
   mentionDisabledReason?: string | null;
   mentionDisabledReasonCode?: string | null;

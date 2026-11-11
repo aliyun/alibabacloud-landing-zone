@@ -7,12 +7,14 @@ import com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest;
 import com.aliyun.autowonder.im.dto.UserImIdentityVO;
 import com.aliyun.autowonder.user.dto.AdminResetPasswordRequest;
 import com.aliyun.autowonder.user.dto.DeactivationRequest;
+import com.aliyun.autowonder.user.dto.RegistrationReviewRequest;
 import com.aliyun.autowonder.user.dto.UpdateProfileRequest;
 import com.aliyun.autowonder.user.dto.UserAdminListVO;
 import com.aliyun.autowonder.user.dto.UserAdminUserVO;
 import com.aliyun.autowonder.user.dto.UserAdminWorkspaceVO;
 import com.aliyun.autowonder.user.dto.UserWorkspaceAddRequest;
 import com.aliyun.autowonder.user.dto.UserWorkspaceLevelRequest;
+import com.aliyun.autowonder.user.dto.WorkspaceCreationPermissionRequest;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,10 +53,11 @@ public class UserAdminController {
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "canCreateWorkspace", required = false) Boolean canCreateWorkspace,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         requireAdmin();
-        return Result.ok(userAdminService.page(keyword, status, type, page, size));
+        return Result.ok(userAdminService.page(keyword, status, type, canCreateWorkspace, page, size));
     }
 
     @GetMapping("/{id}")
@@ -91,6 +94,26 @@ public class UserAdminController {
         requireAdmin();
         userAdminService.restore(id, currentUserId());
         return Result.ok(null);
+    }
+
+    /** 自助注册审核：通过转为正常状态，拒绝复用逻辑删除。仅平台管理员可调用。 */
+    @PostMapping("/{id}/registration-review")
+    public Result<UserAdminUserVO> reviewRegistration(
+            @PathVariable("id") Long id,
+            @RequestBody(required = false) RegistrationReviewRequest req) {
+        requireAdmin();
+        return Result.ok(userAdminService.reviewRegistration(
+                id, req == null ? null : req.getDecision(), currentUserId()));
+    }
+
+    /** 平台级个人空间创建授权；全局开关开启时服务端拒绝修改。 */
+    @PutMapping("/{id}/workspace-creation-permission")
+    public Result<UserAdminUserVO> updateWorkspaceCreationPermission(
+            @PathVariable("id") Long id,
+            @RequestBody(required = false) WorkspaceCreationPermissionRequest req) {
+        requireAdmin();
+        return Result.ok(userAdminService.updateWorkspaceCreationPermission(
+                id, req == null ? null : req.getAllowed(), currentUserId()));
     }
 
     @GetMapping("/{id}/workspaces")

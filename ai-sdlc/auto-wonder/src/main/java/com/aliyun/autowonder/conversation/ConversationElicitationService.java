@@ -197,7 +197,7 @@ public class ConversationElicitationService {
                     "only the original message sender may answer this question");
         }
         if (Integer.valueOf(1).equals(record.getAnswerProtocolVersion()) && answerDeliveryService != null) {
-            String normalized = normalizeReply(action, answerJson);
+            String normalized = normalizeReply(record.getSchemaJson(), action, answerJson);
             answerDeliveryService.submit(tenantId, conversationId, requestId, action, normalized);
             return;
         }
@@ -205,7 +205,7 @@ public class ConversationElicitationService {
             throw BizException.keyed(ErrorCode.CONFLICT, "conversation.elicitation_settled",
                     new Object[]{record.getStatus()}, "elicitation already settled: " + record.getStatus());
         }
-        String normalizedAnswer = normalizeReply(action, answerJson);
+        String normalizedAnswer = normalizeReply(record.getSchemaJson(), action, answerJson);
         AgentConversationDO conv = requireOnlineConversation(tenantId, conversationId);
 
         String status = ACTION_ACCEPT.equals(action) ? STATUS_ANSWERED : STATUS_DECLINED;
@@ -269,8 +269,11 @@ public class ConversationElicitationService {
     /**
      * 校验并归一化回答载荷。decline 一律不带答案 —— 用户点的是「跳过」，
      * 界面上残留的表单内容不该被当成答案交给 Agent。
+     *
+     * <p>accept 还要按卡片自身的 schema 兜底：只挡 required 的前端仍可能把部分
+     * 答案当完整答案发上来，落终态前必须以声明字段复核，否则数字人拿着残卷继续执行。
      */
-    private String normalizeReply(String action, String answerJson) {
+    private String normalizeReply(String schemaJson, String action, String answerJson) {
         if (ACTION_DECLINE.equals(action)) {
             return null;
         }
@@ -292,6 +295,7 @@ public class ConversationElicitationService {
         if (!(parsed instanceof JSONObject)) {
             throw BizException.keyed(ErrorCode.PARAM_INVALID, "conversation.elicitation_answer_object", null, "elicitation answer must be a JSON object");
         }
+        ElicitationAnswerValidator.validate(schemaJson, (JSONObject) parsed);
         return answerJson;
     }
 

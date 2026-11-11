@@ -155,7 +155,7 @@ describe('SdlcDetailPage', () => {
     );
     renderPage();
     expect(await screen.findByText('已上线流程')).toBeInTheDocument();
-    expect(screen.getByText(/模版已启用/)).toBeInTheDocument();
+    expect(screen.getByText(/流程已启用/)).toBeInTheDocument();
     expect(screen.getByText('已启用')).toBeInTheDocument();
     expect(screen.queryByText('ENABLED')).not.toBeInTheDocument();
   });

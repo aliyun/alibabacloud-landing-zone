@@ -15,9 +15,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -126,13 +129,16 @@ class NotificationControllerTest {
     }
 
     @Test
-    void listWithoutWorkspaceContextNeverFallsBackToACrossTenantQuery() {
+    void listWithoutWorkspaceContextQueriesOnlyPlatformScope() {
         AutoWonderContext.get().setCurrentWorkspaceId(null);
+        when(notificationDao.listByRecipient(null, USER_ID, null, 0, 10)).thenReturn(List.of());
+        when(notificationDao.countByRecipient(null, USER_ID, null)).thenReturn(0);
 
-        BizException ex = assertThrows(BizException.class,
-                () -> controller.list(null, 1, 10));
+        controller.list(null, 1, 10);
 
-        assertEquals(ErrorCode.WORKSPACE_NOT_MEMBER.getCode(), ex.getCode());
+        // 无空间时不下发跨租户查询，只按本人可见的平台范围查询（DAO 内部过滤 scope）。
+        verify(notificationDao).listByRecipient(null, USER_ID, null, 0, 10);
+        verify(notificationDao).countByRecipient(null, USER_ID, null);
     }
 
     @Test
@@ -153,13 +159,104 @@ class NotificationControllerTest {
     }
 
     @Test
-    void deleteWithoutWorkspaceContextRejects() {
+    void deleteWithoutWorkspaceContextStillScopesToTheRecipient() {
         AutoWonderContext.get().setCurrentWorkspaceId(null);
 
-        BizException ex = assertThrows(BizException.class,
-                () -> controller.delete(77L));
+        controller.delete(77L);
 
-        assertEquals(ErrorCode.WORKSPACE_NOT_MEMBER.getCode(), ex.getCode());
+        // 归属条件始终包含 recipient_id；tenantId 为空时只能命中本人可见的平台通知。
+        verify(notifyService).delete(77L, null, USER_ID);
+    }
+
+    @Test
+    void detailReturnsTheNotificationOwnedByTheCurrentRecipient() {
+        NotificationDO record = notification(31L, "UNREAD");
+        record.setTitle("工单有新评论");
+        record.setContent("请查看评论");
+        when(notificationDao.findByIdAndRecipient(31L, WORKSPACE_ID, USER_ID)).thenReturn(record);
+
+        NotificationVO vo = controller.detail(31L).getData();
+
+        assertEquals(31L, vo.getId());
+        assertEquals("工单有新评论", vo.getTitle());
+        assertEquals("请查看评论", vo.getContent());
+        verify(notificationDao).findByIdAndRecipient(31L, WORKSPACE_ID, USER_ID);
+    }
+
+    @Test
+    void detailMapsRelatedLinksFromPersistedJson() {
+        NotificationDO record = notification(31L, "UNREAD");
+        record.setRelatedLinksJson(
+                "[{\"kind\":\"SUBMITTED\",\"title\":\"新工单\",\"url\":\"/workitems/55?workspaceId=10002\"}]");
+        when(notificationDao.findByIdAndRecipient(31L, WORKSPACE_ID, USER_ID)).thenReturn(record);
+
+        NotificationVO vo = controller.detail(31L).getData();
+
+        assertEquals(List.of(new NotificationLink("SUBMITTED", "新工单", "/workitems/55?workspaceId=10002")),
+                vo.getRelatedLinks());
+    }
+
+    @Test
+    void listMapsRelatedLinksForDuplicateNotifications() {
+        NotificationDO record = notification(32L, "UNREAD");
+        record.setType("DUPLICATE_INTENT");
+        record.setRelatedLinksJson("[{\"kind\":\"SUBMITTED\",\"title\":\"新\",\"url\":\"/workitems/55?workspaceId=10002\"},"
+                + "{\"kind\":\"DUPLICATE\",\"title\":\"旧\",\"url\":\"/workitems/2?workspaceId=10002\"}]");
+        when(notificationDao.listByRecipient(WORKSPACE_ID, USER_ID, null, 0, 10)).thenReturn(List.of(record));
+        when(notificationDao.countByRecipient(WORKSPACE_ID, USER_ID, null)).thenReturn(1);
+
+        NotificationVO vo = controller.list(null, 1, 10).getData().getItems().get(0);
+
+        assertEquals(2, vo.getRelatedLinks().size());
+        assertEquals("DUPLICATE", vo.getRelatedLinks().get(1).kind());
+    }
+
+    @Test
+    void legacyNotificationsWithoutASnapshotExposeNoLinks() {
+        for (String stored : new String[]{null, "   "}) {
+            NotificationDO record = notification(33L, "UNREAD");
+            record.setRelatedLinksJson(stored);
+            when(notificationDao.findByIdAndRecipient(33L, WORKSPACE_ID, USER_ID)).thenReturn(record);
+
+            assertNull(controller.detail(33L).getData().getRelatedLinks());
+        }
+    }
+
+    @Test
+    void detailHidesDeletedForeignOrUnknownNotificationsBehindNotFound() {
+        when(notificationDao.findByIdAndRecipient(404L, WORKSPACE_ID, USER_ID)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class, () -> controller.detail(404L));
+
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), ex.getCode());
+    }
+
+    @Test
+    void detailRejectsNonPositiveIdWithoutQueryingTheDao() {
+        BizException ex = assertThrows(BizException.class, () -> controller.detail(0L));
+
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), ex.getCode());
+        verify(notificationDao, never()).findByIdAndRecipient(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void detailWithoutUserContextRejects() {
+        AutoWonderContext.get().setUserId(null);
+
+        BizException ex = assertThrows(BizException.class, () -> controller.detail(1L));
+
+        assertEquals(ErrorCode.UNAUTHORIZED.getCode(), ex.getCode());
+    }
+
+    @Test
+    void detailWithoutWorkspaceContextOnlyReadsPlatformScopeAndHidesExistence() {
+        AutoWonderContext.get().setCurrentWorkspaceId(null);
+        when(notificationDao.findByIdAndRecipient(1L, null, USER_ID)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class, () -> controller.detail(1L));
+
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), ex.getCode());
+        verify(notificationDao).findByIdAndRecipient(1L, null, USER_ID);
     }
 
     private NotificationDO notification(long id, String status) {

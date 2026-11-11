@@ -29,6 +29,10 @@ export interface WorkitemQuery {
   creatorIds?: string;
   /** 标签逻辑条件：JSON 数组字符串，条件之间 AND。 */
   tagConditions?: string;
+  /** 交付小队高级筛选：小队 id 的逗号分隔列表；与 unassignedSquad 互斥。 */
+  squadIds?: string;
+  /** 仅筛选「未归属小队」；与 squadIds 互斥。 */
+  unassignedSquad?: boolean;
 }
 
 export interface CreateWorkitemParams {
@@ -168,9 +172,19 @@ export async function syncExternalWorkitem(workitemId: number | string): Promise
   return resp.data;
 }
 
-export async function getUnifiedTimeline(workitemId: number | string): Promise<TimelineItem[]> {
-  const resp = await apiClient.get<TimelineItem[]>(`/api/workitems/${workitemId}/unified-timeline`);
-  return resp.data;
+export interface TimelineWindow {
+  items: TimelineItem[];
+  hasMore: boolean;
+}
+
+export async function getUnifiedTimeline(workitemId: number | string, page = 0): Promise<TimelineWindow> {
+  const resp = await apiClient.get<TimelineItem[]>(`/api/workitems/${workitemId}/unified-timeline/window`, { params: { page } });
+  return {
+    items: resp.data,
+    // Older servers omit the header and still include a lookahead row.
+    hasMore: resp.headers['x-timeline-has-more'] === undefined
+      ? resp.data.length > 50 : resp.headers['x-timeline-has-more'] === 'true',
+  };
 }
 
 export async function getParticipants(workitemId: number | string): Promise<Participant[]> {
@@ -264,6 +278,13 @@ export async function getRuntimeTraceContext(dispatchId: number | string, conten
 export async function continueDispatch(workitemId: number | string, dispatchId: number | string): Promise<{ dispatchId: number; attempt: number; status: string }> {
   const resp = await apiClient.post<{ dispatchId: number; attempt: number; status: string }>(
     `/api/workitems/${workitemId}/dispatches/${dispatchId}/continue`,
+  );
+  return resp.data;
+}
+
+export async function restartLatestWorkflow(workitemId: number | string, dispatchId: number | string): Promise<{ restartRound: number; status: string }> {
+  const resp = await apiClient.post<{ restartRound: number; status: string }>(
+    `/api/workitems/${workitemId}/dispatches/${dispatchId}/restart-latest`,
   );
   return resp.data;
 }
@@ -393,17 +414,21 @@ export async function getDispatchLiveActivity(
   dispatchId: number | string,
   afterSeq?: number | null,
   limit?: number | null,
+  options?: { background?: boolean },
 ): Promise<DispatchLiveActivity> {
   const params: Record<string, unknown> = {};
   if (afterSeq != null) params.afterSeq = afterSeq;
   if (limit != null) params.limit = limit;
-  const resp = await apiClient.get<DispatchLiveActivity>(`/api/dispatches/${dispatchId}/live-activity`, { params });
+  const resp = await apiClient.get<DispatchLiveActivity>(
+    `/api/dispatches/${dispatchId}/live-activity`,
+    { params, backgroundActivity: options?.background },
+  );
   return resp.data;
 }
 
-export async function getRuntimeLog(dispatchId: number, afterSeq?: number | null, signal?: AbortSignal): Promise<RuntimeTrace> {
-  const resp = await apiClient.get<RuntimeTrace>(`/api/dispatches/${dispatchId}/runtime-trace/events`, {
-    params: afterSeq == null ? undefined : { afterSeq }, signal,
+export async function getRuntimeLog(dispatchId: number, afterSeq?: number | null, signal?: AbortSignal, beforeId?: number): Promise<RuntimeTrace & { nextBeforeId?: number }> {
+  const resp = await apiClient.get<RuntimeTrace & { nextBeforeId?: number }>(`/api/dispatches/${dispatchId}/runtime-trace/events/window`, {
+    params: { afterSeq, beforeId }, signal,
   });
   return resp.data;
 }
@@ -417,4 +442,45 @@ export async function getDispatchGuidance(dispatchId: number): Promise<DispatchG
 }
 export async function sendDispatchGuidance(dispatchId: number, content: string, requestKey: string): Promise<DispatchGuidance[]> {
   return (await apiClient.post<DispatchGuidance[]>(`/api/dispatches/${dispatchId}/guidance`, { content, requestKey })).data;
+}
+
+/** 一条重复命中：标题同名或同意图。 */
+export interface DuplicateMatch {
+  id: number;
+  title: string;
+  statusName?: string | null;
+  statusCategory?: string | null;
+  url?: string | null;
+  matchType: 'EXACT_TITLE' | 'SAME_INTENT' | string;
+}
+
+export interface DuplicateCheckParams {
+  title: string;
+  excludeWorkitemId?: number | string;
+  formRequestId?: string;
+  page?: number;
+  size?: number;
+}
+
+/** 预检结果：同名同步就绪，同意图异步就绪。 */
+export interface DuplicateCheckResult {
+  checkId?: number | null;
+  title: string;
+  exactMatches: DuplicateMatch[];
+  exactTotal: number;
+  exactTruncated: boolean;
+  intentEnabled: boolean;
+  intentStatus?: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELED' | 'SKIPPED' | null;
+  intentMatches: DuplicateMatch[];
+  intentPartial: boolean;
+}
+
+export async function checkWorkitemDuplicates(params: DuplicateCheckParams): Promise<DuplicateCheckResult> {
+  const resp = await apiClient.post<DuplicateCheckResult>('/api/workitems/duplicate-checks', params);
+  return resp.data;
+}
+
+export async function getWorkitemDuplicateCheck(checkId: number): Promise<DuplicateCheckResult> {
+  const resp = await apiClient.get<DuplicateCheckResult>(`/api/workitems/duplicate-checks/${checkId}`);
+  return resp.data;
 }

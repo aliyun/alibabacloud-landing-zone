@@ -9,7 +9,7 @@
 
 .aw-apply-access-button {
   margin-top: 18px;
-  align-self: flex-start;
+  align-self: flex-end;
   border: 1px solid var(--aw-accent-text);
   background: var(--aw-panel);
   color: var(--aw-accent-text);
@@ -36,6 +36,13 @@
 .aw-apply-access-button:focus-visible {
   outline: 2px solid var(--aw-accent-text);
   outline-offset: 2px;
+}
+
+.aw-apply-access-button:disabled {
+  border-color: var(--aw-border);
+  background: var(--aw-panel);
+  color: var(--aw-muted);
+  cursor: not-allowed;
 }
 
 /* The management area is a sibling of the enter button (F1.2), never nested inside it, so it

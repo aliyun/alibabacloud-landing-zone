@@ -23,7 +23,8 @@ class WebSocketConfigTest {
         RedisManager redisManager = mock(RedisManager.class);
         Jedis scheduledRunJedis = blockingPatternSubscriber("scheduled-run:*");
         Jedis dispatchJedis = blockingPatternSubscriber("dispatch:*");
-        JedisPool pool = subscriberPool(scheduledRunJedis, dispatchJedis);
+        Jedis notificationJedis = blockingPatternSubscriber("notification:*");
+        JedisPool pool = subscriberPool(scheduledRunJedis, dispatchJedis, notificationJedis);
         when(redisManager.getJedisPool()).thenReturn(pool);
 
         WebSocketConfig config = new WebSocketConfig(redisManager,
@@ -43,8 +44,9 @@ class WebSocketConfigTest {
         RedisManager redisManager = mock(RedisManager.class);
         Jedis scheduledRunJedis = blockingPatternSubscriber("scheduled-run:*");
         Jedis dispatchJedis = blockingPatternSubscriber("dispatch:*");
+        Jedis notificationJedis = blockingPatternSubscriber("notification:*");
         BrowserRealtimeSubscriberManager subscriberManager = mock(BrowserRealtimeSubscriberManager.class);
-        JedisPool pool = subscriberPool(scheduledRunJedis, dispatchJedis);
+        JedisPool pool = subscriberPool(scheduledRunJedis, dispatchJedis, notificationJedis);
         when(redisManager.getJedisPool()).thenReturn(pool);
 
         WebSocketConfig config = new WebSocketConfig(redisManager,
@@ -63,7 +65,36 @@ class WebSocketConfigTest {
         }
     }
 
-    private static JedisPool subscriberPool(Jedis scheduledRunJedis, Jedis dispatchJedis) {
+    @Test
+    void notificationSubscriberRelaysRecipientScopedEventsToTheirBrowserChannel() {
+        RedisManager redisManager = mock(RedisManager.class);
+        Jedis scheduledRunJedis = blockingPatternSubscriber("scheduled-run:*");
+        Jedis dispatchJedis = blockingPatternSubscriber("dispatch:*");
+        Jedis notificationJedis = blockingPatternSubscriber("notification:*");
+        BrowserRealtimeSubscriberManager subscriberManager = mock(BrowserRealtimeSubscriberManager.class);
+        JedisPool pool = subscriberPool(scheduledRunJedis, dispatchJedis, notificationJedis);
+        when(redisManager.getJedisPool()).thenReturn(pool);
+
+        WebSocketConfig config = new WebSocketConfig(redisManager,
+                mock(NodeMailboxListener.class), subscriberManager);
+        try {
+            config.startSubscriber();
+
+            ArgumentCaptor<JedisPubSub> pubSub = ArgumentCaptor.forClass(JedisPubSub.class);
+            verify(notificationJedis, timeout(1000)).psubscribe(pubSub.capture(), eq("notification:*"));
+
+            pubSub.getValue().onPMessage("notification:*", "notification:10002:10018",
+                    "{\"type\":\"NOTIFICATION_CREATED\"}");
+
+            verify(subscriberManager, times(1))
+                    .deliverToChannel("notification:10002:10018", "{\"type\":\"NOTIFICATION_CREATED\"}");
+        } finally {
+            config.stopSubscriber();
+        }
+    }
+
+    private static JedisPool subscriberPool(Jedis scheduledRunJedis, Jedis dispatchJedis,
+            Jedis notificationJedis) {
         Jedis mailboxJedis = blockingSubscriber();
         Jedis conversationJedis = blockingSubscriber();
         JedisPool pool = mock(JedisPool.class);
@@ -72,7 +103,9 @@ class WebSocketConfigTest {
             case "ws-conversation-subscriber" -> conversationJedis;
             case "ws-scheduled-run-subscriber" -> scheduledRunJedis;
             case "ws-dispatch-subscriber" -> dispatchJedis;
-            default -> throw new AssertionError("Unexpected subscriber thread");
+            case "ws-notification-subscriber" -> notificationJedis;
+            default -> throw new AssertionError("Unexpected subscriber thread: "
+                    + Thread.currentThread().getName());
         });
         return pool;
     }

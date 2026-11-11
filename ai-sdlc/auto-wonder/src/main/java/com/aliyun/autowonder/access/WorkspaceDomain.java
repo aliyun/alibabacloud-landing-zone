@@ -40,6 +40,7 @@ public enum WorkspaceDomain {
     INTEGRATION,
     MCP,
     MEMORY,
+    PRD,
     REPO,
     SCHEDULEDTASK,
     SDLC,

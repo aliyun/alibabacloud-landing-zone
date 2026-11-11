@@ -6,7 +6,7 @@ import type { WorkspaceDomain } from '@/shared/types/common';
 import './MemberAccessModal.css';
 
 const DOMAIN_GROUPS = [
-  { key: 'delivery', domains: ['WORKITEM', 'SCHEDULEDTASK', 'DISPATCH', 'ARTIFACT', 'CLARIFICATION', 'CONVERSATION', 'DEBUGLOG'] },
+  { key: 'delivery', domains: ['WORKITEM', 'PRD', 'SCHEDULEDTASK', 'DISPATCH', 'ARTIFACT', 'CLARIFICATION', 'CONVERSATION', 'DEBUGLOG'] },
   { key: 'workers', domains: ['AGENT', 'SQUAD', 'EXECUTOR'] },
   { key: 'knowledge', domains: ['REPO', 'MEMORY', 'SKILL', 'CATEGORY'] },
   { key: 'configuration', domains: ['SDLC', 'TEMPLATE', 'STATEMACHINE', 'INTEGRATION', 'WORKSPACE', 'BACKUP', 'ENVIRONMENT'] },

@@ -4,6 +4,17 @@ spring:
   mvc:
     async:
       request-timeout: 180000
+  datasource:
+    hikari:
+      maximum-pool-size: ${AW_DB_POOL_MAX:50}
+      minimum-idle: ${AW_DB_POOL_MIN_IDLE:5}
+      connection-timeout: ${AW_DB_POOL_WAIT_MS:3000}
+      idle-timeout: 600000
+  redis-meta:
+    poolMaxTotal: ${AW_REDIS_POOL_MAX:${REDIS_POOL_MAX_TOTAL:200}}
+    poolMaxIdle: ${AW_REDIS_POOL_MAX_IDLE:100}
+    poolMinIdle: ${AW_REDIS_POOL_MIN_IDLE:8}
+    poolMaxWaitMs: ${AW_REDIS_POOL_WAIT_MS:${REDIS_POOL_MAX_WAIT_MS:1000}}
 
 mybatis:
   mapper-locations: classpath:mapping/*Dao.xml
@@ -17,13 +28,18 @@ logging:
 server:
   tomcat:
     threads:
-      min-spare: 150
-      max: 2000
+      min-spare: ${AW_HTTP_THREADS_MIN:10}
+      max: ${AW_HTTP_THREADS_MAX:400}
       stuck-detected:
         threshold: 100
         interruptThreadThreshold: 110
-    accept-count: 200
-    max-connections: 1000
+    # Shared by all profiles: leave headroom above 5000 established connections.
+    # accept-count is the OS accept backlog, not the worker task queue.
+    accept-count: ${AW_HTTP_ACCEPT_COUNT:1000}
+    max-connections: ${AW_HTTP_MAX_CONNECTIONS:8192}
+    connection-timeout: ${AW_HTTP_CONNECTION_TIMEOUT:20s}
+    keep-alive-timeout: ${AW_HTTP_KEEP_ALIVE_TIMEOUT:30s}
+    max-keep-alive-requests: ${AW_HTTP_MAX_KEEP_ALIVE_REQUESTS:1000}
 
 oss:
   enabled: ${OSS_ENABLED:true}
@@ -78,10 +94,20 @@ autowonder:
       retention-success-days: ${AUTOWONDER_SQUAD_WORKFLOW_RETENTION_SUCCESS_DAYS:30}
       max-input-bytes: ${AUTOWONDER_SQUAD_WORKFLOW_MAX_INPUT_BYTES:2097152}
   runtime:
-    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.3.30}
+    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.3.43}
     # 全局自动升级开关：开启后服务端发现执行器版本落后就自动下发升级指令。默认开启；
     # 关闭请改这里（或设同名环境变量）后重启服务端，手动与批量升级不受它影响。
     executor-auto-update-enabled: ${AUTOWONDER_RUNTIME_EXECUTOR_AUTO_UPDATE_ENABLED:true}
+  frontend-project:
+    probe:
+      fixed-delay-ms: ${AUTOWONDER_FRONTEND_PROJECT_PROBE_FIXED_DELAY_MS:5000}
+      sweep-delay-ms: ${AUTOWONDER_FRONTEND_PROJECT_PROBE_SWEEP_DELAY_MS:60000}
+  workitem:
+    duplicate-intent:
+      scan-ms: ${AUTOWONDER_WORKITEM_DUPLICATE_INTENT_SCAN_MS:5000}
+      expire-ms: ${AUTOWONDER_WORKITEM_DUPLICATE_INTENT_EXPIRE_MS:5000}
+      cleanup-ms: ${AUTOWONDER_WORKITEM_DUPLICATE_INTENT_CLEANUP_MS:3600000}
+      max-prompt-bytes: ${AUTOWONDER_WORKITEM_DUPLICATE_INTENT_MAX_PROMPT_BYTES:65536}
   # Public OIDC/SAML federation. Connections remain disabled until an administrator configures them.
   federation:
     sp-entity-id: ${AUTOWONDER_FEDERATION_SP_ENTITY_ID:autowonder}
@@ -129,7 +155,7 @@ autowonder:
   jwt:
     secret: ${AUTOWONDER_JWT_SECRET:}
     access-ttl-seconds: 7200
-    refresh-ttl-seconds: 604800
+    refresh-ttl-seconds: 31536000
   sls:
     enabled: ${AUTOWONDER_SLS_ENABLED:false}
     endpoint: ${SLS_ENDPOINT:}

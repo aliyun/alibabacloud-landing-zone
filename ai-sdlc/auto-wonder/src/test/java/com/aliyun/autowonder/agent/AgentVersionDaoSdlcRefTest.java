@@ -16,6 +16,7 @@ import java.sql.Statement;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -198,5 +199,41 @@ class AgentVersionDaoSdlcRefTest {
 
         // av.agent_id = a.id 守卫排除 120（指针指向他人版本），仅 121 计入；未加守卫时会误返回 [120,121]。
         assertEquals(List.of(121L), dao.listAgentIdsBySdlcId(SDLC_A));
+    }
+
+    /** 创建时绑定走真实 insert：初始 v1 草稿写入 sdlc_id 后可原样读回同一 ID。 */
+    @Test
+    void insert_persistsSdlcBindingOnInitialDraft() {
+        AgentVersionDO version = new AgentVersionDO();
+        version.setTenantId(TENANT);
+        version.setAgentId(130L);
+        version.setVersionNo(1);
+        version.setStatus("DRAFT");
+        version.setRoleName("前端开发工程师");
+        version.setRoleCode("FRONTEND_DEV");
+        version.setSdlcId(SDLC_A);
+        version.setCreatorId(7L);
+
+        dao.insert(version);
+
+        AgentVersionDO stored = dao.findById(version.getId());
+        assertEquals(Long.valueOf(SDLC_A), stored.getSdlcId());
+        assertEquals(Integer.valueOf(1), stored.getVersionNo());
+        assertEquals("DRAFT", stored.getStatus());
+    }
+
+    /** 未绑定时写入 NULL，读回为 null（旧客户端行为）。 */
+    @Test
+    void insert_withoutSdlcBinding_readsBackNull() {
+        AgentVersionDO version = new AgentVersionDO();
+        version.setTenantId(TENANT);
+        version.setAgentId(131L);
+        version.setVersionNo(1);
+        version.setStatus("DRAFT");
+        version.setCreatorId(7L);
+
+        dao.insert(version);
+
+        assertNull(dao.findById(version.getId()).getSdlcId());
     }
 }

@@ -30,6 +30,9 @@ it('renders provider commands as readable shell output and keeps technical field
   expect(screen.getByText('Inspect workspace')).toBeInTheDocument();
   const details = screen.getByText('原始事件详情').closest('details');
   expect(details).not.toHaveAttribute('open');
+  expect(details).not.toHaveTextContent('internal-session');
+  details!.open = true;
+  fireEvent(details!, new Event('toggle'));
   expect(details).toHaveTextContent('internal-session');
   expect(screen.getByTestId('runtime-terminal').querySelector('time')).toHaveAttribute('dateTime', '2026-10-08T02:00:00Z');
 });

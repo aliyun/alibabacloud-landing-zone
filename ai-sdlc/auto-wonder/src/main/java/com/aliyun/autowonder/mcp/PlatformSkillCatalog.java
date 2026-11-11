@@ -8,9 +8,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class PlatformSkillCatalog {
+    public static final String ONBOARDING_SKILL_ID = "initialize-autowonder-workspace";
+    public static final String OPTIMIZER_SKILL_ID = "optimize-squad-workflow";
     private final List<PlatformSkillVO> skills = List.of(
             skill("autowonder-workitem-operator", "CODEX_SKILL", "AutoWonder Workitem Operator",
                     "Create, inspect, update, assign, comment, pause, resume and transition AutoWonder workitems through MCP tools.",
@@ -21,7 +24,8 @@ public class PlatformSkillCatalog {
                             "autowonder.delete_workitem", "autowonder.assign_workitem",
                             "autowonder.transition_workitem", "autowonder.pause_workitem",
                             "autowonder.resume_workitem", "autowonder.workitem_cli_upload_token",
-                            "autowonder.workitem_cli_download_token")),
+                            "autowonder.workitem_cli_download_token",
+                            "autowonder.start_workitem_clarification")),
             skill("autowonder-sdlc-manager", "CODEX_SKILL", "AutoWonder SDLC Manager",
                     "Manage AutoWonder SDLC flows, steps, enablement and workitem status templates.",
                     List.of("autowonder.create_sdlc", "autowonder.list_sdlcs", "autowonder.get_sdlc",
@@ -55,8 +59,54 @@ public class PlatformSkillCatalog {
                             "autowonder.get_scheduled_task", "autowonder.update_scheduled_task",
                             "autowonder.transition_scheduled_task", "autowonder.delete_scheduled_task",
                             "autowonder.get_scheduled_task_run", "autowonder.list_scheduled_task_runs",
-                            "autowonder.add_scheduled_task_run_comment"))
+                            "autowonder.add_scheduled_task_run_comment")),
+            skill(OPTIMIZER_SKILL_ID, "CODEX_SKILL", "AutoWonder 小队效率与成本优化",
+                    "Use when optimizing squad workflow efficiency, credits cost, repeated failures, conflicting configuration or stale memory. 小队效率、成本与异常优化。",
+                    List.of("autowonder.list_squads", "autowonder.get_squad", "autowonder.list_workitems",
+                            "autowonder.get_workitem", "autowonder.get_delivery_recovery",
+                            "autowonder.get_dispatch_activities", "autowonder.get_dispatch_runtime_trace",
+                            "autowonder.get_dispatch_turn", "autowonder.get_dispatch_observation",
+                            "autowonder.get_dispatch_diagnostics", "autowonder.read_dispatch_diagnostic",
+                            "autowonder.get_agent", "autowonder.get_agent_version_status", "autowonder.get_agent_version",
+                            "autowonder.get_sdlc", "autowonder.get_skill", "autowonder.inspect_skill_package",
+                            "autowonder.search_memories", "autowonder.get_memory")),
+            skill(ONBOARDING_SKILL_ID, "CODEX_SKILL", "AutoWonder 工作空间初始化",
+                    "在 AutoWonder Chief 中完成当前工作空间的初始化配置：初始化交付模板，引导配置项目变量、部署 Skill、"
+                            + "仓库权限及执行器，直到具备创建工单交付的条件。",
+                    List.of("autowonder.list_harness_templates", "autowonder.get_harness_template",
+                            "autowonder.prepare_workspace_onboarding", "autowonder.get_workspace_onboarding",
+                            "autowonder.preview_workspace_initialization", "autowonder.initialize_workspace",
+                            "autowonder.get_workspace_initialization", "autowonder.resume_workspace_initialization",
+                            "autowonder.preview_harness_initialization", "autowonder.initialize_harness",
+                            "autowonder.get_harness_initialization", "autowonder.resume_harness_initialization",
+                            "autowonder.preview_workspace_configuration",
+                            "autowonder.apply_workspace_configuration",
+                            "autowonder.get_workspace_configuration", "autowonder.resume_workspace_configuration",
+                            "autowonder.check_workspace_readiness"))
     );
+
+    /** 官方多文件 Skill 的包资源由服务端资源目录提供，安装时走现有包上传能力。 */
+    private static final Set<String> BUNDLED_PACKAGE_SKILLS = Set.of(ONBOARDING_SKILL_ID);
+
+    public static boolean hasBundledPackage(String id) {
+        return BUNDLED_PACKAGE_SKILLS.contains(id);
+    }
+
+    /** Same source documents are embedded into Chief's generated skill; no local links are left unresolved. */
+    private static String optimizerInstructions() {
+        StringBuilder instructions = new StringBuilder("本 Skill 的完整正文及引用文档如下。\n");
+        for (String path : List.of("SKILL.md", "references/collect.md", "references/analyze.md",
+                "references/report-and-apply.md")) {
+            try (var input = new org.springframework.core.io.ClassPathResource(
+                    "skills/optimize-squad-workflow/" + path).getInputStream()) {
+                instructions.append("\n## 内嵌文档：").append(path).append("\n\n")
+                        .append(new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            } catch (java.io.IOException failure) {
+                throw new IllegalStateException("Chief optimizer instructions unavailable: " + path, failure);
+            }
+        }
+        return instructions.toString();
+    }
 
     public List<PlatformSkillVO> list() {
         return skills;
@@ -69,13 +119,31 @@ public class PlatformSkillCatalog {
                 .orElseThrow(() -> new BizException(ErrorCode.SKILL_NOT_FOUND));
     }
 
+    /** Chief 的官方能力直接生成 Skill；必须携带正文，不能只下发目录简介。 */
+    private static String onboardingInstructions() {
+        StringBuilder instructions = new StringBuilder(
+                "本 Skill 的规则及引用文档全文如下。相对文档链接对应下方同名章节，无需从本地另行读取。\n");
+        for (String path : List.of("SKILL.md", "var.md", "references/repository-intake.md",
+                "references/platform-contract.md")) {
+            try (var input = new org.springframework.core.io.ClassPathResource("harness/skill/" + path)
+                    .getInputStream()) {
+                instructions.append("\n## 内嵌文档：").append(path).append("\n\n")
+                        .append(new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            } catch (java.io.IOException failure) {
+                throw new IllegalStateException("Chief onboarding instructions unavailable: " + path, failure);
+            }
+        }
+        return instructions.toString();
+    }
+
     private static PlatformSkillVO skill(String id, String type, String name, String description, List<String> tools) {
         String spec = JSON.toJSONString(Map.of(
                 "kind", "codex-skill",
                 "id", id,
                 "mcpServer", "autowonder",
                 "tools", tools,
-                "instructions", description));
+                "instructions", ONBOARDING_SKILL_ID.equals(id) ? onboardingInstructions()
+                        : OPTIMIZER_SKILL_ID.equals(id) ? optimizerInstructions() : description));
         return new PlatformSkillVO(id, type, name, description, spec);
     }
 }

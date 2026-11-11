@@ -5,43 +5,110 @@
     <insert id="insert" parameterType="com.aliyun.autowonder.notification.NotificationDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO notification (tenant_id, recipient_id, type, title, content, link,
-                                  ref_type, ref_id, status, channels_json)
+                                  ref_type, ref_id, status, channels_json, related_links_json, scope)
         VALUES (#{tenantId}, #{recipientId}, #{type}, #{title}, #{content}, #{link},
-                #{refType}, #{refId}, #{status}, #{channelsJson})
+                #{refType}, #{refId}, #{status}, #{channelsJson}, #{relatedLinksJson},
+                COALESCE(#{scope}, 'WORKSPACE'))
     </insert>
 
+    <!--
+      可见范围：本人 + （当前空间的通知 或 本人可见的平台级通知）。
+      没有当前空间时只返回平台级通知，管理员未选空间也能在通知中心看到注册审核与权限申请提醒。
+    -->
     <select id="listByRecipient" resultType="com.aliyun.autowonder.notification.NotificationDO">
         SELECT * FROM notification
-        WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId}
+        WHERE recipient_id = #{recipientId}
+        <choose>
+            <when test="tenantId != null">
+                AND ((scope = 'WORKSPACE' AND tenant_id = #{tenantId}) OR scope = 'PLATFORM')
+            </when>
+            <otherwise>
+                AND scope = 'PLATFORM'
+            </otherwise>
+        </choose>
         <if test="status != null">AND status = #{status}</if>
         ORDER BY gmt_create DESC LIMIT #{offset}, #{limit}
     </select>
 
+    <!-- 归属条件落在 WHERE 上：分页外的 ID、他人或他空间的 ID 都读不到，不泄露存在性。 -->
+    <select id="findByIdAndRecipient" resultType="com.aliyun.autowonder.notification.NotificationDO">
+        SELECT * FROM notification
+        WHERE id = #{id} AND recipient_id = #{recipientId}
+        <choose>
+            <when test="tenantId != null">
+                AND ((scope = 'WORKSPACE' AND tenant_id = #{tenantId}) OR scope = 'PLATFORM')
+            </when>
+            <otherwise>
+                AND scope = 'PLATFORM'
+            </otherwise>
+        </choose>
+    </select>
+
     <select id="countUnread" resultType="int">
         SELECT COUNT(*) FROM notification
-        WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
+        WHERE recipient_id = #{recipientId} AND status = 'UNREAD'
+        <choose>
+            <when test="tenantId != null">
+                AND ((scope = 'WORKSPACE' AND tenant_id = #{tenantId}) OR scope = 'PLATFORM')
+            </when>
+            <otherwise>
+                AND scope = 'PLATFORM'
+            </otherwise>
+        </choose>
     </select>
 
     <select id="countByRecipient" resultType="int">
         SELECT COUNT(*) FROM notification
-        WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId}
+        WHERE recipient_id = #{recipientId}
+        <choose>
+            <when test="tenantId != null">
+                AND ((scope = 'WORKSPACE' AND tenant_id = #{tenantId}) OR scope = 'PLATFORM')
+            </when>
+            <otherwise>
+                AND scope = 'PLATFORM'
+            </otherwise>
+        </choose>
         <if test="status != null">AND status = #{status}</if>
     </select>
 
     <update id="markRead">
         UPDATE notification SET status = 'READ'
-        WHERE id = #{id} AND tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
+        WHERE id = #{id} AND recipient_id = #{recipientId} AND status = 'UNREAD'
+        <choose>
+            <when test="tenantId != null">
+                AND ((scope = 'WORKSPACE' AND tenant_id = #{tenantId}) OR scope = 'PLATFORM')
+            </when>
+            <otherwise>
+                AND scope = 'PLATFORM'
+            </otherwise>
+        </choose>
     </update>
 
     <update id="markAllRead">
         UPDATE notification SET status = 'READ'
-        WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
+        WHERE recipient_id = #{recipientId} AND status = 'UNREAD'
+        <choose>
+            <when test="tenantId != null">
+                AND ((scope = 'WORKSPACE' AND tenant_id = #{tenantId}) OR scope = 'PLATFORM')
+            </when>
+            <otherwise>
+                AND scope = 'PLATFORM'
+            </otherwise>
+        </choose>
     </update>
 
     <!-- notification 表无 is_deleted 列，删除为物理删除；归属校验落在 WHERE 上，避免越权删他人通知。 -->
     <delete id="delete">
         DELETE FROM notification
-        WHERE id = #{id} AND tenant_id = #{tenantId} AND recipient_id = #{recipientId}
+        WHERE id = #{id} AND recipient_id = #{recipientId}
+        <choose>
+            <when test="tenantId != null">
+                AND ((scope = 'WORKSPACE' AND tenant_id = #{tenantId}) OR scope = 'PLATFORM')
+            </when>
+            <otherwise>
+                AND scope = 'PLATFORM'
+            </otherwise>
+        </choose>
     </delete>
 
     <update id="updateChannels">

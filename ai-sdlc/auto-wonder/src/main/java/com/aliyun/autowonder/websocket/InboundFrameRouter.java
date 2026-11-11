@@ -177,6 +177,10 @@ public class InboundFrameRouter {
         this.resultCoordinator = coordinator;
     }
 
+    private InboundFrameScheduler frameScheduler;
+    @Autowired
+    public void setFrameScheduler(InboundFrameScheduler scheduler) { this.frameScheduler = scheduler; }
+
     public void route(ExecutorSession es, String message) {
         JSONObject json;
         try {
@@ -192,6 +196,16 @@ public class InboundFrameRouter {
         if (type == null) {
             return;
         }
+        long dispatchId = json.getLongValue("dispatchId");
+        if (frameScheduler != null && dispatchId > 0 && DISPATCH_FRAME_TYPES.contains(type)) {
+            frameScheduler.dispatch(es, dispatchId, type, () -> routeFrame(es, json));
+        } else {
+            routeFrame(es, json);
+        }
+    }
+
+    private void routeFrame(ExecutorSession es, JSONObject json) {
+        String type = json.getString("type");
         long incomingDispatchId = json.getLongValue("dispatchId");
         if ("TASK_RESULT".equals(type)) {
             var result = resultCoordinator == null
@@ -288,43 +302,14 @@ public class InboundFrameRouter {
                             es.getExecutorId(), es.getSession().getId());
                     break;
                 }
-                if (restartService != null) restartService.onHeartbeat(es, json);
-                if (updateService != null) {
-                    // Runs after recordVersion so the upgrade check reads the version just stored.
-                    // Auxiliary to liveness: a failed check must not cost the executor its heartbeat.
-                    try {
-                        updateService.onHeartbeat(es, json);
-                    } catch (Exception updateEx) {
-                        log.warn("executor upgrade heartbeat hook failed executorId={}",
-                                es.getExecutorId(), updateEx);
-                    }
-                }
-                if (executorService != null) {
-                    executorService.persistHeartbeatIfNeeded(es.getExecutorId(), es.getTenantId());
-                }
-                java.util.List<Long> reportedRunningDispatchIds = runningDispatchIds(json);
-                dispatchService.renewActiveLeases(es.getTenantId(), es.getExecutorId(),
-                        reportedRunningDispatchIds);
-                if (dispatchSnapshot != null && dispatchSnapshot.inventoryReady()
-                        && dispatchSnapshot.inventoryError() == null && runtimeReconciler != null) {
-                    runtimeReconciler.request(es.getTenantId(), es.getExecutorId(), es.getAgentId(),
-                            es.getSession().getId());
-                } else {
-                    drainScheduler.request(es.getAgentId());
-                }
-                if (agentConversationService != null && activeConversationTurnIds != null) {
-                    if (es.consumeReplacementRecoveryPending()) {
-                        agentConversationService.recoverInactiveTurnsForReplacedExecutor(
-                                es.getTenantId(), es.getExecutorId(), activeConversationTurnIds);
-                    } else {
-                        agentConversationService.recoverStaleTurnsForExecutor(es.getTenantId(),
-                                es.getExecutorId(), activeConversationTurnIds);
-                    }
-                }
-                if (providerModelCatalogService != null && reportedRunningDispatchIds != null
-                        && reportedRunningDispatchIds.isEmpty()) {
-                    providerModelCatalogService.requestRefreshForExecutor(es.getExecutorId());
-                }
+                ExecutorDispatchSnapshot publishedSnapshot = dispatchSnapshot;
+                java.util.Set<Long> publishedConversationIds = activeConversationTurnIds;
+                long heartbeatRevision = es.receivedHeartbeat();
+                dispatchService.recordRunningDispatches(es.getExecutorId(), runningDispatchIds(json));
+                Runnable sideEffects = () -> afterHeartbeat(es, json, publishedSnapshot,
+                        publishedConversationIds, heartbeatRevision);
+                if (frameScheduler == null) sideEffects.run();
+                else frameScheduler.heartbeat(es, sideEffects);
                 break;
             case "TASK_ACK":
                 log.info("inbound TASK_ACK dispatchId={} executorId={}", json.getLongValue("dispatchId"), es.getExecutorId());
@@ -529,6 +514,55 @@ public class InboundFrameRouter {
                 log.info("inbound unknown frame type={} executorId={}", type, es.getExecutorId());
                 break;
         }
+    }
+
+    private void afterHeartbeat(ExecutorSession es, JSONObject json,
+            ExecutorDispatchSnapshot dispatchSnapshot, java.util.Set<Long> activeConversationTurnIds,
+            long heartbeatRevision) {
+        if (!currentHeartbeat(es, heartbeatRevision)) return;
+        if (restartService != null) restartService.onHeartbeat(es, json);
+        if (updateService != null) {
+            // Runs after recordVersion so the upgrade check reads the version just stored.
+            // Auxiliary to liveness: a failed check must not cost the executor its heartbeat.
+            try {
+                updateService.onHeartbeat(es, json);
+            } catch (Exception updateEx) {
+                log.warn("executor upgrade heartbeat hook failed executorId={}",
+                        es.getExecutorId(), updateEx);
+            }
+        }
+        if (executorService != null) {
+            executorService.persistHeartbeatIfNeeded(es.getExecutorId(), es.getTenantId());
+        }
+        java.util.List<Long> reportedRunningDispatchIds = runningDispatchIds(json);
+        dispatchService.renewActiveLeases(es.getTenantId(), es.getExecutorId(),
+                reportedRunningDispatchIds);
+        // A slow lease update must not reconcile conversations from an obsolete inventory.
+        if (!currentHeartbeat(es, heartbeatRevision)) return;
+        if (dispatchSnapshot != null && dispatchSnapshot.inventoryReady()
+                && dispatchSnapshot.inventoryError() == null && runtimeReconciler != null) {
+            runtimeReconciler.request(es.getTenantId(), es.getExecutorId(), es.getAgentId(),
+                    es.getSession().getId());
+        } else {
+            drainScheduler.request(es.getAgentId());
+        }
+        if (agentConversationService != null && activeConversationTurnIds != null) {
+            if (es.consumeReplacementRecoveryPending()) {
+                agentConversationService.recoverInactiveTurnsForReplacedExecutor(
+                        es.getTenantId(), es.getExecutorId(), activeConversationTurnIds);
+            } else {
+                agentConversationService.recoverStaleTurnsForExecutor(es.getTenantId(),
+                        es.getExecutorId(), activeConversationTurnIds);
+            }
+        }
+        if (providerModelCatalogService != null && reportedRunningDispatchIds != null
+                && reportedRunningDispatchIds.isEmpty()) {
+            providerModelCatalogService.requestRefreshForExecutor(es.getExecutorId());
+        }
+    }
+
+    private boolean currentHeartbeat(ExecutorSession es, long revision) {
+        return es.isLatestHeartbeat(revision) && (frameScheduler == null || frameScheduler.isCurrent(es));
     }
 
     private DispatchBoundary resolveDispatchBoundary(ExecutorSession es, JSONObject json, String type) {
@@ -785,6 +819,7 @@ public class InboundFrameRouter {
     }
 
     private void sendFrame(ExecutorSession es, JSONObject frame, String frameName, long dispatchId) {
+        if (frameScheduler != null && !frameScheduler.isCurrent(es)) return;
         try {
             es.sendText(frame.toJSONString());
         } catch (Exception e) {

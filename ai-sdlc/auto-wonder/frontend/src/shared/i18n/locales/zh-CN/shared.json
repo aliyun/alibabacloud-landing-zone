@@ -26,6 +26,7 @@
       "INTEGRATION": "平台集成",
       "MCP": "MCP",
       "MEMORY": "记忆",
+      "PRD": "PRD 设计",
       "REPO": "仓库",
       "SCHEDULEDTASK": "定时任务",
       "SDLC": "SDLC 流程",
@@ -100,6 +101,7 @@
   },
   "help": "帮助中心",
   "markdown": {
+    "largeContentPlainText": "内容较长，已使用纯文本显示以降低内存占用。原文完整保留。",
     "completed": "已完成任务",
     "todo": "待办任务",
     "openArtifact": "打开产物 {{label}}",

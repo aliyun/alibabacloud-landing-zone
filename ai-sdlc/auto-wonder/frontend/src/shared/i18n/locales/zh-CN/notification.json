@@ -17,6 +17,7 @@
   "retry": "重试",
   "empty": "暂无通知",
   "details": "通知详情",
+  "viewDetail": "详情",
   "openRelated": "前往处理",
   "noBody": "无正文",
   "type": "通知类型",
@@ -24,6 +25,8 @@
   "related": "关联对象",
   "unknownRef": "未知类型",
   "close": "关闭",
+  "submittedWorkitem": "新工单",
+  "duplicateWorkitems": "已存在的重复工单",
   "types": {
     "WORKITEM_ASSIGNED": "工单分配",
     "COMMENT_MENTION": "评论提及",
@@ -50,12 +53,33 @@
     "SCHEDULED_TASK_RUN_TIMED_OUT": "定时任务运行超时",
     "SCHEDULED_TASK_RUN_CANCELED": "定时任务运行已取消",
     "SCHEDULED_TASK_RUN_SKIPPED": "定时任务运行已跳过",
-    "PASSWORD_RESET_BY_ADMIN": "密码被管理员重置"
+    "PASSWORD_RESET_BY_ADMIN": "密码被管理员重置",
+    "DUPLICATE_INTENT": "重复工单提醒"
   },
   "refs": {
     "WORKITEM": "工单",
     "WORKSPACE_ACCESS_REQUEST": "工作空间访问申请",
     "SCHEDULED_TASK_RUN": "定时任务运行"
   },
-  "total_other": "共 {{count}} 条"
+  "total_other": "共 {{count}} 条",
+  "reminders": "新通知",
+  "reminderCount_other": "{{count}} 条新通知",
+  "reminderClose": "关闭提醒",
+  "reminderCloseAll": "关闭全部提醒",
+  "reminderView": "查看详情",
+  "reminderExpand": "展开",
+  "reminderCollapse": "收起",
+  "reminderDismissesIn_other": "{{count}} 秒后自动消失",
+  "reminderPaused_other": "已暂停移除 · {{count}} 秒无操作后收起",
+  "reminderLoading": "正在加载通知…",
+  "reminderLoadFailed": "通知内容加载失败",
+  "reminderRetry": "重试",
+  "browserNotifications": "浏览器通知",
+  "browserPermissionDefault": "尚未授权，点击后按浏览器提示申请",
+  "browserPermissionGranted": "当前浏览器已允许通知",
+  "browserPermissionDenied": "通知已被阻止，请在浏览器站点设置中修改",
+  "browserPermissionUnsupported": "当前环境不支持浏览器通知，站内提醒仍可使用",
+  "enableBrowserNotifications": "启用浏览器通知",
+  "notificationNotFound": "通知不存在或已被删除",
+  "detailLoadFailed": "通知详情加载失败"
 }

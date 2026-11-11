@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { useAuthStore } from '@/shared/auth/store';
+import { AUTH_RETURN_PATH_KEY } from '@/shared/auth/returnPath';
 import { SsoCompletePage } from './SsoCompletePage';
 
 function apiOk(data: unknown) {
@@ -46,6 +47,7 @@ function renderPage(entry: string) {
 describe('SsoCompletePage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
+    window.sessionStorage.clear();
   });
 
   it('exchanges a one-time ticket for an AW session and enters the workspace list', async () => {
@@ -66,6 +68,43 @@ describe('SsoCompletePage', () => {
     expect(exchangedBody).toEqual({ ticket: 't-1' });
     expect(useAuthStore.getState().accessToken).toBe('sso-access');
     expect(useAuthStore.getState().user?.username).toBe('alice');
+  });
+
+  it('returns to the remembered in-site page once the SSO session is established', async () => {
+    window.sessionStorage.setItem(AUTH_RETURN_PATH_KEY, '/workitems/42?tab=discussion');
+    server.use(
+      http.post('/api/auth/sso/session', () => HttpResponse.json(apiOk(loginPayload('sso-return')))),
+    );
+
+    renderPage('/sso/complete?ticket=t-2');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route-probe')).toHaveTextContent('/workitems/42?tab=discussion');
+    });
+  });
+
+  it('returns to the return target carried through the SSO state', async () => {
+    server.use(
+      http.post('/api/auth/sso/session', () => HttpResponse.json(apiOk(loginPayload('sso-next')))),
+    );
+
+    renderPage(`/sso/complete?ticket=t-3&next=${encodeURIComponent('/workitems/42?tab=discussion')}`);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route-probe')).toHaveTextContent('/workitems/42?tab=discussion');
+    });
+  });
+
+  it('rejects a cross-site next target and falls back to the workspace list', async () => {
+    server.use(
+      http.post('/api/auth/sso/session', () => HttpResponse.json(apiOk(loginPayload('sso-evil')))),
+    );
+
+    renderPage(`/sso/complete?ticket=t-4&next=${encodeURIComponent('https://evil.example.com/steal')}`);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route-probe')).toHaveTextContent('/workspaces');
+    });
   });
 
   it('keeps the pending state until the exchange settles', async () => {

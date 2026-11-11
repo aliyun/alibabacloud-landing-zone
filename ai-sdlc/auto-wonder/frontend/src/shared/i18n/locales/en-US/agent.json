@@ -30,7 +30,8 @@
     "describe": "Describe the agent you need",
     "draftHint": "Generated results become an editable draft. Confirm the draft to populate the advanced form, then click Create to create the agent.",
     "advanced": "Advanced form",
-    "requiredHint": "Fill in the required configuration to create the agent."
+    "requiredHint": "Fill in the required configuration to create the agent.",
+    "sdlcLoadFailed": "Could not load SDLC workflows. Retry, or create the agent without one."
   },
   "fields": {
     "name": "Name",
@@ -47,7 +48,7 @@
     "variableName": "Variable name",
     "description": "Description",
     "agentName": "Agent name",
-    "sdlc": "SDLC template",
+    "sdlc": "SDLC workflow",
     "evolution": "Evolution mode",
     "allowedBranches": "Allowed commit branches",
     "selectVariable": "Select environment variable"
@@ -66,7 +67,7 @@
     "background": "Describe the agent’s business context...",
     "responsibilities": "Describe the agent’s main responsibilities...",
     "agentName": "e.g. Alex, frontend developer",
-    "sdlc": "Select an SDLC template",
+    "sdlc": "Select an SDLC workflow",
     "repositories": "Select repositories",
     "branches": "Allowed commit branches (leave blank for unrestricted access, e.g. develop, feature/*)",
     "editBranches": "Leave blank for unrestricted access, e.g. develop, release/autowonder-v*",
@@ -75,7 +76,7 @@
   },
   "evolution": {
     "MANUAL": "Manual",
-    "ASSISTED": "Assisted review (recommended)",
+    "ASSISTED": "Automatic memory (recommended)",
     "AUTO_PROPOSAL": "Automatic proposals",
     "tooltip": "Controls whether a worker’s learning_delta automatically creates Memory or Evolution Proposals for review. Active artifacts are never published automatically.",
     "unset": "Not set"
@@ -109,6 +110,7 @@
     "nameHint": "The agent’s display name takes effect as soon as it is saved, without review. It is separate from the Role name field below.",
     "platformAvatar": "The platform agent’s avatar is managed by the platform and cannot be changed.",
     "avatarHint": "Leave blank to clear the avatar. Like the agent name, changes take effect as soon as they are saved.",
+    "sdlcLoadFailed": "Could not load SDLC workflows. Retry; the existing binding is kept.",
     "title": "Edit configuration — {{name}}"
   },
   "repository": {
@@ -138,7 +140,7 @@
   },
   "evolutionDescription": {
     "MANUAL": "Save artifacts only; do not create memories or proposals automatically.",
-    "ASSISTED": "Generate memories and proposals for review, without publishing them automatically.",
+    "ASSISTED": "Automatic memory and continuous self-evolution",
     "AUTO_PROPOSAL": "Generate proposals automatically and validate those that include a replay."
   },
   "capability": {
@@ -207,6 +209,103 @@
     "codeReviewer": "Code reviewer",
     "codeReview": "Code review"
   },
+  "submit": {
+    "title": "Submit for review",
+    "noteLabel": "Submit note",
+    "notePlaceholder": "Optional: describe the purpose and impact of this change to help the reviewer decide quickly.",
+    "noteHint": "Optional, up to 500 characters",
+    "confirm": "Submit"
+  },
+  "diff": {
+    "title": "Review changes — {{name}}",
+    "noBaseline": "No baseline",
+    "versionShort": "v{{version}}",
+    "baselineOnline": "Baseline: current online version",
+    "baselineNone": "Baseline: no online version (first version)",
+    "submitter": "Submitted by: {{name}}",
+    "submittedAt": "Submitted at: {{time}}",
+    "submitNote": "Submit note",
+    "firstVersionDoc": "Pending version v{{version}} (first version) · everything shown as added",
+    "group": {
+      "soul": "SOUL.md",
+      "soulFile": "businessBackground",
+      "agentMd": "AGENT.md",
+      "agentMdFile": "responsibilities",
+      "config": "Configuration",
+      "repoPerms": "Repository permissions",
+      "skills": "Skills",
+      "memoryRefs": "Memory references",
+      "environmentVariables": "Environment variables",
+      "noChange": "No changes"
+    },
+    "stat": {
+      "changedFields": "{{fields}} changed",
+      "adjusted": "{{items}} adjusted"
+    },
+    "column": {
+      "field": "Field",
+      "base": "Online version",
+      "target": "Pending version",
+      "baseWithVersion": "Online version v{{version}}",
+      "targetWithVersion": "Pending version v{{version}}"
+    },
+    "toolbar": {
+      "context": "Context",
+      "contextLines": "{{lines}} lines"
+    },
+    "action": {
+      "collapseUnchanged": "Collapse unchanged lines",
+      "prevChange": "Previous change",
+      "nextChange": "Next change",
+      "expandAll": "Expand all",
+      "expandContext": "Expand context",
+      "showUnchanged": "Show unchanged fields"
+    },
+    "fold": {
+      "hidden": "⋯ {{lines}} unchanged lines"
+    },
+    "layout": {
+      "split": "Switch to split view",
+      "unified": "Switch to unified view"
+    },
+    "notice": {
+      "firstVersion": "This agent has no online version yet. The first version is being reviewed: everything is shown as added and the baseline column is empty.",
+      "firstVersionConfig": "First version: every field is new, so only the new side is shown.",
+      "baselineUnavailable": "The baseline version is no longer available. Falling back to a no-baseline view where everything is shown as added.",
+      "compareBase": "The baseline is the current online version {{base}}. Once approved, {{target}} replaces the online configuration immediately.",
+      "allSame": "This submission has no differences from the online version.",
+      "largeDoc": "This document is large, so only changed blocks are rendered by default. Use \"Expand all\" to see the full content.",
+      "envMasked": "Only bindings and metadata are compared. Values are always masked as **; changing a value does not create a new version.",
+      "nonVersioned": "Name, avatar and squad membership are not part of the version snapshot and take effect immediately, so they are not in this diff. Contact a workspace administrator if you need an audit trail."
+    },
+    "empty": {
+      "noContent": "No content",
+      "memory": "This submission did not change memory references."
+    },
+    "memory": {
+      "autoImported": "Imported automatically"
+    },
+    "repo": {
+      "branchPatterns": "Branch allowlist: ",
+      "unrestricted": "Unrestricted"
+    },
+    "env": {
+      "value": "Value: ",
+      "description": "Description: ",
+      "masked": "**"
+    },
+    "set": {
+      "added": "Added",
+      "removed": "Removed",
+      "modified": "Modified"
+    },
+    "error": {
+      "loadFailed": "Failed to load the version",
+      "retry": "Retry"
+    },
+    "confirmApprove": "Approve and publish v{{version}}? The online configuration is replaced immediately.",
+    "confirmApproveOk": "Approve"
+  },
   "display": {
     "hubTitle": "Agent management",
     "hubListDescription": "Scan agents by role, enabled state and executor availability.",
@@ -226,10 +325,9 @@
     "executorOnline": "Executor online",
     "executorOffline": "Executor offline",
     "onlineRatio": "{{online}}/{{total}} online",
-    "executorRatio": "Executors: {{online}}/{{total}} online",
     "configHelp": "Configuration guide",
     "configHelpOpen": "Click an agent card to view its details and configuration.",
-    "configHelpContent": "Manage SOUL.md, AGENT.md, memories, repository permissions, SDLC templates and skills or capabilities.",
+    "configHelpContent": "Manage SOUL.md, AGENT.md, memories, repository permissions, SDLC workflows and skills or capabilities.",
     "emptyPlatform": "No platform agents",
     "emptyAgents": "No agents",
     "role": "Role",
@@ -281,8 +379,6 @@
     "editDraft": "Edit draft",
     "diffTitle": "Effective configuration vs draft v{{version}}",
     "identity": "Identity configuration",
-    "sdlcTag": "SDLC template: {{name}}",
-    "evolutionTag": "Evolution mode: {{mode}}",
     "workitems": "Work items",
     "repositoryTab": "Repository permissions{{suffix}}",
     "capabilityTab": "Capabilities{{suffix}}",
@@ -301,6 +397,11 @@
     "latestVersion": "Latest version",
     "submittedAt": "Submitted at",
     "preview": "Preview",
+    "viewDiff": "View changes",
+    "submitNoteColumn": "Submit note",
+    "approveAndOnline": "Approve and publish",
+    "rejectChange": "Reject",
+    "readOnlyHint": "Read-only members can inspect the changes but cannot review them.",
     "approve": "Approve",
     "reject": "Reject",
     "emptyReviews": "No agents awaiting review",
@@ -310,7 +411,7 @@
     "rejectReason": "Enter a reason for rejection...",
     "businessBackground": "Business background",
     "responsibilities": "Responsibilities",
-    "sdlcId": "SDLC template ID",
+    "sdlcId": "SDLC workflow ID",
     "versionStatus": "Version status",
     "inProgress": "In progress",
     "pendingDecision": "Pending decision",
@@ -336,6 +437,8 @@
     "bindingLabel": "{{name}} ({{label}})",
     "close": "Close",
     "createAction": "Create an agent",
-    "officialCapabilities": "Platform capabilities (read-only)"
+    "officialCapabilities": "Platform capabilities (read-only)",
+    "executorUnknown": "Not available",
+    "executorNone": "0 executors"
   }
 }

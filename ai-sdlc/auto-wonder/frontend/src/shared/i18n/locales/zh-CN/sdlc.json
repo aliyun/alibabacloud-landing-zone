@@ -41,10 +41,10 @@
     "aiAssist": "AI 辅助"
   },
   "commands": {
-    "create": "新建 SDLC 模版",
-    "enable": "启用 SDLC 模版",
-    "disable": "禁用 SDLC 模版",
-    "delete": "删除 SDLC 模版",
+    "create": "新建 SDLC流程",
+    "enable": "启用 SDLC流程",
+    "disable": "禁用 SDLC流程",
+    "delete": "删除 SDLC流程",
     "aiGenerate": "AI 生成 SDLC",
     "aiAssist": "AI 辅助设计 SDLC",
     "editInfo": "编辑 SDLC 信息",
@@ -56,7 +56,7 @@
   "fields": {
     "id": "ID",
     "name": "名称",
-    "templateName": "模版名称",
+    "templateName": "流程名称",
     "description": "描述",
     "workType": "工单类型",
     "stepCount": "步骤数",
@@ -113,16 +113,18 @@
   "confirm": {
     "enable": "确定启用？",
     "disable": "确定禁用？",
-    "delete": "确定删除该模版？",
+    "delete": "确定删除该流程？",
     "deleteStep": "确认删除该步骤？",
     "enableLock": "启用后步骤将不可编辑，确认启用？",
-    "disableDetail": "确认禁用该模版？"
+    "disableDetail": "确认禁用该流程？"
   },
   "list": {
-    "title": "SDLC 流程模版",
-    "templates": "流程模版",
+    "title": "SDLC流程",
+    "templates": "SDLC流程",
     "gallery": "模版间",
-    "empty": "暂无 SDLC 模版",
+    "empty": "暂无 SDLC流程",
+    "expandGroup": "展开分组",
+    "collapseGroup": "收起分组",
     "groupCount_other": "{{count}} 个",
     "total_other": "共 {{count}} 条"
   },
@@ -134,7 +136,7 @@
   },
   "placeholder": {
     "name": "如: 标准需求开发流程",
-    "description": "描述该流程模版的用途",
+    "description": "描述该流程的用途",
     "workType": "可选绑定工单类型",
     "stepName": "如: 代码开发",
     "kind": "选择步骤类型",
@@ -145,7 +147,7 @@
     "empty": "暂无步骤，添加后将在这里形成流程概览",
     "next": "下一步骤",
     "editor": "步骤链编辑器",
-    "locked": "模版已启用，如需编辑步骤请先禁用。",
+    "locked": "流程已启用，如需编辑步骤请先禁用。",
     "count_other": "{{count}} 步",
     "step": "步骤 {{index}}: {{name}}",
     "kind": "类型：{{kind}}",

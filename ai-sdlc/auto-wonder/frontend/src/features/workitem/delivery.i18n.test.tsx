@@ -28,7 +28,7 @@ function route(element: React.ReactNode) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><RouterProvider router={createMemoryRouter([{ path: '/', element }])} /></QueryClientProvider>);
 }
 const language = async (locale: 'zh-CN' | 'en-US') => { await act(async () => { await i18n.changeLanguage(locale); }); };
-beforeEach(async () => { server.use(http.get('/api/dispatches/:id/runtime-trace/events', () => ok({ events: [], changed: true }))); vi.restoreAllMocks(); localStorage.clear(); useAuthStore.setState({ accessLevel: 'READ_WRITE' }); await language('zh-CN'); });
+beforeEach(async () => { server.use(http.get('/api/dispatches/:id/runtime-trace/events/window', () => ok({ events: [], changed: true }))); vi.restoreAllMocks(); localStorage.clear(); useAuthStore.setState({ accessLevel: 'READ_WRITE' }); await language('zh-CN'); });
 afterEach(async () => { Modal.destroyAll(); cleanup(); await language('zh-CN'); });
 it('formats feature durations with the current locale and retains rounding boundaries', async () => {
   expect([null, -1, 0, 59499, 59500, 61000, 3600000, 3660000].map(formatDuration)).toEqual(['', '', '0秒', '59秒', '1分', '1分1秒', '1时', '1时1分']);
@@ -168,7 +168,7 @@ it('localizes live action fallback labels and relative durations without rewriti
   expect(screen.getByText('Recent actions (1) · Trimmed')).toBeVisible();
 });
 it('preserves log filters and raw event content while drawer controls and timestamps react', async () => {
-  server.use(http.get('/api/dispatches/44/runtime-trace/events', () => ok({ changed: true, lastSeq: 1, events: [{ seq: 1, eventType: 'raw.tool', eventTime: '2026-08-01T10:20:30Z', detail: { outputSummary: authored } }] })));
+  server.use(http.get('/api/dispatches/44/runtime-trace/events/window', () => ok({ changed: true, lastSeq: 1, events: [{ seq: 1, eventType: 'raw.tool', eventTime: '2026-08-01T10:20:30Z', detail: { outputSummary: authored } }] })));
   route(<RuntimeLogDrawer dispatchId={44} onClose={() => {}} />);
   const search = screen.getByPlaceholderText('搜索事件、工具、输入或输出');
   await screen.findByText(authored);

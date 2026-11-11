@@ -35,11 +35,46 @@ class TaskPackagerCapabilityTest {
         for (var skill : catalog.list()) {
             assertTrue(entries.containsKey("capabilities/skills/" + skill.getId() + "/SKILL.md"));
         }
+        String onboarding = new String(entries.get("capabilities/skills/initialize-autowonder-workspace/SKILL.md"),
+                StandardCharsets.UTF_8);
+        for (String path : List.of("SKILL.md", "var.md", "references/repository-intake.md",
+                "references/platform-contract.md")) {
+            try (var input = getClass().getResourceAsStream("/harness/skill/" + path)) {
+                assertNotNull(input);
+                assertTrue(onboarding.contains(new String(input.readAllBytes(), StandardCharsets.UTF_8)), path);
+            }
+        }
+        assertTrue(onboarding.contains("数据库、部署和合并目标不得生成弹窗"));
+        assertTrue(onboarding.contains("不得询问项目形态、MR/PR、覆盖率或独立冒烟信息"));
         assertEquals(2, doc.getJSONArray("mcpServers").size());
         var builtin = doc.getJSONArray("mcpServers").stream().map(JSONObject.class::cast)
                 .filter(s -> "autowonder".equals(s.getString("name"))).findFirst().orElseThrow();
         assertEquals("https://new-platform.example.test/api/mcp", builtin.getString("url"));
         assertTrue(doc.getJSONArray("skills").getJSONObject(0).getString("id").startsWith("official:"));
+    }
+
+    @Test
+    void onboardingInstructionChangesInvalidateChiefIdentityAndPackageCache() throws Exception {
+        var catalog = new com.aliyun.autowonder.mcp.PlatformSkillCatalog();
+        var skills = new java.util.ArrayList<>(catalog.list());
+        var before = new com.aliyun.autowonder.agent.ChiefEffectiveConfigResolver("agent", "soul", skills)
+                .resolve(List.of());
+        var original = catalog.get(com.aliyun.autowonder.mcp.PlatformSkillCatalog.ONBOARDING_SKILL_ID);
+        var config = JSON.parseObject(original.getInstallSpec());
+        config.put("instructions", config.getString("instructions") + "\nUpdated onboarding rule");
+        skills.set(skills.indexOf(original), new com.aliyun.autowonder.mcp.dto.PlatformSkillVO(
+                original.getId(), original.getType(), original.getName(), original.getDescription(),
+                JSON.toJSONString(config)));
+        var after = new com.aliyun.autowonder.agent.ChiefEffectiveConfigResolver("agent", "soul", skills)
+                .resolve(List.of());
+        assertNotEquals(before.officialFingerprint(), after.officialFingerprint());
+        assertNotEquals(before.systemPrompt(), after.systemPrompt());
+        var packager = new TaskPackager(new InMemoryObjectStorage(), "task-packages", "https://platform.example.test");
+        var context = baseContext();
+        context.setSkills(before.capabilities());
+        String originalHash = packager.build(context).getContentHash();
+        context.setSkills(after.capabilities());
+        assertNotEquals(originalHash, packager.build(context).getContentHash());
     }
 
     @Test

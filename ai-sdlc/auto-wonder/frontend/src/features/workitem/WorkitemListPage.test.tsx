@@ -1589,6 +1589,112 @@ describe('WorkitemListPage 创建者高级筛选', () => {
   });
 });
 
+// 交付小队高级筛选（工单 #57510）：多选按 OR 生效，与创建者等条件 AND 叠加；
+// 表格、看板各列与「待我决策」汇总列共用同一份 squadIds / unassignedSquad。
+describe('WorkitemListPage 交付小队高级筛选', () => {
+  const ROWS = [
+    { id: 61, title: '范围工单一', workType: 'REQ', statusName: '待处理', statusCategory: 'NEW', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-10-03T02:00:00Z', gmtModified: '2026-10-03T02:00:00Z' },
+    { id: 62, title: '范围工单二', workType: 'REQ', statusName: '开发中', statusCategory: 'IN_PROGRESS', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', version: 1, gmtCreate: '2026-10-05T02:00:00Z', gmtModified: '2026-10-05T02:00:00Z' },
+  ];
+
+  const SQUADS = [
+    { id: 11, name: '交付一队', description: '', memberCount: 1, gmtCreate: '2026-01-01' },
+    { id: 12, name: '交付二队', description: '', memberCount: 1, gmtCreate: '2026-01-02' },
+  ];
+
+  function useRecordingServer(requests: URLSearchParams[]) {
+    server.use(http.get('/api/workitems', ({ request }) => {
+      requests.push(new URL(request.url).searchParams);
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: pageData(ROWS, 25) });
+    }));
+    server.use(http.get('/api/squads', () => HttpResponse.json({
+      success: true, code: '0', message: '', data: SQUADS, traceId: null,
+    })));
+  }
+
+  async function openAdvancedFilter() {
+    await userEvent.click(screen.getByRole('button', { name: /高级筛选/ }));
+    return screen.findByRole('dialog');
+  }
+
+  async function selectSquads(dialog: HTMLElement, labels: string[]) {
+    await userEvent.click(within(dialog).getByRole('combobox', { name: '交付小队' }));
+    for (const label of labels) {
+      const option = (await screen.findAllByText(label))
+        .find((element) => element.classList.contains('ant-select-item-option-content'));
+      expect(option).toBeTruthy();
+      await userEvent.click(option!);
+    }
+  }
+
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('sends squadIds to the table and to every kanban status column', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await selectSquads(dialog, ['交付一队', '交付二队']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      expect(requests.some(q => q.get('size') === '10' && q.get('squadIds') === '11,12')).toBe(true);
+      expect(requests.at(-1)?.get('page')).toBe('1');
+    });
+
+    await userEvent.click(screen.getByLabelText('看板视图'));
+    await waitFor(() => {
+      for (const category of ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE']) {
+        expect(requests.some(q => q.get('statusCategory') === category
+          && q.get('squadIds') === '11,12')).toBe(true);
+      }
+    });
+  });
+
+  it('sends unassignedSquad to the pending-decision summary column', async () => {
+    useAuthStore.getState().setUser({ id: 42, username: 'zhangsan', nickname: '张三', email: '' });
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await selectSquads(dialog, ['未归属小队']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      expect(requests.some(q => q.get('pendingDecisionOnly') === 'true'
+        && q.get('unassignedSquad') === 'true')).toBe(true);
+      expect(requests.every(q => !q.has('squadIds'))).toBe(true);
+    });
+  });
+
+  it('drops the squad filter from subsequent queries when the tag is cleared', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    await selectSquads(dialog, ['交付一队']);
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+    await waitFor(() => expect(requests.at(-1)?.get('squadIds')).toBe('11'));
+
+    await userEvent.click(screen.getByTestId('workitem-squad-filter-clear'));
+
+    await waitFor(() => expect(requests.at(-1)?.has('squadIds')).toBe(false));
+    expect(screen.queryByTestId('workitem-squad-filter-tag')).not.toBeInTheDocument();
+  });
+});
+
 // 标签逻辑条件（工单 #56796）：条件序列化为 tagConditions 参数，与顶部单值 tag 及其他筛选整体 AND；
 // 表格、看板各列与「待我决策」列共用同一份条件，关闭单条摘要后请求同步收窄。
 describe('WorkitemListPage 标签逻辑条件高级筛选', () => {

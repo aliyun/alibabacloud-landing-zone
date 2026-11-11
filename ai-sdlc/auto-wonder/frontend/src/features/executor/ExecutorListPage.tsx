@@ -5,7 +5,7 @@ import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { useTranslation } from 'react-i18next';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { RobotHeadIcon } from '@/shared/ui/RobotHeadIcon';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, Tag, Badge, Button, Space, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Alert, Typography, Dropdown, Tooltip, Segmented, Collapse, Drawer, Descriptions } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined, DeleteOutlined, CopyOutlined, CheckCircleFilled, CloseCircleFilled, InfoCircleFilled, CodeOutlined, EyeOutlined, EyeInvisibleOutlined, CodeSandboxOutlined, DownOutlined, BugOutlined, TeamOutlined, CloudUploadOutlined, LinkOutlined } from '@ant-design/icons';
@@ -16,12 +16,12 @@ import {
   saveExecutorLaunchCommand, applyExecutorLaunchCommand, type ExecutorRestartMode,
   updateExecutor, updateAllExecutors, getRuntimeAutoUpdate,
 } from './api';
-import { listAgents } from '@/features/agent/api';
+import { listAgents, getAgent } from '@/features/agent/api';
 import type { Agent } from '@/features/agent/api';
 import { SquadFilterBar, useSquadOptions } from '@/features/squad/SquadFilterBar';
 import { SquadTags } from '@/features/squad/SquadTags';
 import { groupBySquad, type SquadGroup } from '@/features/squad/squadGrouping';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { formatAgentSquadLabel } from './agentSquadLabel';
 import { buildExecutorAgentGroups, type ExecutorAgentGroup } from './executorAgentGroups';
 import type { ExecutorVO, IssuedExecutorVO, ExecutorLaunchConfig, ExecutorUpdateVO, ExecutorUpdateAllResultVO, ExecutorUpdateSkipVO } from './api';
@@ -40,6 +40,7 @@ import { useAuthStore } from '@/shared/auth/store';
 import { copyTextToClipboard } from '@/shared/lib/clipboard';
 import { readViewPreference, writeViewPreference } from '@/shared/lib/viewPreference';
 import { detectStartupOs } from './startupOs';
+import { parseExecutorAgentParam } from './executorAgentParam';
 
 const CLIENT_KINDS: { value: string; label: string; color: string; Icon: typeof CodeOutlined | typeof RobotHeadIcon }[] = [
   { value: 'QODER_CN_CLI', label: 'Qoder CLI CN', color: 'var(--aw-accent-text)', Icon: CodeOutlined },
@@ -339,12 +340,19 @@ export function ExecutorListPage() {
   const runAccessCommand = useAccessCommand();
   // 启动命令与令牌同属凭据面：页面按管理员权限请求，避免读写成员触发必然 403。
   const isAdmin = useAuthStore(state => state.accessLevel) === 'ADMIN';
-  const [selectedAgentId, setSelectedAgentId] = useState<number | undefined>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // 详情页「执行器」直达：解析 URL 后才发请求，非法参数不发非法 ID 请求。
+  const agentParam = parseExecutorAgentParam(searchParams);
+  const entryAgentId = agentParam.entryView ? agentParam.agentId : undefined;
+  const [selectedAgentId, setSelectedAgentId] = useState<number | undefined>(agentParam.agentId);
   // 只记录用户主动展开的分组，Agent 分组默认折叠，异步加载或刷新后新出现的分组同样保持折叠。
   const [expandedAgentKeys, setExpandedAgentKeys] = useState<string[]>([]);
   const [squadFilter, setSquadFilter] = useState<number[]>([]);
+  // view=agent 只影响本次直达视图，不覆盖用户保存的分组偏好。
   const [squadGrouped, setSquadGrouped] = useState(
-    () => readViewPreference(EXECUTORS_VIEW_STORAGE_KEY, EXECUTORS_VIEW_OPTIONS, 'squad') === 'squad',
+    () => (agentParam.entryView && agentParam.agentId != null
+      ? false
+      : readViewPreference(EXECUTORS_VIEW_STORAGE_KEY, EXECUTORS_VIEW_OPTIONS, 'squad') === 'squad'),
   );
   const [expandedSquadKeys, setExpandedSquadKeys] = useState<string[]>([]);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -431,10 +439,34 @@ export function ExecutorListPage() {
     startupForm.setFieldsValue(resolveQoderLaunchOptions(model, startupForm.getFieldsValue()));
   }, [startupKindMissing, startupQoderModelOptions, startupQoderProvider, startupForm, startupTarget]);
 
-  const { data: agents = [] } = useQuery({
+  const agentsQuery = useQuery({
     queryKey: ['agents', 1, 100],
     queryFn: () => listAgents({ page: 1, size: 100 }),
   });
+  const agents = agentsQuery.data ?? [];
+  // 直达目标可能不在前 100 个数字员工里：按 ID 补查一次，保证筛选框与分组标题显示正确名称。
+  const directAgentQuery = useQuery({
+    queryKey: ['agent', agentParam.agentId, 'executor-direct'],
+    queryFn: () => getAgent(agentParam.agentId as number),
+    enabled: agentParam.agentId != null
+      && !agentsQuery.isLoading
+      && !agents.some((agent) => agent.id === agentParam.agentId),
+    retry: false,
+  });
+  const directAgent = directAgentQuery.data;
+  // 后退/前进或刷新恢复 URL 中的目标；手动切换筛选时 URL 与状态同时更新，此处不会来回覆盖。
+  useEffect(() => {
+    setSelectedAgentId((current) => (current === agentParam.agentId ? current : agentParam.agentId));
+  }, [agentParam.agentId]);
+  const expandedEntryRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (entryAgentId == null || expandedEntryRef.current === entryAgentId) return;
+    expandedEntryRef.current = entryAgentId;
+    // 首次进入直达视图才自动展开；后续轮询或手动收起都不会让 effect 再次触发。
+    setExpandedAgentKeys([`agent-${entryAgentId}`]);
+    setSquadFilter([]);
+    setSquadGrouped(false);
+  }, [entryAgentId]);
 
   const { options: squadOptions, nameById: squadNameById, isLoading: squadsLoading } = useSquadOptions();
   // 归属标签直接取 Agent 列表自带的 squadNames：与小队详情里的成员同源，但不再为每个小队各发一次详情请求。
@@ -479,7 +511,13 @@ export function ExecutorListPage() {
     },
     onError: (error) => message.error(launchErrorMessage(error, i18n.t('executor:bulkRequestFailed'))),
   });
-  const { data: executors = [], isLoading } = useQuery({
+  const {
+    data: executors = [],
+    isLoading,
+    isError: isExecutorsError,
+    refetch: refetchExecutors,
+    isPlaceholderData,
+  } = useQuery({
     queryKey: ['executors', selectedAgentId, squadFilter],
     queryFn: () => listExecutors(selectedAgentId, squadFilter),
     // 切换筛选时保留上一份列表，避免每次筛选都先闪回空表再等新数据。
@@ -487,14 +525,20 @@ export function ExecutorListPage() {
     refetchInterval: detailId !== null || (startupTarget !== null && commandRequest) ? 3000 : 10000,
   });
 
+  // 指定了数字员工时，上一目标的缓存不能当作当前目标展示；加载期间按空列表处理。
+  const staleForTarget = isPlaceholderData && selectedAgentId !== undefined;
+
   const visibleExecutors = useMemo(() => {
+    if (staleForTarget) {
+      return [];
+    }
     if (squadFilter.length === 0) {
       return executors;
     }
     // GET /api/executors already filtered these server-side; the per-agent endpoint did not.
     return executors.filter((executor) => (executor.squadIds ?? [])
       .some((squadId) => squadFilter.includes(squadId)));
-  }, [executors, squadFilter]);
+  }, [executors, squadFilter, staleForTarget]);
 
   // 确认弹窗要说清这次会动多少台。这里复用 upgradeBlockReason 而不是只看 upgradeAvailable：
   // 服务端 updateAll 会跳过「已是目标版本」「已有任务进行中」「在线但不支持」三类，也会受理版本
@@ -504,10 +548,20 @@ export function ExecutorListPage() {
     [visibleExecutors],
   );
 
-  const agentNameById = useMemo(
-    () => new Map(agents.map((agent) => [agent.id, agent.name])),
-    [agents],
-  );
+  const agentNameById = useMemo(() => {
+    const names = new Map(agents.map((agent) => [agent.id, agent.name]));
+    if (directAgent) names.set(directAgent.id, directAgent.name);
+    return names;
+  }, [agents, directAgent]);
+
+  // 直达目标可能不在前 100 个数字员工里，补进筛选下拉，保证过滤器能显示当前目标。
+  const agentOptions = useMemo(() => {
+    const options = agents.map((agent) => ({ value: agent.id, label: agent.name }));
+    if (agentParam.agentId != null && !agents.some((agent) => agent.id === agentParam.agentId)) {
+      options.push({ value: agentParam.agentId, label: directAgent?.name ?? t('agentIdFallback', { id: agentParam.agentId }) });
+    }
+    return options;
+  }, [agents, directAgent, agentParam.agentId, t]);
 
   const executorGroups = useMemo(() => buildExecutorAgentGroups(
     visibleExecutors,
@@ -531,6 +585,29 @@ export function ExecutorListPage() {
   const handleSquadCollapseChange = (keys: string | string[]) => {
     setExpandedSquadKeys([keys].flat());
   };
+
+  /** 手动切换/清空数字员工筛选时同步 URL，避免旧直达参数在刷新或后退时再次生效。 */
+  const handleAgentFilterChange = (value?: number) => {
+    setSelectedAgentId(value);
+    const next = new URLSearchParams(searchParams);
+    if (value != null) {
+      next.set('agentId', String(value));
+    } else {
+      next.delete('agentId');
+    }
+    next.delete('view');
+    setSearchParams(next);
+  };
+
+  const clearAgentParam = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('agentId');
+    next.delete('view');
+    setSelectedAgentId(undefined);
+    setSearchParams(next);
+  };
+
+  const executorEmptyText = selectedAgentId != null ? t('noExecutorsForAgent') : t('noExecutors');
 
   const startupConfigured = isLaunchConfigured(startupConfig);
   const startupDraftValues = startupFormValues && startupConfig && !startupKindMissing ? {
@@ -556,7 +633,7 @@ export function ExecutorListPage() {
 
   // 草稿仅参与服务端预览；复制和在线应用仍先保存，再生成正式命令。
   const startupCommandQuery = useQuery({
-    queryKey: ['executor-launch-command', startupTarget?.id, startupOs, startupPreviewConfig],
+    queryKey: ['executor-launch-command', startupTarget?.id, startupOs, startupConfig?.version, startupPreviewConfig],
     queryFn: () => requestStartupCommand(startupOs),
     // 命令与令牌同属凭据面，仅管理员请求；草稿预览沿用 master 的有效性闸门。
     enabled: isAdmin && Boolean(startupTarget) && startupConfigured && !startupConfigError && startupPreviewValid,
@@ -745,6 +822,8 @@ export function ExecutorListPage() {
       setStartupConfig(null);
       setStartupConfigError(null);
       setStartupModelInvalid(false);
+      // 平台推荐版本可能在弹窗关闭期间变化：重新打开必须重新向服务端取命令，不能复用 30s 内的旧结果
+      await queryClient.invalidateQueries({ queryKey: ['executor-launch-command', record.id] });
       await loadStartupConfig(record, true);
     }, 'EXECUTOR'); // 配置表单入口由读写级 + EXECUTOR 只读域治理；命令预览/复制/应用仍要求管理员。
   };
@@ -1095,10 +1174,36 @@ export function ExecutorListPage() {
             groupLabel={squadT('groupBySquad')}
           />
           <Select placeholder={t('selectAgent')} style={{ width: 200 }} value={selectedAgentId}
-            onChange={setSelectedAgentId} allowClear showSearch optionFilterProp="label"
-            options={agents.map(a => ({ value: a.id, label: a.name }))}
+            onChange={handleAgentFilterChange} allowClear showSearch optionFilterProp="label"
+            options={agentOptions}
           />
         </Space>
+        {agentParam.invalid && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={t('agentParamInvalid')}
+            action={<Button size="small" onClick={clearAgentParam}>{t('agentParamClear')}</Button>}
+          />
+        )}
+        {directAgentQuery.isError && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={t('directAgentUnavailable')}
+          />
+        )}
+        {isExecutorsError && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={t('listLoadFailed')}
+            action={<Button size="small" onClick={() => { void refetchExecutors(); }}>{t('retry')}</Button>}
+          />
+        )}
         {squadGrouped ? (
           squadGroups.length > 0 ? (
             <Collapse
@@ -1123,9 +1228,10 @@ export function ExecutorListPage() {
               rowKey="id"
               columns={columns}
               dataSource={visibleExecutors}
-              loading={isLoading}
+              loading={isLoading || staleForTarget}
               pagination={false}
               scroll={{ x: 1270 }}
+              locale={{ emptyText: executorEmptyText }}
             />
           )
         ) : executorGroups.length > 0 ? (
@@ -1151,9 +1257,10 @@ export function ExecutorListPage() {
             rowKey="id"
             columns={columns}
             dataSource={visibleExecutors}
-            loading={isLoading}
+            loading={isLoading || staleForTarget}
             pagination={false}
             scroll={{ x: 1270 }}
+            locale={{ emptyText: executorEmptyText }}
           />
         )}
       </Card>

@@ -19,6 +19,8 @@ public class ScheduledRunMentionCandidateVO {
     private boolean isAgent;
     private boolean online;
     private String executorStatus;
+    private String squadName;
+    private boolean currentSquad;
     private boolean mentionable;
     private String mentionDisabledReason;
     private String mentionDisabledReasonCode;

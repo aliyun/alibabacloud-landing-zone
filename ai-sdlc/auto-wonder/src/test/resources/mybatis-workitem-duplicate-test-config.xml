@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE configuration PUBLIC "-//mybatis.org//DTD Config 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-config.dtd">
+<configuration>
+    <settings>
+        <setting name="mapUnderscoreToCamelCase" value="true"/>
+    </settings>
+    <plugins>
+        <plugin interceptor="com.aliyun.autowonder.workitem.duplicate.IntentCandidateStreamingInterceptor"/>
+    </plugins>
+    <environments default="test">
+        <environment id="test">
+            <transactionManager type="JDBC"/>
+            <dataSource type="UNPOOLED">
+                <property name="driver" value="org.h2.Driver"/>
+                <property name="url" value="jdbc:h2:mem:workitem_duplicate_test;MODE=MySQL;DB_CLOSE_DELAY=-1"/>
+                <property name="username" value="sa"/>
+                <property name="password" value=""/>
+            </dataSource>
+        </environment>
+    </environments>
+    <databaseIdProvider type="DB_VENDOR">
+        <property name="H2" value="autowonder-source-aware"/>
+    </databaseIdProvider>
+    <mappers>
+        <mapper resource="mapping/WorkitemDao.xml"/>
+        <mapper resource="mapping/WorkitemDuplicateCheckDao.xml"/>
+        <mapper resource="mapping/PlatformFeatureSwitchDao.xml"/>
+    </mappers>
+</configuration>
