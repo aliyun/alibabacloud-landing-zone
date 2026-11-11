@@ -58,7 +58,7 @@ class WorkitemCliDownloadTokenServiceTest {
                 McpAccessTokenService.CredentialType.LONG_LIVED, USER_ID, WORKITEM_ID);
 
         for (String command : new String[]{vo.getCommand(), vo.getPowershellCommand()}) {
-            assertTrue(command.contains("autowonder@0.9.9-rc.1"), command);
+            assertTrue(command.contains("@alicloud/autowonder@0.9.9-rc.1"), command);
             assertTrue(command.contains("http://autowonder.internal.example.com:8080"), command);
             assertTrue(command.contains("--workitem-id " + WORKITEM_ID), command);
             assertTrue(command.contains("workitem download"), command);
@@ -72,7 +72,7 @@ class WorkitemCliDownloadTokenServiceTest {
         assertTrue(vo.getCommand().startsWith("export AUTOWONDER_DOWNLOAD_TOKEN='awdownload_"));
         assertTrue(vo.getPowershellCommand().startsWith("$env:AUTOWONDER_DOWNLOAD_TOKEN='awdownload_"));
         assertEquals(
-                "npx -y autowonder@0.9.9-rc.1 workitem download"
+                "npx -y @alicloud/autowonder@0.9.9-rc.1 workitem download"
                         + " --server-url http://autowonder.internal.example.com:8080"
                         + " --workitem-id <workitem-id>"
                         + " --file <name-or-id> --output-dir <dir> --json",

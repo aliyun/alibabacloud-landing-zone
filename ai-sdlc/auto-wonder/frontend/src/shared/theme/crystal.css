@@ -82,7 +82,18 @@ html .ant-input::placeholder,html textarea::placeholder{color:var(--aw-muted);op
 .aw-page-header { height: 60px; box-sizing: border-box; padding: 0 24px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--aw-border); background: var(--aw-panel); color: var(--aw-text); min-width: 0; }
 .aw-page-header:has(.aw-sidebar-toggle) { padding-left: 4px; }
 .aw-page-header-context { display: flex; align-items: center; min-width: 0; flex: 1; overflow: hidden; }
-.aw-page-header-actions { display: flex; align-items: center; gap: 16px; min-width: 0; flex-shrink: 0; }
+.aw-page-header-actions { display: flex; align-items: center; gap: 8px; min-width: 0; flex-shrink: 0; }
+.aw-page-header-actions > :is(button[aria-label], a[aria-label], .ant-badge) {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+.aw-page-header-actions > .ant-badge > button {
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+}
+.aw-page-header-actions > .ant-btn-icon-only .anticon { font-size: 18px; }
 
 .aw-user-avatar { transition: filter 160ms ease; }
 .aw-user-avatar:hover { filter: brightness(1.08); }

@@ -47,6 +47,7 @@ export interface AgentVersionSummary {
   status: string;
   roleName: string;
   roleCode?: string | null;
+  submitNote?: string | null;
   gmtCreate: string;
 }
 
@@ -62,6 +63,9 @@ export interface AgentVersion {
   sdlcId: number | null;
   identityJson: string | null;
   evolutionMode?: EvolutionMode | null;
+  submitNote?: string | null;
+  creatorId?: number | null;
+  creatorName?: string | null;
   reviewerId: number | null;
   reviewComment: string | null;
   reviewedAt: string | null;
@@ -95,6 +99,8 @@ export interface CreateAgentRequest {
   roleCode: string;
   businessBackground?: string;
   responsibilities?: string;
+  /** Optional SDLC workflow bound to the initial draft version; null or absent keeps it unbound. */
+  sdlcId?: number | null;
 }
 
 export interface RepoPermItem {
@@ -112,6 +118,8 @@ export interface SkillItem {
 export interface MemoryRefItem {
   memoryId: number;
   source: string;
+  /** Memory title for diff display; null when it cannot be resolved. */
+  title?: string | null;
 }
 
 export interface AgentEnvironmentVariableRef {
@@ -182,8 +190,8 @@ export async function editConfig(agentId: number, config: UpdateConfigRequest): 
   return resp.data;
 }
 
-export async function submitForReview(agentId: number): Promise<Agent> {
-  const resp = await apiClient.post<Agent>(`/api/agents/${agentId}/submit`);
+export async function submitForReview(agentId: number, note?: string): Promise<Agent> {
+  const resp = await apiClient.post<Agent>(`/api/agents/${agentId}/submit`, note ? { note } : undefined);
   return resp.data;
 }
 

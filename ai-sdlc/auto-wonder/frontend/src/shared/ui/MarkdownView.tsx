@@ -1,6 +1,9 @@
 import { isValidElement, memo, useMemo } from 'react';
 import type { ComponentProps } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Button, message } from 'antd';
+import { CopyOutlined } from '@ant-design/icons';
+import { copyTextToClipboard } from '@/shared/lib/clipboard';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { remarkAutolinkBoundary } from '@/shared/lib/remarkAutolinkBoundary';
@@ -17,6 +20,7 @@ interface MarkdownViewProps {
   mentionNames?: Array<string | null | undefined>;
   artifacts?: Artifact[];
   onArtifactClick?: (artifact: Artifact) => void;
+  copyCodeBlocks?: boolean;
 }
 
 export const markdownAllowedElements = [
@@ -122,17 +126,24 @@ function mermaidSource(children: unknown): string | null {
   return childrenText(props.children).replace(/\r?\n$/, '');
 }
 
-export const MarkdownView = memo(function MarkdownView({ content, className, mentionNames, artifacts, onArtifactClick }: MarkdownViewProps) {
+export const MarkdownView = memo(function MarkdownView({ content, className, mentionNames, artifacts, onArtifactClick, copyCodeBlocks = false }: MarkdownViewProps) {
   const { t } = useTranslation('shared');
+  const plainText = (content?.length ?? 0) > 100_000;
   const renderedContent = useMemo(() => {
+    if (plainText) return content;
     const protectedContent = protectMermaidBlocks(content ?? '');
     const processed = highlightMentions(linkArtifacts(protectedContent.content, artifacts), mentionNames);
     return restoreMermaidBlocks(processed, protectedContent.blocks);
-  }, [content, artifacts, mentionNames]);
+  }, [content, artifacts, mentionNames, plainText]);
   const artifactsById = useMemo(
     () => new Map((artifacts ?? []).map((artifact) => [String(artifact.id), artifact])),
     [artifacts],
   );
+
+  if (plainText) return <div className={className}>
+    <div role="status">{t('markdown.largeContentPlainText')}</div>
+    <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: '60vh', overflow: 'auto' }}>{content}</pre>
+  </div>;
 
   const renderArtifactButton = (label: string, artifact: Artifact | null | undefined) => (
     <button
@@ -183,6 +194,20 @@ export const MarkdownView = memo(function MarkdownView({ content, className, men
             if (diagram != null) {
               return <MermaidDiagram code={diagram} />;
             }
+            const code = _node?.children[0];
+            if (copyCodeBlocks && code?.type === 'element' && code.tagName === 'code'
+              && isValidElement<{ children?: unknown }>(children) && typeof children.props.children === 'string') {
+              const text = children.props.children.replace(/\r?\n$/, '');
+              return <div className="aw-markdown-copy-block">
+                <Button type="text" size="small" className="aw-markdown-copy-button"
+                  icon={<CopyOutlined />} aria-label={t('copy.title')} title={t('copy.title')}
+                  onClick={() => { void copyTextToClipboard(text).then(ok => {
+                    if (ok) void message.success(t('copy.plainCopied'));
+                    else void message.error(t('copy.failed'));
+                  }); }} />
+                <pre {...props} style={{ maxWidth: '100%', overflowX: 'auto' }}>{children}</pre>
+              </div>;
+            }
             return (
               <pre {...props} style={{ maxWidth: '100%', overflowX: 'auto' }}>{children}</pre>
             );
@@ -208,6 +233,9 @@ export const MarkdownView = memo(function MarkdownView({ content, className, men
               datatype?: string;
             };
             const dataType = spanProps['data-type'] ?? spanProps.dataType ?? spanProps.datatype;
+            if (dataType === 'warning') {
+              return <strong style={{ color: '#cf1322', fontWeight: 700 }}>{props.children}</strong>;
+            }
             if (dataType === 'artifact') {
               const artifactId = String(spanProps['data-artifact-id'] ?? spanProps.dataArtifactId ?? spanProps.dataartifactid ?? '');
               const label = childrenText(props.children);

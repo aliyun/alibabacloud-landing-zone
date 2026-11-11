@@ -2,7 +2,7 @@ import { afterEach as resetAfterEach } from 'vitest';
 import { act, waitFor } from '@testing-library/react';
 import { i18n } from '@/shared/i18n';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 
 let mockCandidates: ScheduledRunMentionCandidate[] = [];
 const mentionCandidatesMock = vi.fn();
@@ -197,6 +197,40 @@ describe('RunCommentInput mention menu', () => {
       targetAgentIds: [],
       targetHumanIds: [],
     });
+  });
+
+  it('groups the current run squad first and labels every squad name', () => {
+    mockCandidates = [
+      { userId: 12, targetType: 'AGENT', name: '缺陷分析数字人', displayId: '40013', isAgent: true, online: true, mentionable: true, squadName: '交付一队', currentSquad: true },
+      { userId: 21, targetType: 'AGENT', name: '归档数字人', displayId: '40021', isAgent: true, online: false, mentionable: false, mentionDisabledReason: '不在本次运行的冻结快照中，无法 @ 触发执行', squadName: '其他小队', currentSquad: false },
+      { userId: 5, targetType: 'HUMAN', name: '张三', displayId: null, isAgent: false, online: true, mentionable: true },
+    ];
+    const onSubmit = vi.fn();
+    render(<RunCommentInput runId={10482} onSubmit={onSubmit} />);
+    openMentionMenu('@');
+
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getByText('当前交付小队：交付一队')).toBeInTheDocument();
+    expect(within(menu).getByText('其他小队成员')).toBeInTheDocument();
+
+    const items = screen.getAllByRole('menuitem');
+    expect(items).toHaveLength(3);
+    expect(items[0]).toHaveTextContent('缺陷分析数字人（交付一队）');
+    expect(items[1]).toHaveTextContent('归档数字人（其他小队）');
+    expect(items[2]).toHaveTextContent('张三');
+
+    fireEvent.click(items[0]);
+    expect(getTextArea().value).toBe('@缺陷分析数字人 ');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('falls back to a bare current-squad header when the squad name is missing', () => {
+    mockCandidates = [
+      { userId: 33, targetType: 'AGENT', name: '未命名小队助手', isAgent: true, online: true, mentionable: true, currentSquad: true, squadName: null },
+    ];
+    render(<RunCommentInput runId={10482} onSubmit={vi.fn()} />);
+    openMentionMenu('@');
+    expect(within(screen.getByRole('menu')).getByText('当前交付小队')).toBeInTheDocument();
   });
 });
 

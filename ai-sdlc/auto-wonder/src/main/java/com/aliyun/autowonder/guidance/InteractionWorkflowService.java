@@ -9,7 +9,9 @@ import com.aliyun.autowonder.dispatch.DispatchPauseService;
 import com.aliyun.autowonder.dispatch.DispatchRecoveryService;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
@@ -45,10 +47,16 @@ public class InteractionWorkflowService {
     private final TransactionTemplate transactionTemplate;
     private final WorkitemDao workitemDao;
     private DispatchRecoveryService recovery;
+    private ExecutionAvailabilityService executionAvailabilityService;
 
     @org.springframework.beans.factory.annotation.Autowired
     public void setRecovery(DispatchRecoveryService value) {
         this.recovery = value;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setExecutionAvailabilityService(ExecutionAvailabilityService value) {
+        this.executionAvailabilityService = value;
     }
 
     public InteractionWorkflowService(DispatchDao dispatchDao, DispatchService dispatchService,
@@ -97,6 +105,17 @@ public class InteractionWorkflowService {
             log.warn("interaction plan SDLC unresolved sideDispatchId={} targetAgentId={}",
                     sideDispatchId, targetAgentId);
             return null;
+        }
+        if (executionAvailabilityService != null) {
+            try {
+                executionAvailabilityService.requireStartable(tenantId, targetAgentId, targetSdlcId);
+            } catch (BizException unavailable) {
+                // A new interaction execution is rejected without touching the existing run:
+                // in-flight messages and result handling stay untouched.
+                log.info("interaction plan rejected by management state sideDispatchId={} targetAgentId={} reason={}",
+                        sideDispatchId, targetAgentId, ExecutionAvailabilityService.failureReason(unavailable));
+                return null;
+            }
         }
 
         ReworkDecision decision = transactionTemplate.execute(status -> {
@@ -367,19 +386,16 @@ public class InteractionWorkflowService {
         SdlcStepDO targetStep = targetSdlcId == null || rework.getSdlcStepId() == null ? null
                 : sdlcResolver.resolveStep(tenantId, targetSdlcId, String.valueOf(rework.getSdlcStepId()), null);
         if (targetSdlcId != null && rework.getSdlcStepId() != null && targetStep == null) {
-            // A queued step can outlive a change to the agent default. Preserve only a still-valid bound flow.
-            WorkitemDO bound = lockWorkitemIfPresent(tenantId, rework.getWorkitemId());
-            if (bound != null && bound.getSdlcId() != null) {
-                targetStep = sdlcResolver.resolveStep(tenantId, bound.getSdlcId(),
-                        String.valueOf(rework.getSdlcStepId()), null);
-                if (targetStep != null) targetSdlcId = bound.getSdlcId();
-            }
+            targetStep = sdlcResolver.firstStep(tenantId, targetSdlcId);
         }
         if (targetStep == null) {
             throw new IllegalStateException("comment rework target is no longer valid");
         }
+        if (executionAvailabilityService != null) {
+            executionAvailabilityService.requireStartable(tenantId, rework.getAgentId(), targetSdlcId);
+        }
         workitemService.rebindForInteractionRework(tenantId, rework.getWorkitemId(),
-                rework.getAgentId(), targetSdlcId, rework.getSdlcStepId(), 0L);
+                rework.getAgentId(), targetSdlcId, targetStep.getId(), 0L);
         if (!dispatchService.releaseInteractionRework(tenantId, rework.getId())) {
             throw new IllegalStateException("comment rework release lost optimistic-lock race");
         }

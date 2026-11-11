@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import KpiDetailModal from './KpiDetailModal';
 import { server } from '@/test/mocks/server';
 
-function renderModal(kpiKey: 'runningWorkitems' | 'todayCompletedTasks' | 'weekCompletedTasks' | null) {
+function renderModal(kpiKey: 'todayCreatedWorkitems' | 'runningWorkitems' | 'todayCompletedTasks' | 'weekCompletedTasks' | null) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -57,6 +57,39 @@ describe('KpiDetailModal', () => {
 
     await waitFor(() => {
       expect(screen.getByText('#303 重构数据层')).toBeInTheDocument();
+    });
+  });
+
+  it('shows today created workitems and renders only the id when the title is empty', async () => {
+    server.use(
+      http.get('/api/dashboard/created/today', () =>
+        ok([
+          { workitemId: 501, title: '整理新建工单' },
+          { workitemId: 502, title: null },
+        ]),
+      ),
+    );
+
+    renderModal('todayCreatedWorkitems');
+
+    await waitFor(() => {
+      expect(screen.getByText('#501 整理新建工单')).toBeInTheDocument();
+    });
+    const untitled = screen.getByText('#502');
+    expect(untitled.textContent?.trim()).toBe('#502');
+    expect(screen.getByRole('link', { name: '#501 整理新建工单' })).toHaveAttribute('href', '/workitems/501');
+    expect(screen.getAllByRole('link')).toHaveLength(2);
+  });
+
+  it('shows the dedicated empty state when no workitem was created today', async () => {
+    server.use(
+      http.get('/api/dashboard/created/today', () => ok([])),
+    );
+
+    renderModal('todayCreatedWorkitems');
+
+    await waitFor(() => {
+      expect(screen.getByText('暂无今日新建的工单')).toBeInTheDocument();
     });
   });
 

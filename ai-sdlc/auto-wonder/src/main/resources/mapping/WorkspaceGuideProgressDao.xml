@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workspace.guide.WorkspaceGuideProgressDao">
+
+    <resultMap id="WorkspaceGuideProgressResultMap" type="com.aliyun.autowonder.workspace.guide.WorkspaceGuideProgressDO">
+        <id column="id" property="id"/>
+        <result column="workspace_id" property="workspaceId"/>
+        <result column="user_id" property="userId"/>
+        <result column="status" property="status"/>
+        <result column="stage" property="stage"/>
+        <result column="substep" property="substep"/>
+        <result column="conversation_id" property="conversationId"/>
+        <result column="client_message_id" property="clientMessageId"/>
+        <result column="version" property="version"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+        <result column="creator_id" property="creatorId"/>
+        <result column="modifier_id" property="modifierId"/>
+    </resultMap>
+
+    <insert id="insertIfAbsent" parameterType="com.aliyun.autowonder.workspace.guide.WorkspaceGuideProgressDO">
+        INSERT INTO workspace_guide_progress
+            (workspace_id, user_id, status, stage, substep, version, creator_id, modifier_id)
+        VALUES
+            (#{workspaceId}, #{userId}, #{status}, #{stage}, #{substep}, 0, #{creatorId}, #{modifierId})
+        ON DUPLICATE KEY UPDATE id = id
+    </insert>
+
+    <select id="findByWorkspaceAndUser" resultMap="WorkspaceGuideProgressResultMap">
+        SELECT id, workspace_id, user_id, status, stage, substep, conversation_id, client_message_id,
+               version, gmt_create, gmt_modified, creator_id, modifier_id
+        FROM workspace_guide_progress
+        WHERE workspace_id = #{workspaceId} AND user_id = #{userId}
+        LIMIT 1
+    </select>
+
+    <update id="updateProgress">
+        UPDATE workspace_guide_progress
+        SET status = #{status},
+            stage = #{stage},
+            substep = #{substep},
+            conversation_id = #{conversationId},
+            client_message_id = #{clientMessageId},
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id} AND version = #{expectedVersion}
+    </update>
+</mapper>

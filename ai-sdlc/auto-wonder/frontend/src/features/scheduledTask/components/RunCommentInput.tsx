@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent } from 'react';
 import { Button, Input, Space } from 'antd';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { useScheduledTaskRunMentionCandidates } from '../hooks';
@@ -63,6 +63,13 @@ const activeMentionMenuItemStyle: CSSProperties = {
 const disabledMentionMenuItemStyle: CSSProperties = {
   color: 'var(--aw-muted)',
   cursor: 'not-allowed',
+};
+
+const mentionGroupHeaderStyle: CSSProperties = {
+  padding: '6px 12px 2px',
+  color: 'var(--aw-muted)',
+  fontSize: 12,
+  fontWeight: 600,
 };
 
 function findActiveMentionQuery(value: string, caretIndex: number): string | null {
@@ -130,15 +137,21 @@ export function RunCommentInput({ runId, onSubmit, loading }: RunCommentInputPro
           targetType,
           disabled,
           disabledReason,
+          squadName: candidate.squadName ?? null,
+          currentSquad: Boolean(candidate.currentSquad),
           label: disabled ? (
             <span style={{ color: 'var(--aw-muted)' }}>
               <span>@{candidate.name}</span>
+              {candidate.squadName ? <span>{t('comment.mentionSquadName', { squad: candidate.squadName })}</span> : null}
               <span style={{ marginLeft: 6 }}>{targetType === 'AGENT' ? t('labels.agent') : t('comment.human')}</span>
               <span style={{ marginLeft: 6 }}>{t('comment.disabledReason', { reason: disabledReason })}</span>
             </span>
           ) : (
             <span>
               <span style={mentionOptionHighlightStyle}>@{candidate.name}</span>
+              {candidate.squadName ? (
+                <span style={{ color: 'var(--aw-muted)' }}>{t('comment.mentionSquadName', { squad: candidate.squadName })}</span>
+              ) : null}
               <span style={{ marginLeft: 6, color: targetType === 'AGENT' ? 'var(--aw-warning)' : 'var(--aw-accent-text)' }}>
                 {targetType === 'AGENT' ? t('labels.agent') : t('comment.human')}
               </span>
@@ -149,6 +162,12 @@ export function RunCommentInput({ runId, onSubmit, loading }: RunCommentInputPro
         };
       });
   }, [candidates, mentionQuery, t]);
+
+  // 只有后端返回小队信息时才插入分组标题；旧数据与降级场景保持原来的平铺菜单。
+  const showMentionSquadGroups = useMemo(
+    () => mentionOptions.some((option) => option.currentSquad || option.squadName != null),
+    [mentionOptions],
+  );
 
   const enabledOptions = useMemo(() => mentionOptions.filter((option) => !option.disabled), [mentionOptions]);
   const activeOption = enabledOptions[activeMentionIndex];
@@ -285,26 +304,38 @@ export function RunCommentInput({ runId, onSubmit, loading }: RunCommentInputPro
       <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
         {mentionQuery !== null && mentionOptions.length > 0 && (
           <div role="menu" style={mentionMenuStyle}>
-            {mentionOptions.map((option) => {
+            {mentionOptions.map((option, index) => {
               const active = !option.disabled && option === activeOption;
+              const startsGroup = showMentionSquadGroups
+                && (index === 0 || Boolean(mentionOptions[index - 1]?.currentSquad) !== option.currentSquad);
               return (
-                <button
-                  key={option.key}
-                  type="button"
-                  role="menuitem"
-                  aria-current={active ? 'true' : undefined}
-                  aria-disabled={option.disabled ? 'true' : undefined}
-                  disabled={option.disabled}
-                  style={{
-                    ...mentionMenuItemStyle,
-                    ...(option.disabled ? disabledMentionMenuItemStyle : {}),
-                    ...(active ? activeMentionMenuItemStyle : {}),
-                  }}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => { if (!option.disabled) insertMention(option); }}
-                >
-                  {option.label}
-                </button>
+                <Fragment key={option.key}>
+                  {startsGroup ? (
+                    <div role="presentation" style={mentionGroupHeaderStyle}>
+                      {option.currentSquad
+                        ? (option.squadName
+                          ? t('comment.mentionGroupCurrentSquad', { squad: option.squadName })
+                          : t('comment.mentionGroupCurrentSquadUnknown'))
+                        : t('comment.mentionGroupOthers')}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-current={active ? 'true' : undefined}
+                    aria-disabled={option.disabled ? 'true' : undefined}
+                    disabled={option.disabled}
+                    style={{
+                      ...mentionMenuItemStyle,
+                      ...(option.disabled ? disabledMentionMenuItemStyle : {}),
+                      ...(active ? activeMentionMenuItemStyle : {}),
+                    }}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => { if (!option.disabled) insertMention(option); }}
+                  >
+                    {option.label}
+                  </button>
+                </Fragment>
               );
             })}
           </div>

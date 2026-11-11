@@ -52,7 +52,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { cleanup(); message.destroy(); vi.restoreAllMocks(); await locale('zh-CN'); });
 
-it('updates the cached hub and Aone form, held results and delayed feedback without changing URL, drafts or raw data', async () => {
+it('updates the Aone page, held results and delayed feedback without changing URL, drafts or raw data', async () => {
   const user = localeUser(); const search = deferred<unknown>(); const test = deferred<unknown>();
   const success = vi.spyOn(message, 'success');
   let listCalls = 0; let searchBody: unknown; let testBody: unknown; let syncBody: unknown;
@@ -63,15 +63,13 @@ it('updates the cached hub and Aone form, held results and delayed feedback with
     http.post('/api/integrations/aone/bindings/test', async ({ request }) => { testBody = await request.json(); return HttpResponse.json(ok(await test.promise)); }),
     http.post('/api/integrations/aone/bindings/17/sync-now', async ({ request }) => { syncBody = await request.json(); return HttpResponse.json(ok({ imported: 1, updated: 2, commentsImported: 0, workitemIds: ['raw-工单'] })); }),
   );
-  const { router, container } = mount(<IntegrationsHubPage />); await screen.findByText('<b>项目</b>');
+  const { router, container } = mount(<WorkitemIntegrationPage />); await screen.findByText('<b>项目</b>');
   const secret = screen.getByLabelText('Access Secret'); const staff = screen.getByLabelText('写回身份 StaffId');
   const keyword = screen.getByPlaceholderText('项目名或关键字');
   const ids = screen.getByRole('textbox', { name: '外部工单 ID' });
   await user.type(screen.getByLabelText('Base URL'), 'https://aone.example.test'); await user.type(secret, 'synthetic-secret'); await user.type(keyword, '原始关键词');
   await user.click(screen.getByRole('button', { name: '搜索可托管项目' })); await screen.findByText('请输入写回身份 StaffId');
   await locale('en-US');
-  expect(screen.getByRole('heading', { name: 'Integrations' })).toBeInTheDocument();
-  expect(screen.getByRole('tab', { name: 'Work item platforms' })).toBeInTheDocument();
   expect(await screen.findByText('Enter the writeback StaffId')).toBeInTheDocument();
   expect(screen.queryByText('Select at least one managed project')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Writeback StaffId')).toBe(staff);

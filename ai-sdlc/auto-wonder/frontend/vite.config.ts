@@ -4,6 +4,15 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  // Java deployments replace the entire asset set. Keep all executable code and
+  // styles in the initial load so open tabs never need retired release chunks.
+  // Measured 2026-11-05: entry JS gzip ~1.75 -> ~2.97 MB (+1.22 MB); all JS
+  // stays ~2.98 MB. This trades first-load cost for uninterrupted later navigation.
+  // Restore splitting only with cross-release asset retention; see docs/frontend-deployment.md.
+  build: {
+    cssCodeSplit: false,
+    rollupOptions: { output: { inlineDynamicImports: true } },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -13,11 +22,11 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:7001',
+        target: process.env.AW_LOCAL_API_URL || 'http://localhost:7001',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:7001',
+        target: (process.env.AW_LOCAL_API_URL || 'http://localhost:7001').replace(/^http/, 'ws'),
         ws: true,
       },
     },

@@ -1,11 +1,15 @@
 import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
-import { Form, Input, Button, Alert, Card, Typography } from 'antd';
+import { Form, Input, Button, Alert, Card, Modal, Typography } from 'antd';
 import { CloseCircleFilled, EyeOutlined, EyeInvisibleOutlined, LoadingOutlined } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { register } from './api';
+import { SSO_LOGIN_CONFIG_QUERY_KEY, fetchSsoLoginConfig } from './ssoApi';
 import { ApiError } from '@/shared/types/common';
+import type { AdministratorContact } from '@/shared/types/administrator';
+import { AdministratorContactList } from '@/shared/ui/AdministratorContactList';
 import { AuthEntryShell } from './AuthEntryShell';
 
 const { Title } = Typography;
@@ -15,14 +19,47 @@ export function RegisterPage() {
   const [form] = Form.useForm();
   useLocalizedValidation(form);
   const [error, setError] = useState<{ message: string } | { key: 'register.failed' } | null>(null);
+  const [pendingContacts, setPendingContacts] = useState<AdministratorContact[] | null>(null);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  // 注册配置读取失败时保持原有注册表单；服务端仍会独立拒绝已关闭的注册。
+  const configQuery = useQuery({
+    queryKey: SSO_LOGIN_CONFIG_QUERY_KEY,
+    queryFn: fetchSsoLoginConfig,
+    retry: false,
+  });
+  const registrationEnabled = configQuery.data?.registrationEnabled ?? true;
+
+  if (!registrationEnabled) {
+    return (
+      <AuthEntryShell>
+        <Card className="auth-entry-card" variant="borderless">
+          <Title level={3} className="auth-entry-title">{t('register.title')}</Title>
+          <Alert
+            type="warning"
+            showIcon
+            message={t('register.disabled')}
+            description={t('register.disabledHint')}
+            style={{ marginBottom: 16 }}
+          />
+          <Link to="/login?local=1">
+            <Button block>{t('register.backToLogin')}</Button>
+          </Link>
+        </Card>
+      </AuthEntryShell>
+    );
+  }
 
   const onFinish = async (values: { username: string; password: string; email: string; nickname: string }) => {
     setError(null);
     setLoading(true);
     try {
-      await register(values);
+      const created = await register(values);
+      if (created.reviewRequired) {
+        // 待审：先弹窗展示管理员联系方式，确定后进入登录页。
+        setPendingContacts(created.administratorContacts ?? []);
+        return;
+      }
       navigate('/login');
     } catch (e) {
       if (e instanceof ApiError) {
@@ -33,6 +70,11 @@ export function RegisterPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const closePending = () => {
+    setPendingContacts(null);
+    navigate('/login');
   };
 
   const errorText = error && ('key' in error ? t(error.key) : error.message);
@@ -65,6 +107,22 @@ export function RegisterPage() {
           </div>
         </Form>
       </Card>
+      <Modal
+        open={pendingContacts !== null}
+        title={t('register.pendingTitle')}
+        closable={false}
+        maskClosable={false}
+        onOk={closePending}
+        okText={t('login.pendingOk')}
+        cancelButtonProps={{ style: { display: 'none' } }}
+      >
+        <p>{t('register.pendingHint')}</p>
+        <AdministratorContactList
+          contacts={pendingContacts ?? []}
+          title={t('contacts.title')}
+          emptyText={t('contacts.empty')}
+        />
+      </Modal>
     </AuthEntryShell>
   );
 }

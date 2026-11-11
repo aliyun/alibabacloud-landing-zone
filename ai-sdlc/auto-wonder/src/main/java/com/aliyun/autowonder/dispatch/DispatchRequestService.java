@@ -298,7 +298,8 @@ public class DispatchRequestService {
         return d;
     }
     private void lockSubject(DispatchDO d) {
-        jdbc.update("INSERT IGNORE INTO workitem_execution_control (tenant_id,workitem_id) VALUES (?,?)", d.getTenantId(), d.getWorkitemId());
+        jdbc.update("INSERT INTO workitem_execution_control (tenant_id,workitem_id) VALUES (?,?) "
+                + "ON DUPLICATE KEY UPDATE workitem_id=workitem_id", d.getTenantId(), d.getWorkitemId());
         jdbc.queryForObject("SELECT closed FROM workitem_execution_control WHERE tenant_id=? AND workitem_id=? FOR UPDATE", Integer.class, d.getTenantId(), d.getWorkitemId());
     }
     private static void invalid(String key, String diagnostic) { throw BizException.keyed(ErrorCode.PARAM_INVALID, key, null, diagnostic); }

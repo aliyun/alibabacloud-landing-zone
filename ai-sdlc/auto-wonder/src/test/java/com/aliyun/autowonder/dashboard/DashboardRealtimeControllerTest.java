@@ -5,6 +5,7 @@ import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.dashboard.dto.CostCompositionVO;
 import com.aliyun.autowonder.dashboard.dto.CostKpiVO;
 import com.aliyun.autowonder.dashboard.dto.RealtimeDashboardVO;
+import com.aliyun.autowonder.dashboard.dto.TodayCreatedWorkitemVO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -76,6 +77,34 @@ class DashboardRealtimeControllerTest {
                 .andExpect(jsonPath("$.data.kpi.cost.range").value(90))
                 .andExpect(jsonPath("$.data.costComposition.range").value(90));
         verify(service).getRealtime(9L, 90, "all");
+    }
+
+    @Test
+    void servesTodayCreatedDrillDownForTheCurrentWorkspace() throws Exception {
+        AutoWonderContext.get().setCurrentWorkspaceId(9L);
+        TodayCreatedWorkitemVO titled = new TodayCreatedWorkitemVO();
+        titled.setWorkitemId(501L);
+        titled.setTitle("修复登录页");
+        TodayCreatedWorkitemVO untitled = new TodayCreatedWorkitemVO();
+        untitled.setWorkitemId(502L);
+        untitled.setTitle(null);
+        when(service.getTodayCreatedWorkitems(9L)).thenReturn(List.of(titled, untitled));
+
+        http.perform(get("/api/dashboard/created/today"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].workitemId").value(501))
+                .andExpect(jsonPath("$.data[0].title").value("修复登录页"))
+                .andExpect(jsonPath("$.data[1].workitemId").value(502));
+
+        verify(service).getTodayCreatedWorkitems(9L);
+    }
+
+    @Test
+    void rejectsTodayCreatedDrillDownWithoutWorkspaceMembership() throws Exception {
+        http.perform(get("/api/dashboard/created/today")).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
     }
 
     private static RealtimeDashboardVO costPayload(int range, String agentId, String scopedTotal, String allTotal) {

@@ -4,20 +4,19 @@ import { i18n } from '@/shared/i18n';
 import { useTranslation } from 'react-i18next';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useMemo, useState } from 'react';
-import { Card, Tag, Button, Space, Popconfirm, message, Modal, Form, Input, Select, Tabs, Pagination, Spin, Empty } from 'antd';
+import { Card, Tag, Button, Space, Popconfirm, message, Modal, Form, Input, Select, Tabs, Spin, Empty, Alert } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listSdlcTemplatesPage, createSdlcTemplate, deleteSdlcTemplate, enableSdlcTemplate, disableSdlcTemplate } from './api';
+import { listSdlcTemplatesPage, listAllSdlcTemplates, createSdlcTemplate, deleteSdlcTemplate, enableSdlcTemplate, disableSdlcTemplate } from './api';
 import type { SdlcTemplate } from './api';
 import type { ColumnsType } from 'antd/es/table';
-import { SquadTemplateGallery } from './SquadTemplateGallery';
 import { SquadWorkflowPanel } from './workflow/SquadWorkflowPanel';
 import { SDLC_AI_ENABLED } from './featureFlags';
 import { SquadFilterBar, useSquadOptions } from '@/features/squad/SquadFilterBar';
 import { SquadTags } from '@/features/squad/SquadTags';
-import { groupBySquad } from '@/features/squad/squadGrouping';
+import { buildSdlcGroupViews } from './squadView';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { readViewPreference, writeViewPreference } from '@/shared/lib/viewPreference';
 import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
@@ -26,6 +25,8 @@ import { EllipsisText } from '@/shared/ui/EllipsisText';
 const SDLCS_VIEW_STORAGE_KEY = 'autowonder.sdlcs.view';
 const SDLCS_VIEW_OPTIONS = ['list', 'grouped'] as const;
 const SDLCS_PAGE_SIZE_STORAGE_KEY = 'autowonder.sdlcs.pageSize';
+
+const squadGroupBodyId = (key: string) => `sdlc-group-body-${key}`;
 
 const statusMap: Record<string, { color: string; key: 'status.draft' | 'status.enabled' | 'status.disabled' }> = {
   DRAFT: { color: 'default', key: 'status.draft' as const },
@@ -54,13 +55,23 @@ export function SdlcListPage() {
   useLocalizedValidation(form, createOpen);
   const { options: squadOptions, nameById: squadNameById, isLoading: squadsLoading } = useSquadOptions();
 
-  const { data: result, isLoading } = useQuery({
+  const { data: result, isLoading: pageLoading } = useQuery({
     queryKey: ['sdlcs', 'page', page, size, squadFilter],
     queryFn: () => listSdlcTemplatesPage({ page, size, squadIds: squadFilter }),
+    enabled: !grouped,
+  });
+
+  // The grouped view groups by squad, so it must load every workflow: a page boundary would split
+  // one squad into several groups. The flat list view keeps the server-side paging above.
+  const allQuery = useQuery({
+    queryKey: ['sdlcs', 'all', squadFilter],
+    queryFn: () => listAllSdlcTemplates({ squadIds: squadFilter }),
+    enabled: grouped,
   });
 
   const data = result?.list ?? [];
   const total = result?.total ?? 0;
+  const allTotal = allQuery.data?.total ?? 0;
 
   // The squad filter is applied server-side, so page 1 is the only page that can hold the new result set.
   useEffect(() => {
@@ -69,15 +80,30 @@ export function SdlcListPage() {
 
   // Deleting the last row (or a concurrent change) can invalidate the current page.
   useEffect(() => {
-    if (result) {
+    if (!grouped && result) {
       const lastPage = Math.max(1, Math.ceil(result.total / size));
       if (page > lastPage) setPage(lastPage);
     }
-  }, [result, page, size]);
+  }, [grouped, result, page, size]);
+
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroup = (key: string) => setCollapsedGroups((previous) => {
+    const next = new Set(previous);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
 
   const squadGroups = useMemo(
-    () => groupBySquad(data, (sdlc) => sdlc.squadIds, squadNameById),
-    [data, squadNameById, squadT],
+    () => (allQuery.data
+      ? buildSdlcGroupViews({
+        items: allQuery.data.items,
+        squadOptions,
+        nameById: squadNameById,
+        selectedSquadIds: squadFilter,
+      })
+      : []),
+    [allQuery.data, squadOptions, squadNameById, squadFilter, squadT],
   );
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['sdlcs'] });
@@ -211,14 +237,41 @@ export function SdlcListPage() {
               </div>
               <Card className="aw-content-card">
                 {grouped ? (
-                  <Spin spinning={isLoading}>
-                    {!isLoading && data.length === 0 ? (
-                      <Empty description={t('list.empty')} />
-                    ) : (
-                      <>
-                        {squadGroups.map((group) => (
+                  allQuery.isError ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      message={t('messages.loadFailed')}
+                      action={<Button size="small" onClick={() => { void allQuery.refetch(); }}>{t('messages.retry')}</Button>}
+                    />
+                  ) : allQuery.isLoading ? (
+                    <div style={{ padding: 24, textAlign: 'center' }}><Spin /></div>
+                  ) : (
+                    <>
+                      {squadGroups.length === 0 ? (
+                        <Empty description={t('list.empty')} />
+                      ) : squadGroups.map((group) => {
+                        const bodyId = squadGroupBodyId(group.key);
+                        const expanded = !collapsedGroups.has(group.key);
+                        return (
                           <section key={group.key} className="sdlc-squad-group" style={{ marginBottom: 20 }}>
-                            <Space className="sdlc-squad-group-header" style={{ marginBottom: 8 }}>
+                            <div
+                              className="sdlc-squad-group-header"
+                              style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                              onClick={(event) => {
+                                if ((event.target as HTMLElement).closest('a')) return;
+                                toggleGroup(group.key);
+                              }}
+                            >
+                              <Button
+                                type="text"
+                                size="small"
+                                aria-expanded={expanded}
+                                aria-controls={bodyId}
+                                aria-label={expanded ? t('list.collapseGroup') : t('list.expandGroup')}
+                                icon={expanded ? <DownOutlined aria-hidden="true" /> : <RightOutlined aria-hidden="true" />}
+                                onClick={(event) => { event.stopPropagation(); toggleGroup(group.key); }}
+                              />
                               <strong>
                                 {group.squadId == null ? (
                                   group.label
@@ -227,34 +280,30 @@ export function SdlcListPage() {
                                 )}
                               </strong>
                               <span style={{ color: 'var(--aw-muted)', fontSize: 12 }}>{t('list.groupCount', { count: group.items.length })}</span>
-                            </Space>
-                            <Table
-                              rowKey="id"
-                              columns={columns}
-                              dataSource={group.items}
-                              loading={isLoading}
-                              pagination={false}
-                            />
+                            </div>
+                            <div id={bodyId}>
+                              {expanded && (
+                                <Table
+                                  rowKey="id"
+                                  columns={columns}
+                                  dataSource={group.items}
+                                  pagination={false}
+                                  locale={{ emptyText: t('list.empty') }}
+                                />
+                              )}
+                            </div>
                           </section>
-                        ))}
-                      </>
-                    )}
-                    <Pagination
-                      current={page}
-                      pageSize={size}
-                      total={total}
-                      showSizeChanger
-                      showTotal={(count) => t('list.total', { count })}
-                      onChange={(p, ps) => { setPage(ps !== size ? 1 : p); setSize(ps); }}
-                      style={{ marginTop: 8, textAlign: 'right' }}
-                    />
-                  </Spin>
+                        );
+                      })}
+                      <div style={{ marginTop: 8, textAlign: 'right' }}>{t('list.total', { count: allTotal })}</div>
+                    </>
+                  )
                 ) : (
                   <Table
                     rowKey="id"
                     columns={columns}
                     dataSource={data}
-                    loading={isLoading}
+                    loading={pageLoading}
                     pagination={{
                       current: page, pageSize: size, total,
                       onChange: (p, ps) => { setPage(ps !== size ? 1 : p); setSize(ps); },
@@ -296,11 +345,6 @@ export function SdlcListPage() {
               </Modal>
             </>
           ),
-        },
-        {
-          key: 'gallery',
-          label: t('list.gallery'),
-          children: <SquadTemplateGallery />,
         },
         {
           key: 'workflow',

@@ -81,6 +81,9 @@ apiClient.defaults.adapter = async (config) => {
 useAuthStore.getState().setUser({ id: 7, username: 'owner', nickname: 'Owner', email: '' });
 useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'Project', description: '' }, 'ADMIN');
 useAuthStore.setState({ accessLevel: 'ADMIN' });
+// Synthetic authenticated identity for the in-memory business WebSocket fixture.
+const claims = btoa(JSON.stringify({ uid: 7, workspace: 1, exp: Math.floor(Date.now() / 1000) + 3600 }));
+useAuthStore.getState().setTokens(`fixture.${claims}.test-only`, 'fixture-refresh');
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 createRoot(document.getElementById('root')!).render(

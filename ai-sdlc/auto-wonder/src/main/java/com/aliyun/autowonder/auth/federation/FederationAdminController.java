@@ -5,8 +5,10 @@ import com.aliyun.autowonder.auth.federation.dto.CreateConnectionRequest;
 import com.aliyun.autowonder.auth.federation.dto.CreateIdpRequest;
 import com.aliyun.autowonder.auth.federation.dto.FederationConnectionVO;
 import com.aliyun.autowonder.auth.federation.dto.FederationIdpVO;
+import com.aliyun.autowonder.auth.federation.dto.PlatformAuthConfigVO;
 import com.aliyun.autowonder.auth.federation.dto.UpdateConnectionRequest;
 import com.aliyun.autowonder.auth.federation.dto.UpdateIdpRequest;
+import com.aliyun.autowonder.auth.federation.dto.UpdatePlatformAuthConfigRequest;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -29,12 +31,28 @@ import java.util.List;
 public class FederationAdminController {
 
     private final FederationRegistryService registryService;
+    private final PlatformAuthConfigService authConfigService;
     private final SystemAdminService systemAdminService;
 
     public FederationAdminController(FederationRegistryService registryService,
+                                     PlatformAuthConfigService authConfigService,
                                      SystemAdminService systemAdminService) {
         this.registryService = registryService;
+        this.authConfigService = authConfigService;
         this.systemAdminService = systemAdminService;
+    }
+
+    @GetMapping("/auth-config")
+    public Result<PlatformAuthConfigVO> authConfig() {
+        requireAdmin("查看平台认证配置");
+        return Result.ok(authConfigService.current());
+    }
+
+    @PutMapping("/auth-config")
+    public Result<PlatformAuthConfigVO> updateAuthConfig(
+            @RequestBody(required = false) UpdatePlatformAuthConfigRequest request) {
+        requireAdmin("更新平台认证配置");
+        return Result.ok(authConfigService.update(request));
     }
 
     @GetMapping("/idps")

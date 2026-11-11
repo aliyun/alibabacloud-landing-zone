@@ -21,6 +21,7 @@ class NotifyServiceLocaleTest {
     @Import({NotifyService.class, UserSettingService.class})
     static class Beans {
         @Bean NotificationDao rows() { return mock(NotificationDao.class); }
+        @Bean NotificationPersister persister(NotificationDao rows) { return new NotificationPersister(rows); }
         @Bean NotifyPrefDao prefs() { return mock(NotifyPrefDao.class); }
         @Bean UserSettingDao settings() { return mock(UserSettingDao.class); }
         @Bean CaptureChannel channel() { return new CaptureChannel(); }
@@ -122,7 +123,7 @@ class NotifyServiceLocaleTest {
         assertSame(error, assertThrows(IllegalStateException.class, () -> f.service.notify(e)));
         verifyNoInteractions(f.dao); assertTrue(f.delivered.isEmpty());
         LocaleContextHolder.setLocale(Locale.US);
-        var absent = assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> f.service.delete(1, 8, 3));
+        var absent = assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> f.service.delete(1, 8L, 3));
         assertEquals("通知不存在", absent.getMessage());
         assertEquals("Notification not found", com.aliyun.autowonder.common.result.Result.fail(absent).getMessage());
     }

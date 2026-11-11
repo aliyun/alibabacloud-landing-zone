@@ -1,8 +1,8 @@
 import { useTranslation } from 'react-i18next';
 import { Alert, Button, Empty, List, Modal, Spin } from 'antd';
 import type { KpiKey } from './KpiRow';
-import type { CompletedWorkitem, RunningWorkitem } from './api';
-import { useRunningWorkitems, useTodayCompleted, useWeekCompleted } from './hooks';
+import type { CompletedWorkitem, RunningWorkitem, TodayCreatedWorkitem } from './api';
+import { useRunningWorkitems, useTodayCompleted, useTodayCreatedWorkitems, useWeekCompleted } from './hooks';
 
 interface Props {
   kpiKey: KpiKey | null;
@@ -10,6 +10,7 @@ interface Props {
 }
 
 const TITLES = {
+  todayCreatedWorkitems: 'kpi.todayCreatedWorkitems',
   runningWorkitems: 'kpi.runningWorkitems',
   todayCompletedTasks: 'kpi.todayCompletedTasks',
   weekCompletedTasks: 'kpi.weekCompletedTasks',
@@ -18,13 +19,16 @@ const TITLES = {
 export default function KpiDetailModal({ kpiKey, onClose }: Props) {
   const { t } = useTranslation(['insights', 'common']);
   const open = kpiKey != null;
+  const showCreatedToday = kpiKey === 'todayCreatedWorkitems';
+  const createdToday = useTodayCreatedWorkitems(showCreatedToday);
   const completedToday = useTodayCompleted(kpiKey === 'todayCompletedTasks');
   const completedWeek = useWeekCompleted(kpiKey === 'weekCompletedTasks');
   const showRunning = kpiKey === 'runningWorkitems';
   const running = useRunningWorkitems(showRunning);
 
-  const query = showRunning ? running : kpiKey === 'todayCompletedTasks' ? completedToday : completedWeek;
+  const query = showRunning ? running : showCreatedToday ? createdToday : kpiKey === 'todayCompletedTasks' ? completedToday : completedWeek;
   const isLoading =
+    (showCreatedToday && createdToday.isLoading) ||
     (kpiKey === 'todayCompletedTasks' && completedToday.isLoading) ||
     (kpiKey === 'weekCompletedTasks' && completedWeek.isLoading) ||
     (showRunning && running.isLoading);
@@ -37,6 +41,18 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
         : [];
 
   const runningList: RunningWorkitem[] = showRunning ? (running.data ?? []) : [];
+
+  const workitemList: (TodayCreatedWorkitem | CompletedWorkitem)[] = showCreatedToday
+    ? (createdToday.data ?? [])
+    : completedList;
+
+  const renderWorkitemRow = (item: TodayCreatedWorkitem | CompletedWorkitem) => (
+    <List.Item className="insight-detail-row">
+      <a href={`/workitems/${item.workitemId}`} style={{ fontWeight: 500, overflowWrap: 'anywhere', minWidth: 0 }}>
+        #{item.workitemId} {item.title ?? ''}
+      </a>
+    </List.Item>
+  );
 
   return (
     <Modal
@@ -71,19 +87,10 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
             )}
           />
         )
-      ) : completedList.length === 0 ? (
-        <Empty description={t('kpi.emptyCompleted')} />
+      ) : workitemList.length === 0 ? (
+        <Empty description={showCreatedToday ? t('kpi.emptyTodayCreated') : t('kpi.emptyCompleted')} />
       ) : (
-        <List
-          dataSource={completedList}
-          renderItem={(item) => (
-            <List.Item className="insight-detail-row">
-              <a href={`/workitems/${item.workitemId}`} style={{ fontWeight: 500, overflowWrap: 'anywhere', minWidth: 0 }}>
-                #{item.workitemId} {item.title}
-              </a>
-            </List.Item>
-          )}
-        />
+        <List dataSource={workitemList} renderItem={renderWorkitemRow} />
       )}
     </Modal>
   );

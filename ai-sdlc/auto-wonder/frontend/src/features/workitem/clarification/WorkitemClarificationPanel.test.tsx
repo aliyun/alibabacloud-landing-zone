@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
+import type { HttpHandler } from 'msw';
 import { server } from '@/test/mocks/server';
 import {
   WorkitemClarificationPanel,
@@ -17,6 +18,8 @@ import {
   writeClarificationPrefill,
 } from './prefill';
 import { CLARIFICATION_THEME } from './theme';
+import { mockLatestClarificationConversation } from '@/test/mocks/clarificationLatest';
+import type { ClarificationConversation } from './types';
 import { readClarifyView, writeClarifyView } from '../clarifyView';
 import { copyTextToClipboard } from '@/shared/lib/clipboard';
 import type { Artifact } from '@/shared/types/workitem';
@@ -49,9 +52,20 @@ type PanelTestProps = {
   initialAgentId?: number | null;
   initialConversationId?: number | null;
   onContextChange?: (context: ReportedClarifyContext) => void;
+  /** 服务端「最近一次会话」返回值，默认 null（该工单没有会话）。 */
+  latest?: Partial<ClarificationConversation> | null;
+  /** 自定义 /latest handler（加载态、失败等场景），优先于 latest。 */
+  latestHandler?: HttpHandler;
 };
 
-function renderPanel(props: PanelTestProps = {}) {
+function renderPanel({ latest, latestHandler, ...props }: PanelTestProps = {}) {
+  // 必须在测试自己的 :conversationId 详情 handler 之后注册：MSW 运行时 handler
+  // 后注册者优先，否则 latest 会被详情 handler 当成会话 id 匹配掉。
+  if (latestHandler) {
+    server.use(latestHandler);
+  } else {
+    mockLatestClarificationConversation(latest ?? null);
+  }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -245,7 +259,8 @@ describe('WorkitemClarificationPanel', () => {
     );
 
     renderPanel();
-    expect(screen.getByText('选择小队和数字员工')).toBeInTheDocument();
+    // 首帧是「解析最近一次会话」加载态：该工单没有会话时才落到选人页。
+    expect(await screen.findByText('选择小队和数字员工')).toBeInTheDocument();
 
     const comboboxes = await screen.findAllByRole('combobox');
     await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
@@ -261,7 +276,7 @@ describe('WorkitemClarificationPanel', () => {
   it('always offers the squad-member picker for a fresh panel', async () => {
     mockSquads();
     renderPanel();
-    expect(screen.getByText('选择小队和数字员工')).toBeInTheDocument();
+    expect(await screen.findByText('选择小队和数字员工')).toBeInTheDocument();
     // Antd Select renders its placeholder inside a span, not an input attribute;
     // wait for the squad input to become enabled (squads loaded).
     const comboboxes = await screen.findAllByRole('combobox');
@@ -675,6 +690,7 @@ describe('WorkitemClarificationPanel', () => {
         HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversationState }),
       ),
     );
+    mockLatestClarificationConversation();
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = render(
@@ -1780,8 +1796,8 @@ describe('WorkitemClarificationPanel', () => {
       mockSquads();
       renderPanel({ fullscreen: true });
 
-      const column = screen.getByTestId('clarification-selection-column');
-      expect(column).toContainElement(screen.getByText('选择小队和数字员工'));
+      const column = await screen.findByTestId('clarification-selection-column');
+      expect(column).toContainElement(await screen.findByText('选择小队和数字员工'));
       expectFluidColumn(column);
 
       // 等小队加载落定，避免 act 警告
@@ -1793,8 +1809,8 @@ describe('WorkitemClarificationPanel', () => {
       mockSquads();
       renderPanel();
 
-      const column = screen.getByTestId('clarification-selection-column');
-      expect(column).toContainElement(screen.getByText('选择小队和数字员工'));
+      const column = await screen.findByTestId('clarification-selection-column');
+      expect(column).toContainElement(await screen.findByText('选择小队和数字员工'));
       expect(column.style.maxWidth).toBe('');
       expect(column.style.margin).toBe('');
       expect(column.style.width).toBe('');
@@ -1824,6 +1840,8 @@ describe('WorkitemClarificationPanel', () => {
     /** 外层会把面板上报的上下文写回 URL 再作为 prop 回流，props 要能中途换。
      *  工单 56281 之后恢复不再依赖交付进度里的数字人列表，所以只剩 props 这一条。 */
     function renderRestorable(props: PanelTestProps = {}) {
+      // 没有 URL 上下文的用例同样会解析「最近一次会话」：默认无记录。
+      mockLatestClarificationConversation();
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       const element = (nextProps: PanelTestProps) => (
         <QueryClientProvider client={queryClient}>
@@ -2418,6 +2436,7 @@ describe('WorkitemClarificationPanel', () => {
       writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
       mockSquads();
       mockConversationWithTurns(42);
+      mockLatestClarificationConversation();
       const onAgentConfirmed = vi.fn();
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       // 每次调用都产出一个新的箭头函数身份，稳定的 spy 只用来计数

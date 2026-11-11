@@ -43,6 +43,8 @@ public enum ConversationMode {
                     + "submissionId; never ask the user and never call any other write tool.",
             true),
 
+    WORKITEM_PRD("\n\n当前为 PRD 设计会话。仅生成设计，不执行交付或修改仓库。需要澄清时用文字回复，不调用交互工具。", true),
+
     /** 内部情报渠道：没有真人在线回答，交互工具的提问会掉进黑洞。 */
     PLATFORM_INTERNAL("", true),
 
@@ -58,6 +60,7 @@ public enum ConversationMode {
     }
 
     public static ConversationMode of(String channel) {
+        if ("WORKITEM_PRD".equals(channel)) return WORKITEM_PRD;
         if (channel == null) {
             return GENERIC;
         }

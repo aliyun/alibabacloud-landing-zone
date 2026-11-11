@@ -34,6 +34,10 @@ public class DispatchRecoveryService {
     private long retryDelayMs = 30_000L;
     /** A stop raised moments ago may still race the dispatch handshake; only older ones self-heal. */
     private static final long STOP_SELF_HEAL_GRACE_MS = 120_000L;
+    /** Result delivery is retried by the runtime; only a long-silent execution is released. */
+    private static final long UNDELIVERED_COMPLETION_HOLD_MS = 15 * 60_000L;
+    /** Recent non-GC checkpoints scanned when a reported seq lost precision. */
+    static final int CHECKPOINT_EVIDENCE_SCAN = 8;
     /** Callers that need to react to a closed delivery match this key instead of the rendered text. */
     public static final String DELIVERY_CLOSED_MESSAGE_KEY = "dispatch.recovery.closed";
     private final JdbcTemplate jdbc;
@@ -83,7 +87,9 @@ public class DispatchRecoveryService {
 
     private void lockSubject(DispatchDO d) {
         if (d.executionSourceType() != ExecutionSourceType.WORKITEM) return;
-        jdbc.update("INSERT IGNORE INTO workitem_execution_control (tenant_id,workitem_id) VALUES (?,?)",
+        // Acquire an exclusive duplicate-key lock before the locking read, avoiding shared-lock upgrades.
+        jdbc.update("INSERT INTO workitem_execution_control (tenant_id,workitem_id) VALUES (?,?) "
+                        + "ON DUPLICATE KEY UPDATE workitem_id=workitem_id",
                 d.getTenantId(), d.getWorkitemId());
         jdbc.queryForObject("SELECT closed FROM workitem_execution_control WHERE tenant_id=? AND workitem_id=? FOR UPDATE",
                 Integer.class, d.getTenantId(), d.getWorkitemId());
@@ -93,6 +99,9 @@ public class DispatchRecoveryService {
     public void lockWorkitemControl(DispatchDO d) {
         lockSubject(d);
     }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DispatchWorkflowSnapshotStore workflowSnapshots;
 
     public boolean closed(long tenantId, long workitemId) {
         return !jdbc.queryForList("SELECT 1 FROM workitem_execution_control WHERE tenant_id=? AND workitem_id=? AND closed=1",
@@ -158,7 +167,10 @@ public class DispatchRecoveryService {
 
     public void insert(DispatchDO d, WorkitemControlEventWriter.ExecutionControlEvent creationEvent) {
         tx.executeWithoutResult(s -> {
-            lockSubject(d); requireOpen(d); dispatches.insert(d);
+            lockSubject(d); requireOpen(d);
+            var snapshot = workflowSnapshots == null ? null : workflowSnapshots.prepare(d);
+            dispatches.insert(d);
+            if (workflowSnapshots != null) workflowSnapshots.insert(d, snapshot);
             if (creationEvent != null && controlEvents != null) {
                 controlEvents.recordExecution(d.getTenantId(), d.getWorkitemId(),
                         creationEvent.setDispatchId(d.getId()));
@@ -198,6 +210,50 @@ public class DispatchRecoveryService {
             }
             return changed;
         });
+    }
+
+    /**
+     * A paused source whose explicit resume was rejected only at final admission must return
+     * to PAUSED, keeping its checkpoint and a new explicit resume possible. Runs under the
+     * workitem control lock and only when the source still carries the resume cancellation and
+     * no other approved successor exists.
+     *
+     * @return true when the source was restored (or is already authoritative elsewhere); false
+     *         when this dispatch was not a paused-resume row
+     */
+    public boolean restorePausedAfterRejectedAdmission(DispatchDO rejected) {
+        if (rejected == null || rejected.executionSourceType() != ExecutionSourceType.WORKITEM
+                || rejected.getResumeFromDispatchId() == null) {
+            return false;
+        }
+        return tx.execute(s -> {
+            lockSubject(rejected);
+            DispatchDO source = dispatches.findById(rejected.getResumeFromDispatchId());
+            if (!cancelledByResume(source)) {
+                return false;
+            }
+            List<DispatchDO> rows = dispatches.listByWorkitem(rejected.getTenantId(), rejected.getWorkitemId());
+            if (rows != null) {
+                for (DispatchDO row : rows) {
+                    if (row != null && row.getId() != null && row.getId() > source.getId()
+                            && !Objects.equals(row.getId(), rejected.getId())
+                            && Objects.equals(row.getResumeFromDispatchId(), source.getId())
+                            && !DispatchStatus.isTerminal(row.getStatus())
+                            && !DispatchStatus.CANCELED.equals(row.getStatus())
+                            && !DispatchStatus.PAUSED.equals(row.getStatus())) {
+                        return false; // a newer approved successor owns the next execution
+                    }
+                }
+            }
+            return transition(source, DispatchStatus.PAUSED, null, null, null, null, "") == 1;
+        });
+    }
+
+    private static boolean cancelledByResume(DispatchDO source) {
+        return source != null
+                && DispatchStatus.CANCELED.equals(source.getStatus())
+                && source.getError() != null
+                && source.getError().startsWith(DispatchFailureReason.MANUAL_CONTINUE);
     }
 
     private void projectTerminal(DispatchDO d, String status, String error) {
@@ -384,7 +440,7 @@ public class DispatchRecoveryService {
         if (d == null || d.getExecutorId() == null || !cancelRequested(d.getTenantId(), d.getId())) return;
         if (jdbc.update("UPDATE dispatch_recovery SET last_sent_at=NOW() WHERE tenant_id=? AND dispatch_id=? AND stop_pending=1 "
                 + "AND (last_sent_at IS NULL OR last_sent_at < ?)", d.getTenantId(), d.getId(), new Timestamp(System.currentTimeMillis() - 30_000L)) == 0) return;
-        try { transport.pause(d); }
+        try { transport.stop(d); }
         catch (RuntimeException e) { log.warn("cancel control delivery deferred dispatchId={}", d.getId(), e); }
     }
 
@@ -629,6 +685,19 @@ public class DispatchRecoveryService {
         }).toList();
         var restarts = restartStore == null ? List.<Map<String, Object>>of()
                 : restartStore.listRounds(tenantId, workitemId, 10);
+        if (workflowSnapshots != null) {
+            for (var round : restarts) {
+                int number = ((Number) round.get("restart_round")).intValue();
+                var snapshot = workflowSnapshots.restartIntent(tenantId, workitemId,
+                        com.aliyun.autowonder.workitem.DeliveryRestartStore.restartIdempotencyKey(workitemId, number));
+                if (snapshot != null) {
+                    round.put("source_dispatch_id", snapshot.sourceDispatchId());
+                    round.put("sdlc_id", snapshot.sdlcId());
+                    round.put("sdlc_step_id", snapshot.stepId());
+                    round.put("snapshot_sha256", snapshot.sha256());
+                }
+            }
+        }
         boolean closed = closed(tenantId, workitemId);
         boolean allTerminal = dispatches.listByWorkitem(tenantId, workitemId).stream()
                 .allMatch(d -> DispatchStatus.isTerminal(d.getStatus()));
@@ -806,6 +875,50 @@ public class DispatchRecoveryService {
         });
     }
 
+    /**
+     * Releases an execution whose runtime already persisted a terminal checkpoint but whose
+     * result never reached the platform. The runtime keeps such an execution in
+     * ownedDispatchIds until the result is delivered, so the abandoned-execution path never
+     * sees it and the row would stay RUNNING forever. No successor is created and no success
+     * is invented: the row becomes PAUSED with COMPLETION_DELIVERY_UNCONFIRMED so the user can
+     * continue from the durable checkpoint or end the execution without an executor ack.
+     */
+    public boolean holdUndeliveredCompletion(DispatchDO candidate, String expectedSessionId) {
+        if (executorRegistry == null || candidate == null || candidate.getExecutorId() == null
+                || candidate.executionSourceType() != ExecutionSourceType.WORKITEM) return false;
+        return tx.execute(s -> {
+            lockSubject(candidate);
+            DispatchDO current = dispatches.findById(candidate.getId());
+            if (current == null || !Set.of(DispatchStatus.ACKED, DispatchStatus.RUNNING).contains(current.getStatus())
+                    || !Objects.equals(current.getExecutorId(), candidate.getExecutorId()) || fenced(current)) return false;
+            Long evidenceAt = terminalCheckpointEvidenceTime(current);
+            if (evidenceAt == null) return false;
+            var snapshot = executorRegistry.currentDispatchSnapshot(current.getExecutorId())
+                    .filter(value -> value.authoritativeInventory() && value.inventoryReady() && value.inventoryError() == null)
+                    .filter(value -> Objects.equals(expectedSessionId, value.sessionId()))
+                    .filter(value -> !value.runningDispatchIds().contains(current.getId()))
+                    .orElse(null);
+            if (snapshot == null) return false;
+            // dispatch.gmt_modified is refreshed by status transitions and running-heartbeat
+            // leases, so it cannot measure result-delivery silence. Keep the delivery retry
+            // window from the terminal checkpoint's own persistence time instead: a freshly
+            // uploaded checkpoint whose result is still being retried must not be paused,
+            // because a late TASK_RESULT is rejected once the row is PAUSED.
+            if (evidenceAt > Math.min(System.currentTimeMillis(), snapshot.reportedAt())
+                    - UNDELIVERED_COMPLETION_HOLD_MS) {
+                return false;
+            }
+            if (dispatches.updateStatus(current.getId(), current.getTenantId(), DispatchStatus.PAUSED,
+                    null, null, null, null, "COMPLETION_DELIVERY_UNCONFIRMED", current.getVersion(), 0L) != 1) {
+                return false;
+            }
+            audit(current.getTenantId(), current.getId(), 0, "DISPATCH_PAUSED", "DISPATCH");
+            log.warn("released undelivered terminal execution dispatchId={} executorId={} "
+                    + "reason=COMPLETION_DELIVERY_UNCONFIRMED", current.getId(), current.getExecutorId());
+            return true;
+        });
+    }
+
     /** Count only this automatic inventory-loss chain, never the workitem's global attempt. */
     private boolean inventoryRecoveryBudgetExhausted(DispatchDO current) {
         DispatchDO child = current;
@@ -844,22 +957,80 @@ public class DispatchRecoveryService {
                 || completed.getSeq() <= terminal.getSeq()) return false;
         try {
             var result = JSON.parseObject(completed.getDetailJson());
-            var receipt = JSON.parseObject(terminal.getDetailJson());
-            if (result == null || receipt == null || !"completed".equals(result.getString("state"))
-                    || !"terminal".equals(receipt.getString("reason"))) return false;
-            Long seq = receipt.getLong("checkpointSeq");
-            String hash = receipt.getString("sha256");
-            if (seq == null || seq <= 0 || hash == null) return false;
-            if (hash.startsWith("sha256:")) hash = hash.substring(7);
-            if (hash.isBlank()) return false;
-            var checkpoint = checkpoints.findByDispatchAndSeq(dispatch.getTenantId(), dispatch.getId(), seq);
-            return checkpoint != null && !checkpoint.isGcPending()
-                    && Objects.equals(checkpoint.getExecutorId(), dispatch.getExecutorId())
-                    && checkpoint.getOssRef() != null && !checkpoint.getOssRef().isBlank()
-                    && checkpoint.getSha256() != null && checkpoint.getSha256().equalsIgnoreCase(hash);
+            if (result == null || !"completed".equals(result.getString("state"))) return false;
         } catch (IllegalArgumentException | com.aliyun.autowonder.json.JSONException malformedEvidence) {
             return false;
         }
+        return hasTerminalCheckpointEvidence(dispatch);
+    }
+
+    /** The runtime's terminal checkpoint proves the execution ended, without claiming a result. */
+    private boolean hasTerminalCheckpointEvidence(DispatchDO dispatch) {
+        return terminalEvidence(dispatch) != null;
+    }
+
+    private Long terminalCheckpointEvidenceTime(DispatchDO dispatch) {
+        var evidence = terminalEvidence(dispatch);
+        return evidence == null ? null : evidence.persistedAt();
+    }
+
+    private record TerminalEvidence(Long persistedAt) {
+    }
+
+    /**
+     * A valid durable terminal checkpoint. Its persistence time is the later of the runtime
+     * event and the stored checkpoint row, and may be null for legacy rows: validity decides
+     * whether an execution already ended, while only the delivery grace needs the timestamp.
+     */
+    private TerminalEvidence terminalEvidence(DispatchDO dispatch) {
+        if (runtimeEvents == null || checkpoints == null) return null;
+        var terminal = runtimeEvents.findLatestByDispatchAndType(
+                dispatch.getTenantId(), dispatch.getId(), "runtime.checkpoint_saved");
+        if (terminal == null || terminal.getSeq() == null) return null;
+        try {
+            var receipt = JSON.parseObject(terminal.getDetailJson());
+            if (receipt == null || !"terminal".equals(receipt.getString("reason"))) return null;
+            Long seq = receipt.getLong("checkpointSeq");
+            String hash = receipt.getString("sha256");
+            if (seq == null || seq <= 0 || hash == null) return null;
+            if (hash.startsWith("sha256:")) hash = hash.substring(7);
+            if (hash.isBlank()) return null;
+            var checkpoint = checkpointEvidence(dispatch, seq, hash);
+            if (checkpoint == null || checkpoint.isGcPending()
+                    || !Objects.equals(checkpoint.getExecutorId(), dispatch.getExecutorId())
+                    || checkpoint.getOssRef() == null || checkpoint.getOssRef().isBlank()
+                    || checkpoint.getSha256() == null || !checkpoint.getSha256().equalsIgnoreCase(hash)) {
+                return null;
+            }
+            Long persistedAt = null;
+            if (terminal.getGmtCreate() != null) persistedAt = terminal.getGmtCreate().getTime();
+            else if (terminal.getEventTime() != null) persistedAt = terminal.getEventTime().getTime();
+            if (checkpoint.getGmtCreate() != null) {
+                persistedAt = persistedAt == null ? checkpoint.getGmtCreate().getTime()
+                        : Math.max(persistedAt, checkpoint.getGmtCreate().getTime());
+            }
+            return new TerminalEvidence(persistedAt);
+        } catch (IllegalArgumentException | com.aliyun.autowonder.json.JSONException malformedEvidence) {
+            return null;
+        }
+    }
+
+    /**
+     * Resolves the stored checkpoint a terminal event points at. Older daemon builds report
+     * the payload through {@code map[string]any}, which rounds UnixNano-scale numbers to the
+     * nearest float64, so the reported seq can miss the stored row by a few hundred
+     * nanoseconds. An exact match stays authoritative; otherwise the durable content digest
+     * identifies the same checkpoint, and the caller still validates executor, OSS reference
+     * and hash before accepting it as evidence.
+     */
+    private DispatchCheckpointDO checkpointEvidence(DispatchDO dispatch, long seq, String hash) {
+        var exact = checkpoints.findByDispatchAndSeq(dispatch.getTenantId(), dispatch.getId(), seq);
+        if (exact != null) return exact;
+        for (var candidate : checkpoints.listLatestByDispatch(
+                dispatch.getTenantId(), dispatch.getId(), CHECKPOINT_EVIDENCE_SCAN)) {
+            if (candidate.getSha256() != null && candidate.getSha256().equalsIgnoreCase(hash)) return candidate;
+        }
+        return null;
     }
 
     /** Reconciles only one executor after an authoritative heartbeat. */
@@ -899,6 +1070,13 @@ public class DispatchRecoveryService {
      * acknowledgement window fell into a network outage leaves stale recovery state.
      * Young stop requests keep the plain retry path so a dispatch still being handed
      * out cannot be mistaken for a stopped one.
+     *
+     * <p>Ownership alone is not enough either way: the runtime also keeps an execution in
+     * ownedDispatchIds while its result is still waiting for delivery, but a recovery that
+     * is between claims is owned and not running too, with its old provider process not yet
+     * cleaned up. Releasing ownership therefore stays sufficient on its own, while an owned
+     * but not-running dispatch is only treated as stopped when a durable terminal checkpoint
+     * proves its session already ended and only result delivery remains.
      */
     private boolean runtimeProvesStopped(DispatchDO d, Timestamp requestedAt) {
         if (executorRegistry == null || d == null || d.getExecutorId() == null) return false;
@@ -910,7 +1088,9 @@ public class DispatchRecoveryService {
         if (!executorRegistry.isOnline(executorId)) return false;
         return executorRegistry.currentDispatchSnapshot(executorId)
                 .filter(snapshot -> snapshot.inventoryReady() && snapshot.inventoryError() == null)
-                .map(snapshot -> !snapshot.ownedDispatchIds().contains(d.getId()))
+                .map(snapshot -> !snapshot.ownedDispatchIds().contains(d.getId())
+                        || (!snapshot.runningDispatchIds().contains(d.getId())
+                                && hasTerminalCheckpointEvidence(d)))
                 .orElse(false);
     }
 }

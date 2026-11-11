@@ -28,6 +28,19 @@ class FrontendPackagingPomTest {
     }
 
     @Test
+    void productionBundleHasAnExplicitBuildOnlyHeapBudget() throws Exception {
+        Document pom = parsePom();
+        var xpath = XPathFactory.newInstance().newXPath();
+        String executions = "//profile[id='auto-wonder']//execution";
+        assertEquals("3072", textOfFirst(pom, "frontend.node.heap.mb"));
+        assertEquals("--max-old-space-size=${frontend.node.heap.mb}",
+                xpath.evaluate(executions + "[id='npm-build']/configuration/environmentVariables/NODE_OPTIONS", pom).trim(),
+                "The production bundle must not inherit the CI worker's implicit 2 GiB heap limit");
+        assertEquals("", xpath.evaluate(executions + "[id='npm-ci']/configuration/environmentVariables/NODE_OPTIONS", pom),
+                "The build heap budget must not change dependency installation");
+    }
+
+    @Test
     void packageLifecycleFailsWhenFrontendStaticAssetsAreMissing() throws Exception {
         String xml = Files.readString(Path.of("pom.xml"));
         String packageJson = Files.readString(Path.of("frontend/package.json"));

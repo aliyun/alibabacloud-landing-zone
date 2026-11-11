@@ -22,7 +22,7 @@ it('returns fresh bilingual labels with canonical option values and evolution co
   expect(getAgentRoleCodeOptions()).toContainEqual({ value: 'QA', label: 'QA (QA engineer)' });
   expect(getEvolutionModeOptions()).toEqual([
     { value: 'MANUAL', label: 'Manual' },
-    { value: 'ASSISTED', label: 'Assisted review (recommended)' },
+    { value: 'ASSISTED', label: 'Automatic memory (recommended)' },
     { value: 'AUTO_PROPOSAL', label: 'Automatic proposals' },
   ]);
   await i18n.changeLanguage('zh-CN');

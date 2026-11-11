@@ -252,7 +252,9 @@ public enum ErrorCode {
     FEDERATION_CONNECTION_NAME_CONFLICT("36011", "登录方式名称已存在"),
     FEDERATION_BIND_TICKET_INVALID("36012", "绑定请求已失效，请重新发起绑定"),
     FEDERATION_CONNECTION_IN_USE("36013", "该登录方式下仍有已绑定的企业身份，无法删除"),
+    FEDERATION_PROVISION_FAILED("36014", "自动创建账号失败，请重新发起登录或联系管理员"),
     // 37xxx 平台用户管理
+    USER_REGISTRATION_DISABLED("37011", "平台已关闭自行注册"),
     USER_ADMIN_DELETE_SELF_FORBIDDEN("37001", "不能删除当前登录用户自己"),
     USER_ADMIN_OWNER_BLOCKED("37002", "该用户是工作空间所有者，请先转让工作空间后再删除"),
     USER_ADMIN_SOLE_PLATFORM_ADMIN_BLOCKED("37003", "该用户是唯一平台管理员，无法删除"),
@@ -263,6 +265,14 @@ public enum ErrorCode {
     USER_ADMIN_USERNAME_RESERVED("37008", "该用户名为平台保留名称"),
     USER_ADMIN_PASSWORD_MISMATCH("37009", "两次输入的密码不一致"),
     USER_ADMIN_DELETE_CONFLICT("37010", "删除失败：占位用户名已被其他账号占用，请先处理冲突账号后再试"),
+    USER_REGISTRATION_PENDING_REVIEW("37012", "新用户注册请联系管理员审核后登录"),
+    USER_REGISTRATION_REVIEW_ALREADY_HANDLED("37013", "该注册申请已被处理，请刷新后重试"),
+    USER_REGISTRATION_REVIEW_DECISION_INVALID("37014", "审核结论不合法"),
+    // 平台级空间创建权限（全局开关 / 个人授权）
+    WORKSPACE_CREATION_PERMISSION_DENIED("37015", "无权限创建空间，请联系平台管理员开启"),
+    WORKSPACE_CREATION_PERMISSION_GLOBAL_OVERRIDE("37016", "请先到平台管理 → 开关配置关闭「默认允许用户创建空间」"),
+    WORKSPACE_CREATION_PERMISSION_READONLY("37017", "该账号当前不可修改空间创建权限"),
+    WORKSPACE_CREATION_REQUEST_ALREADY_GRANTED("37018", "当前账号已具备空间创建权限"),
     // 38xxx 小队工作流图
     SQUAD_WORKFLOW_EMPTY_SQUAD("38001", "小队暂无可分析的线上成员配置"),
     SQUAD_WORKFLOW_INPUT_TOO_LARGE("38002", "小队线上配置过大，无法生成协作图"),
@@ -278,7 +288,56 @@ public enum ErrorCode {
     SQUAD_WORKFLOW_VERSION_CONFLICT("38012", "生成状态已变化，请刷新后重试"),
     SQUAD_WORKFLOW_INVALID_REQUEST("38013", "小队工作流请求参数不合法"),
     SQUAD_WORKFLOW_SUBMISSION_LIMIT("38014", "提交次数已用尽，本次生成已失败"),
-    SQUAD_WORKFLOW_NOT_READY("38015", "小队工作流尚未生成完成");
+    SQUAD_WORKFLOW_NOT_READY("38015", "小队工作流尚未生成完成"),
+
+    FRONTEND_PROJECT_PROBE_NOT_FOUND("39201", "前端项目探测任务不存在"),
+    FRONTEND_PROJECT_PROFILE_NOT_FOUND("39202", "前端项目画像不存在"),
+    FRONTEND_PROJECT_PROBE_ACTIVE("39203", "该仓库已有进行中的探测任务，请等待其结束"),
+    FRONTEND_PROJECT_CHECKOUT_FAILED("39204", "仓库检出失败，无法探测前端项目"),
+    FRONTEND_PROJECT_VERSION_CONFLICT("39205", "探测任务状态已变化，请刷新后重试"),
+    FRONTEND_PROJECT_NO_CANDIDATE("39206", "未在该仓库中识别出前端应用"),
+
+    PRD_DESIGN_NOT_FOUND("39101", "PRD 设计不存在"),
+    PRD_VERSION_NOT_FOUND("39102", "PRD 设计版本不存在"),
+    PRD_VERSION_CONFLICT("39103", "PRD 设计已变化，请刷新后重试"),
+    PRD_VERSION_IMMUTABLE("39104", "已确认的 PRD 版本不可修改"),
+    PRD_CONFIRMATION_BLOCKED("39105", "PRD 尚未满足确认条件"),
+    PRD_DIGEST_MISMATCH("39106", "PRD 内容与确认时的摘要不一致"),
+    PRD_TARGET_PROJECT_REQUIRED("39107", "开始前必须确定有效的目标前端项目"),
+    PRD_TARGET_PROJECT_STALE("39108", "目标前端项目画像已过期，请重新探测"),
+    PRD_NOT_CONFIRMED("39109", "PRD 尚未确认，无法按 PRD 驱动交付"),
+    PRD_HTML_UNREADABLE("39110", "PRD HTML 产物不可读取"),
+    PRD_ACCEPTANCE_UNKNOWN_REQUIREMENT("39111", "上报的需求编号不在本次交付的冻结设计内"),
+    PRD_ACCEPTANCE_INVALID_VERDICT("39112", "验收结论取值不合法"),
+    PRD_ACCEPTANCE_INVALID_IMPLEMENTATION("39113", "实现状态取值不合法"),
+    PRD_ACCEPTANCE_EVIDENCE_REQUIRED("39114", "判定通过必须附带证据，未验证不得记为通过"),
+    PRD_ACCEPTANCE_REASON_REQUIRED("39115", "判定不适用必须提供理由"),
+    PRD_ACCEPTANCE_INVALID_EVIDENCE("39116", "证据引用不合法"),
+    PRD_ACCEPTANCE_NOT_FOUND("39117", "需求验收结果不存在"),
+    // 39xxx 重复工单检测
+    FEATURE_SWITCH_VERSION_CONFLICT("39001", "开关配置已被他人修改，请刷新后重试"),
+    DUPLICATE_CHECK_NOT_FOUND("39002", "重复检测记录不存在"),
+
+    // 40xxx 新空间 Chief 初始化引导
+    WORKSPACE_GUIDE_NOT_ELIGIBLE("40001", "当前工作空间没有可用的初始化引导"),
+    WORKSPACE_GUIDE_VERSION_CONFLICT("40002", "引导进度已更新，请刷新后重试"),
+    WORKSPACE_GUIDE_STATE_INVALID("40003", "引导进度不合法"),
+
+    // 40xxx 工作空间初始化（Chief 引导；与 40001–40003 的新空间引导码区分）
+    HARNESS_TEMPLATE_UNAVAILABLE("40013", "官方初始化模板不可用"),
+    HARNESS_ONBOARDING_VERSION_CONFLICT("40014", "引导草稿已被修改，请刷新后重试"),
+    HARNESS_ONBOARDING_NOT_FOUND("40015", "引导草稿不存在或无权访问"),
+    HARNESS_SNAPSHOT_EXPIRED("40004", "预检快照已过期或已使用，请重新预检"),
+    HARNESS_EXECUTOR_CONFLICT("40007", "同名默认执行器配置不一致"),
+    HARNESS_INITIALIZATION_FAILED("40008", "模板初始化未完成"),
+    HARNESS_CONFIGURATION_INVALID("40009", "工作空间配置差异不合法"),
+    HARNESS_READINESS_BLOCKED("40010", "工作空间尚未就绪"),
+    HARNESS_RUN_STATE_INVALID("40011", "批次状态不允许该操作"),
+    HARNESS_SHARED_OBJECT_CONFLICT("40012", "同名共享对象内容不一致，需先隔离实例副本"),
+
+    // 41xxx 执行准入
+    EXECUTION_AGENT_OFFLINE("41001", "数字员工已下线，无法启动新的执行"),
+    EXECUTION_SDLC_DISABLED("41002", "SDLC 流程已禁用，无法启动新的执行");
 
 
     private final String code;

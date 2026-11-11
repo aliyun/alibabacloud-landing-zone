@@ -43,7 +43,7 @@ class UserAccountStatesTest {
     }
 
     @Test
-    void theAnonymisedLegacyAccountIsRecognisedOnlyWithBothMarkers() {
+    void theAnonymisedLegacyAccountIsRecognisedByStatusAndSentinelHash() {
         UserDO user = user("ghost");
         user.setStatus(1);
         user.setPasswordHash(UserAccountStates.LEGACY_DEACTIVATED_HASH);
@@ -53,6 +53,19 @@ class UserAccountStatesTest {
         // A deactivated account is not deleted: no snapshot, no recycle-bin entry.
         assertFalse(UserAccountStates.isDeleted(user));
         assertEquals("ghost", UserAccountStates.displayName(user));
+    }
+
+    @Test
+    void aStatusOneAccountWithoutAnyPasswordIsAlsoDeactivated() {
+        UserDO user = user("sso-legacy");
+        user.setStatus(1);
+        user.setPasswordHash(null);
+
+        // AuthFilter already refuses status=1 accounts with no password hash; the row flag and the
+        // list filters must use the same "disabled" definition instead of treating the NULL as normal.
+        assertTrue(UserAccountStates.isLegacyDeactivated(user));
+        assertEquals(UserAccountStates.DEACTIVATED, UserAccountStates.statusOf(user));
+        assertFalse(UserAccountStates.isActive(user));
     }
 
     @Test

@@ -217,7 +217,7 @@ it('keeps a missing or unparsable generatedAt visible as a placeholder or raw va
   await waitFor(() => expect(screen.getByText(/刷新时间/, { selector: '.insight-stamp' })).toHaveTextContent('刷新时间 not-a-date'));
 });
 
-it('forwards only the drill-down KPIs to the modal owner', async () => {
+it('forwards every drill-down KPI to the modal owner', async () => {
   server.use(overviewHandler());
   const onKpiClick = vi.fn();
   const user = userEvent.setup();
@@ -228,5 +228,6 @@ it('forwards only the drill-down KPIs to the modal owner', async () => {
   expect(onKpiClick).toHaveBeenCalledWith('runningWorkitems');
 
   await user.click(screen.getByText('今日新建'));
-  expect(onKpiClick).toHaveBeenCalledTimes(1);
+  expect(onKpiClick).toHaveBeenLastCalledWith('todayCreatedWorkitems');
+  expect(onKpiClick).toHaveBeenCalledTimes(2);
 });

@@ -9,6 +9,8 @@ import com.aliyun.autowonder.artifact.ArtifactDao;
 import com.aliyun.autowonder.artifact.ArtifactDO;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.squad.SquadMemberDO;
 import com.aliyun.autowonder.squad.SquadMemberDao;
@@ -93,6 +95,85 @@ class ScheduledTaskTriggerServiceTest {
                 ScheduledTaskTriggerService.scheduledKey(9L, due));
         assertEquals("task:9:manual:request-1",
                 ScheduledTaskTriggerService.manualKey(9L, "request-1"));
+    }
+
+    @Test
+    void offlineInitialAgentProducesFailedRunWithoutFallback() {
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability).requireStartable(1L, 11L, 51L);
+        trigger.setExecutionAvailabilityService(availability);
+        ScheduledTaskRunOrchestrator orchestrator = mock(ScheduledTaskRunOrchestrator.class);
+        trigger.setRunOrchestrator(orchestrator);
+        doAnswer(invocation -> {
+            ScheduledTaskRunDO inserted = invocation.getArgument(0);
+            inserted.setId(88L);
+            return 1;
+        }).when(runDao).insert(any());
+
+        ScheduledTaskRunDO run = trigger.fireScheduled(task(), Instant.parse("2026-08-10T18:00:00Z"), Instant.now());
+
+        assertEquals("FAILED", run.getStatus());
+        assertTrue(run.getError().startsWith("41001:"));
+        assertEquals(Long.valueOf(11L), run.getInitialAgentId());
+        assertEquals(Long.valueOf(11L), run.getCurrentAgentId());
+        assertEquals(0, JSON.parseObject(run.getExecutionSnapshotJson())
+                .getJSONArray("agentContexts").size());
+        verify(orchestrator, never()).start(anyLong(), anyLong(), anyLong());
+        verify(orchestrator, never()).startAfterCommit(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void disabledFrozenFlowProducesFailedRun() {
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_SDLC_DISABLED, "execution.sdlc_disabled",
+                new Object[0], "disabled")).when(availability).requireStartable(1L, 11L, 51L);
+        trigger.setExecutionAvailabilityService(availability);
+        doAnswer(invocation -> {
+            ScheduledTaskRunDO inserted = invocation.getArgument(0);
+            inserted.setId(89L);
+            return 1;
+        }).when(runDao).insert(any());
+
+        ScheduledTaskRunDO run = trigger.fireManual(task(), "disabled-flow");
+
+        assertEquals("FAILED", run.getStatus());
+        assertTrue(run.getError().startsWith("41002:"));
+    }
+
+    @Test
+    void managementRejectionOnAnOverlapSkipKeepsTheRunSkipped() {
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability).requireStartable(1L, 11L, 51L);
+        trigger.setExecutionAvailabilityService(availability);
+        doAnswer(invocation -> {
+            ScheduledTaskRunDO inserted = invocation.getArgument(0);
+            inserted.setId(90L);
+            return 1;
+        }).when(runDao).insert(any());
+        ScheduledTaskRunDO run = trigger.fireMisfire(task(), Instant.parse("2026-08-10T18:00:00Z"),
+                Instant.now(), "MISFIRE_POLICY");
+
+        assertEquals("SKIPPED", run.getStatus());
+        assertEquals(null, run.getError());
+    }
+
+    @Test
+    void unrelatedAvailabilityFailureKeepsTheExistingTriggerPath() {
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(new BizException(ErrorCode.WORKITEM_NOT_FOUND)).when(availability)
+                .requireStartable(1L, 11L, 51L);
+        trigger.setExecutionAvailabilityService(availability);
+        doAnswer(invocation -> {
+            ScheduledTaskRunDO inserted = invocation.getArgument(0);
+            inserted.setId(91L);
+            return 1;
+        }).when(runDao).insert(any());
+
+        ScheduledTaskRunDO run = trigger.fireManual(task(), "unrelated-rejection");
+
+        assertEquals("QUEUED", run.getStatus());
     }
 
     @Test

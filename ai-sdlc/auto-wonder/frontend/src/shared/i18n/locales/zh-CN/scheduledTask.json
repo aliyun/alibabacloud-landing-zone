@@ -191,7 +191,11 @@
     "offline": "（离线，稍后送达）",
     "placeholder": "评论本次运行，键入 @ 选择成员...",
     "send": "发送",
-    "disabledReason": "（{{reason}}）"
+    "disabledReason": "（{{reason}}）",
+    "mentionSquadName": "（{{squad}}）",
+    "mentionGroupCurrentSquad": "当前交付小队：{{squad}}",
+    "mentionGroupCurrentSquadUnknown": "当前交付小队",
+    "mentionGroupOthers": "其他小队成员"
   },
   "workitems": {
     "doneReason": "工单已完成，无法再调整定时",

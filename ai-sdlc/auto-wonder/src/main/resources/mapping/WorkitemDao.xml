@@ -56,6 +56,37 @@
         WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
         LIMIT 1 FOR UPDATE
     </select>
+    <!-- 同名预筛：用包含匹配保证是“去首尾空白后相等”的超集（不受 collation 与 TRIM 空白口径影响），
+         精确比较与自身排除由服务层完成。 -->
+    <select id="listByExactTitleCandidate" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT id, tenant_id, work_type, title, status_node_id, creator_id, gmt_create
+        FROM workitem
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND title LIKE CONCAT('%', #{title}, '%')
+        <if test="excludeId != null">AND id != #{excludeId}</if>
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+    <!-- 同意图检测唯一候选读取：只投影 id/title，按 id 升序流式消费；
+         MySQL 的 fetchSize=Integer.MIN_VALUE 由 IntentCandidateStreamingInterceptor 设置。 -->
+    <select id="streamIntentCandidates" resultType="com.aliyun.autowonder.workitem.WorkitemDO"
+            resultSetType="FORWARD_ONLY">
+        SELECT id, title
+        FROM workitem
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND gmt_create &gt;= #{since}
+          AND gmt_create &lt;= #{through}
+        <if test="excludeId != null">AND id != #{excludeId}</if>
+        ORDER BY id ASC
+    </select>
+    <select id="listSummaryByIds" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT id, tenant_id, work_type, title, status_node_id, creator_id, gmt_create
+        FROM workitem
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND id IN
+        <foreach collection="ids" item="wid" open="(" separator="," close=")">#{wid}</foreach>
+    </select>
     <select id="listByOrigin" databaseId="autowonder-source-aware" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
         SELECT * FROM workitem
         WHERE tenant_id = #{tenantId} AND origin_type = #{originType} AND origin_id = #{originId}
@@ -181,6 +212,60 @@
            AND wc_ord.author_type = 'HUMAN'
            AND wc_ord.author_ref = #{currentUserId})
     </sql>
+    <!-- 工单 #57510 交付小队归属证据：派发来源。legacy 无 source_type 列，
+         source-aware 需限定 WORKITEM，避免定时任务 runId 等非工单来源串入。 -->
+    <sql id="squadDispatchSourceFence" databaseId="autowonder-source-aware">
+          AND d.source_type = 'WORKITEM'
+    </sql>
+    <sql id="squadDispatchSourceFence" databaseId="autowonder-legacy">
+    </sql>
+    <!-- 会话软删过滤：deleted_at 由 V051 引入，legacy（V037 前）schema 的 agent_conversation
+         没有该列，只能在 source-aware 下引用，否则 legacy 部署使用小队筛选会报 Unknown column。 -->
+    <sql id="squadConversationSoftDeleteFence" databaseId="autowonder-source-aware">
+              AND c.deleted_at IS NULL
+    </sql>
+    <sql id="squadConversationSoftDeleteFence" databaseId="autowonder-legacy">
+    </sql>
+    <!-- 归属口径：数字人当前隶属于启用小队（squad.is_deleted=0 AND status=0）且未被删除。
+         工单的任意派发（状态不限）或澄清/PRD 会话（未软删，已归档仍计入）都算执行过任务。
+         squadIds 非空时限定到所选小队（多队 OR）；未归属判断复用同一证据片段但不限定小队。 -->
+    <sql id="squadDispatchEvidence">
+        EXISTS (
+            SELECT 1
+            FROM dispatch d
+            JOIN squad_member sm ON sm.tenant_id = d.tenant_id AND sm.agent_id = d.agent_id
+            JOIN squad sq ON sq.id = sm.squad_id AND sq.tenant_id = sm.tenant_id
+                         AND sq.is_deleted = 0 AND sq.status = 0
+            JOIN agent a ON a.id = sm.agent_id AND a.tenant_id = sm.tenant_id AND a.is_deleted = 0
+            WHERE d.tenant_id = w.tenant_id
+              AND d.workitem_id = w.id
+              AND d.is_deleted = 0
+              <if test="squadIds != null and squadIds.size() > 0">
+              AND sm.squad_id IN
+              <foreach collection="squadIds" item="squadId" open="(" separator="," close=")">#{squadId}</foreach>
+              </if>
+              <include refid="squadDispatchSourceFence"/>
+        )
+    </sql>
+    <sql id="squadConversationEvidence">
+        EXISTS (
+            SELECT 1
+            FROM agent_conversation c
+            JOIN squad_member sm ON sm.tenant_id = c.tenant_id AND sm.agent_id = c.agent_id
+            JOIN squad sq ON sq.id = sm.squad_id AND sq.tenant_id = sm.tenant_id
+                         AND sq.is_deleted = 0 AND sq.status = 0
+            JOIN agent a ON a.id = sm.agent_id AND a.tenant_id = sm.tenant_id AND a.is_deleted = 0
+            WHERE c.tenant_id = w.tenant_id
+              AND c.channel IN ('WORKITEM_CLARIFICATION', 'WORKITEM_PRD')
+              AND c.biz_ref_type = 'WORKITEM'
+              AND c.biz_ref_id = w.id
+              <include refid="squadConversationSoftDeleteFence"/>
+              <if test="squadIds != null and squadIds.size() > 0">
+              AND sm.squad_id IN
+              <foreach collection="squadIds" item="squadId" open="(" separator="," close=")">#{squadId}</foreach>
+              </if>
+        )
+    </sql>
     <sql id="listFilter">
         w.tenant_id = #{tenantId}
         AND w.is_deleted = 0
@@ -266,6 +351,19 @@
                     </otherwise>
                 </choose>
             </foreach>
+        </if>
+        <!-- 交付小队高级筛选（工单 #57510）：多小队 OR，与其他筛选 AND；
+             参数缺省或空集合时不追加条件，保证既有列表/计数查询零回归。 -->
+        <if test="squadIds != null and squadIds.size() > 0">
+            AND (
+                <include refid="squadDispatchEvidence"/>
+                OR
+                <include refid="squadConversationEvidence"/>
+            )
+        </if>
+        <if test="unassignedSquad">
+            AND NOT <include refid="squadDispatchEvidence"/>
+            AND NOT <include refid="squadConversationEvidence"/>
         </if>
     </sql>
     <!-- 「待我决策」：统一分类 = PENDING_DECISION 且当前责任人 = 当前登录人

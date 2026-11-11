@@ -162,4 +162,53 @@ describe('comment execution activity', () => {
     expect(legacy).toHaveTextContent('qoder response timeout');
     expect(screen.queryByText('失败历史')).not.toBeInTheDocument();
   });
+
+  it('keeps the ending state and the activity log until the executor confirms the stop', async () => {
+    const { rerender } = render(<CommentInteractionCard interaction={interaction} createdAt={start} />);
+    await flush();
+    rerender(<CommentInteractionCard createdAt={start}
+      interaction={{ ...interaction, status: 'CANCELED', executionStatus: 'PAUSING', cancelRequested: true }} />);
+    await flush();
+
+    expect(screen.getByText('正在结束')).toBeInTheDocument();
+    expect(screen.getByText('结束请求已发出，等待执行器确认停止')).toBeInTheDocument();
+    expect(screen.getByLabelText('执行活动记录')).toBeInTheDocument();
+  });
+
+  it('does not report an unconfirmed stop while a normal cancel only waits for the executor', async () => {
+    render(<CommentInteractionCard createdAt={start}
+      interaction={{ ...interaction, status: 'CANCELED', executionStatus: 'PAUSING',
+        cancelRequested: true, stopPending: true }} />);
+    await flush();
+
+    expect(screen.getByText('正在结束')).toBeInTheDocument();
+    expect(screen.getByText('结束请求已发出，等待执行器确认停止')).toBeInTheDocument();
+    expect(screen.queryByText('平台已结束，执行器停止未确认')).not.toBeInTheDocument();
+  });
+
+  it('surfaces an unconfirmed executor stop after the platform ends the interaction', async () => {
+    render(<CommentInteractionCard createdAt={start} interaction={{ ...interaction, status: 'CANCELED',
+      executionStatus: 'CANCELED', cancelRequested: true, stopPending: true }} />);
+    await flush();
+
+    expect(screen.getByText('已取消')).toBeInTheDocument();
+    expect(screen.getByText('平台已结束，执行器停止未确认')).toBeInTheDocument();
+    expect(screen.queryByText('正在结束')).not.toBeInTheDocument();
+  });
+
+  it('renders the interaction action slot supplied by the page', async () => {
+    render(<CommentInteractionCard interaction={interaction} createdAt={start}
+      actions={<button type="button">结束本次执行</button>} />);
+    await flush();
+
+    expect(screen.getByRole('button', { name: '结束本次执行' })).toBeInTheDocument();
+  });
+
+  it('shows the ended and awaiting-sync copy when the interaction has neither reply nor execution status', async () => {
+    render(<CommentInteractionCard interaction={{ ...interaction, status: 'APPLIED' }} createdAt={start} />);
+    await flush();
+
+    expect(screen.getByText('等待回复同步')).toBeInTheDocument();
+    expect(screen.getByText('执行已结束，等待回复同步')).toBeInTheDocument();
+  });
 });

@@ -37,6 +37,7 @@ class DeliveryRestartOrchestratorTest {
         recoveryService = mock(DispatchRecoveryService.class);
         progressStore = mock(DeliveryRestartProgressStore.class);
         restartStore = mock(DeliveryRestartStore.class);
+        when(restartStore.mayStart(anyLong(), anyLong(), anyString())).thenReturn(true);
         orchestrator = new DeliveryRestartOrchestrator(dispatchService, recoveryService,
                 progressStore, restartStore);
         when(dispatchService.findByIdempotencyKey(100L, KEY)).thenReturn(null);
@@ -57,6 +58,14 @@ class DeliveryRestartOrchestratorTest {
         DispatchDO next = dispatch(dispatchId, "PENDING");
         when(dispatchService.enqueueRestartAssignment(eq(100L), eq(500L), eq(300031L), eq(40013L),
                 eq(KEY), anyLong())).thenReturn(next);
+    }
+
+    @Test
+    void supersededRoundNeverStopsNewerExecutions() {
+        when(restartStore.mayStart(100L, 500L, KEY)).thenReturn(false);
+        orchestrator.restart(100L, 500L, 300031L, 40013L, 7L, KEY);
+        verifyNoInteractions(recoveryService, progressStore);
+        verify(dispatchService, never()).enqueueRestartAssignment(anyLong(), anyLong(), anyLong(), anyLong(), anyString(), anyLong());
     }
 
     @Test

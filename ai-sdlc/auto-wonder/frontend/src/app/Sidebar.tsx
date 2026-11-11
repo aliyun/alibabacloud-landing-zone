@@ -66,6 +66,7 @@ export const NAV_GROUPS: NavGroup[] = [
     get label() { return i18n.t('shell:nav.agentsGroup'); },
     items: [
       { key: '/agents', get label() { return i18n.t('shell:nav.agents'); }, icon: <RobotHeadIcon aria-hidden="true" /> },
+      { key: '/sdlcs', get label() { return i18n.t('shell:nav.sdlc'); }, icon: <ApartmentOutlined aria-hidden="true" /> },
       { key: '/executors', get label() { return i18n.t('shell:nav.executors'); }, icon: <ThunderboltOutlined aria-hidden="true" /> },
     ],
   },
@@ -82,8 +83,7 @@ export const NAV_GROUPS: NavGroup[] = [
     key: 'config-group',
     get label() { return i18n.t('shell:nav.configuration'); },
     items: [
-      { key: '/sdlcs', get label() { return i18n.t('shell:nav.sdlc'); }, icon: <ApartmentOutlined aria-hidden="true" /> },
-      { key: '/status-templates', get label() { return i18n.t('shell:nav.statusTemplates'); }, icon: <NodeIndexOutlined aria-hidden="true" /> },
+      { key: '/status-templates', get label() { return i18n.t('shell:nav.statusTemplates'); }, icon: <NodeIndexOutlined aria-hidden="true" />, hidden: true },
       { key: '/integrations', get label() { return i18n.t('shell:nav.integrations'); }, icon: <ApiOutlined aria-hidden="true" /> },
       {
         key: '/settings/members',

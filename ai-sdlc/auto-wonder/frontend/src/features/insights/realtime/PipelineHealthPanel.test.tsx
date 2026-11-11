@@ -177,7 +177,9 @@ it('explains the rework formula on hover and focus and closes the focused card w
   await user.hover(reworkCard);
   const tooltip = await screen.findByRole('tooltip');
   expect(tooltip).toHaveTextContent('返工重试次数：3 次');
-  expect(tooltip).toHaveTextContent('返工重试率 = 有返工重试的工单 / 有执行行为的工单（1 / 8）· 今日');
+  expect(tooltip).toHaveTextContent('返工重试率 = 有返工重试的工单 / 今日发起执行的工单（1 / 8）');
+  expect(tooltip).toHaveTextContent('口径说明：按执行发起时间归属区间，与「工单概况 · 今日完成」的工单完成口径不同，两者无需对齐。');
+  expect(tooltip).not.toHaveTextContent('工单交付');
 
   await user.unhover(reworkCard);
   act(() => { reworkCard.focus(); });
@@ -185,6 +187,28 @@ it('explains the rework formula on hover and focus and closes the focused card w
 
   fireEvent.keyDown(reworkCard, { key: 'Escape' });
   expect(document.activeElement).not.toBe(reworkCard);
+});
+
+it('keeps the rework denominator tied to the selected range instead of hardcoding today', async () => {
+  useFixedDate();
+  server.use(http.get('/api/dashboard/pipeline-health', ({ request }) => {
+    const range = (new URL(request.url).searchParams.get('range') ?? 'today') as PipelineRange;
+    return ok(health(range, { successRate: 80 }));
+  }));
+  const user = userEvent.setup();
+  const { container } = renderPanel();
+  const panel = await panelRegion();
+  await waitFor(() => expect(container.querySelectorAll('.insight-pl-card')).toHaveLength(4));
+
+  await user.click(panel.getByText('近7天'));
+  await panel.findByText('80.0%');
+
+  const reworkCard = container.querySelectorAll('.insight-pl-card')[2] as HTMLElement;
+  await user.hover(reworkCard);
+  const tooltip = await screen.findByRole('tooltip');
+  expect(tooltip).toHaveTextContent('返工重试率 = 有返工重试的工单 / 近7天发起执行的工单（1 / 8）');
+  expect(tooltip).not.toHaveTextContent('今日发起执行的工单');
+  expect(tooltip).toHaveTextContent('口径说明：按执行发起时间归属区间，与「工单交付」页的工单已完成口径不同，两者无需对齐。');
 });
 
 it('explains the shared completion caliber on the average duration card', async () => {
@@ -254,4 +278,9 @@ it('switches the whole panel to the current language without losing the range', 
   const chip = container.querySelector('.insight-pl-chip') as HTMLElement;
   expect(chip).toHaveAttribute('title', 'Last 7 days window: 2026-10-06 00:00 — 2026-10-13 00:00 (Asia/Shanghai, excluding today)');
   expect(screen.getByText('Unaffected by the realtime snapshot above')).toBeInTheDocument();
+
+  await user.hover(container.querySelectorAll('.insight-pl-card')[2] as HTMLElement);
+  const tooltip = await screen.findByRole('tooltip');
+  expect(tooltip).toHaveTextContent('Rework rate = work items reworked / work items that started execution in Last 7 days (1 / 8)');
+  expect(tooltip).toHaveTextContent('Caliber: counted by when execution started; different from the "Completed" caliber on the Work item delivery page, and the two are not expected to match.');
 });

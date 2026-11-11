@@ -11,6 +11,9 @@ export interface WorkitemTagConditionDraft extends WorkitemTagCondition {
   rowId: number;
 }
 
+/** 合法运算符全集：界面下拉与 URL 解析共用，避免两处枚举漂移。 */
+export const TAG_CONDITION_OPS: readonly WorkitemTagConditionOp[] = ['AND', 'OR', 'IN', 'NOT'];
+
 export const TAG_CONDITION_LIMIT = 30;
 export const TAG_CONDITIONS_MAX_LENGTH = 4000;
 

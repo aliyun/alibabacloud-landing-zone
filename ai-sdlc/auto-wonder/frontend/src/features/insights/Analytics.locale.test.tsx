@@ -20,16 +20,16 @@ function routed(element: React.ReactNode, client = new QueryClient({ defaultOpti
 }
 beforeEach(async () => { localStorage.clear(); await i18n.changeLanguage('zh-CN'); });
 afterEach(async () => { cleanup(); vi.useRealTimers(); await i18n.changeLanguage('zh-CN'); });
-it('translates the four insight tabs without retired execution audit and requirement delivery entries', async () => {
- server.use(http.get('/api/dashboard/realtime', () => ok(null)), http.get('/api/dashboard/overview', () => ok(null)), http.get('/api/dashboard/pipeline-health', () => ok(null)), http.get('/api/insights/metrics', () => ok(metrics)), http.get('/api/insights/workers', () => ok([])), http.get('/api/insights/audit', () => ok({ items: [], total: 0 })));
+it('translates the five insight tabs without retired execution audit and requirement delivery entries', async () => {
+ server.use(http.get('/api/insights/delivery-analysis', () => ok({status:'COMPUTING',report:null,errorCode:null})), http.get('/api/dashboard/realtime', () => ok(null)), http.get('/api/dashboard/overview', () => ok(null)), http.get('/api/dashboard/pipeline-health', () => ok(null)), http.get('/api/insights/metrics', () => ok(metrics)), http.get('/api/insights/workers', () => ok([])), http.get('/api/insights/audit', () => ok({ items: [], total: 0 })));
  routed(<InsightsPage />);
- const zh = ['实时看板', '人机协作', '工单交付', '阶段耗时'];
+ const zh = ['交付数据分析', '实时看板', '人机协作', '工单交付', '阶段耗时'];
  await screen.findByRole('radio', { name: zh[0] });
  for (const label of zh) expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
  expect(screen.queryByRole('radio', { name: '执行审计' })).toBeNull();
  expect(screen.queryByRole('radio', { name: '需求交付' })).toBeNull();
  await act(async () => { await i18n.changeLanguage('en-US'); });
- for (const label of ['Realtime dashboard', 'Human–Agent participation', 'Work item delivery', 'Stage duration']) expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+ for (const label of ['Delivery analytics', 'Realtime dashboard', 'Human–Agent participation', 'Work item delivery', 'Stage duration']) expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
  expect(screen.queryByRole('radio', { name: 'Execution audit' })).toBeNull();
  expect(screen.queryByRole('radio', { name: 'Requirement delivery' })).toBeNull();
 });

@@ -6,6 +6,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { useAuthStore } from '@/shared/auth/store';
 import { WorkitemClarificationPanel } from './WorkitemClarificationPanel';
+import { mockLatestClarificationConversation } from '@/test/mocks/clarificationLatest';
 import { writeClarificationPrefill } from './prefill';
 
 type RealtimeCallback = (event: { type: string; payload: unknown }) => void;
@@ -58,8 +59,9 @@ function mockSquads() {
       }),
     ),
   );
+  // 只 mock 了小队、没有会话列表的用例同样要能解析「最近一次会话」。
+  mockLatestClarificationConversation();
 }
-
 function conversation(overrides: Record<string, unknown> = {}) {
   return {
     id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
@@ -84,6 +86,8 @@ function mockConversation(conversationData: ReturnType<typeof conversation>,
       HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
     ),
   );
+  // 进入面板会先解析「最近一次会话」：默认无记录，既有用例走本地预填链路。
+  mockLatestClarificationConversation();
 }
 
 function uploadedAttachment(overrides: Record<string, unknown> = {}) {

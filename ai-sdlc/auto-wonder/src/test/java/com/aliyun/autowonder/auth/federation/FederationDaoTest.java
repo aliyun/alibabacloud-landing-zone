@@ -30,6 +30,7 @@ class FederationDaoTest {
     private static FederationIdpDao idpDao;
     private static FederationConnectionDao connectionDao;
     private static FederatedIdentityDao identityDao;
+    private static PlatformAuthConfigDao authConfigDao;
 
     @BeforeAll
     static void init() throws Exception {
@@ -38,13 +39,39 @@ class FederationDaoTest {
             idpDao = template.getMapper(FederationIdpDao.class);
             connectionDao = template.getMapper(FederationConnectionDao.class);
             identityDao = template.getMapper(FederatedIdentityDao.class);
+            authConfigDao = template.getMapper(PlatformAuthConfigDao.class);
         }
         executeScript("federation-schema-h2.sql");
     }
 
     @BeforeEach
     void clean() throws Exception {
-        execute("DELETE FROM federated_identity", "DELETE FROM federation_connection", "DELETE FROM federation_idp");
+        execute("DELETE FROM federated_identity", "DELETE FROM federation_connection", "DELETE FROM federation_idp",
+                "DELETE FROM platform_auth_config");
+    }
+
+    @Test
+    void platformAuthConfigStoresTheSingletonRegistrationSwitchAndDefaultConnection() {
+        assertNull(authConfigDao.find());
+
+        PlatformAuthConfigDO config = new PlatformAuthConfigDO();
+        config.setId(PlatformAuthConfigDO.SINGLETON_ID);
+        config.setRegistrationEnabled(1);
+        config.setDefaultProviderId(null);
+        assertEquals(1, authConfigDao.insert(config));
+
+        PlatformAuthConfigDO stored = authConfigDao.find();
+        assertEquals(1, stored.getRegistrationEnabled());
+        assertNull(stored.getDefaultProviderId());
+
+        stored.setRegistrationEnabled(0);
+        stored.setDefaultProviderId(7L);
+        assertEquals(1, authConfigDao.update(stored));
+
+        PlatformAuthConfigDO updated = authConfigDao.find();
+        assertEquals(0, updated.getRegistrationEnabled());
+        assertEquals(7L, updated.getDefaultProviderId());
+        assertEquals(7L, authConfigDao.lock().getDefaultProviderId());
     }
 
     @Test
@@ -104,6 +131,8 @@ class FederationDaoTest {
         assertEquals("tid:oid", stored.getSubjectClaim());
         assertEquals("kc:v1:ciphertext", stored.getClientSecret());
         assertEquals("tenant-1,tenant-2", stored.getAllowedTenants());
+        assertEquals(0, stored.getAutoProvision());
+        assertNull(stored.getFeishuUserIdClaim());
         assertEquals(3, connectionDao.countByIdp(idpId));
         assertEquals(0, connectionDao.countByIdp(disabledId + 100));
 
@@ -124,6 +153,8 @@ class FederationDaoTest {
         stored.setSamlCert("cert-2");
         stored.setSubjectClaim("employeeId");
         stored.setScopes("openid");
+        stored.setAutoProvision(1);
+        stored.setFeishuUserIdClaim("feishu_user_id");
 
         assertEquals(1, connectionDao.update(stored));
 
@@ -135,6 +166,8 @@ class FederationDaoTest {
         assertEquals("cert-2", updated.getSamlCert());
         assertEquals("employeeId", updated.getSubjectClaim());
         assertEquals("openid", updated.getScopes());
+        assertEquals(1, updated.getAutoProvision());
+        assertEquals("feishu_user_id", updated.getFeishuUserIdClaim());
         assertEquals(idpId, updated.getIdpId());
         assertEquals("SAML2", updated.getProtocol());
     }

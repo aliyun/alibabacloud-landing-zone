@@ -184,6 +184,8 @@ export interface Participant {
   online: boolean;
   status?: string | null;
   executorStatus?: string | null;
+  squadName?: string | null;
+  currentSquad?: boolean | null;
 }
 
 export interface DeliveryStep {
@@ -222,6 +224,7 @@ export interface DispatchControlCapabilities {
   end: ControlActionCapability;
   forceEnd: ControlActionCapability;
   resume: ControlActionCapability;
+  restartLatest?: ControlActionCapability;
 }
 
 export interface DispatchAttempt {
@@ -329,7 +332,7 @@ export interface ProcessGraphNode {
 export interface ProcessGraphEdge {
   sourceKey: string;
   targetKey: string;
-  type: 'HANDOFF' | 'COMMENT_REWORK' | 'CONTINUE' | 'HUMAN_HANDOFF';
+  type: 'HANDOFF' | 'COMMENT_REWORK' | 'CONTINUE' | 'HUMAN_HANDOFF' | 'RESTART';
   sourceDispatchId?: number | null;
   targetDispatchId?: number | null;
   commentId?: number | null;
@@ -606,8 +609,17 @@ export interface TimelineItem {
     replyCommentId?: number | null;
     replyContent?: string | null;
     repliedAt?: string | null;
+    controlEligible?: boolean;
+    cancelRequested?: boolean;
+    stopPending?: boolean;
+    control?: {
+      end?: ControlActionCapability | null;
+      forceEnd?: ControlActionCapability | null;
+    } | null;
   }>;
 }
+
+export type CommentInteraction = NonNullable<TimelineItem['interactions']>[number];
 
 export interface Clarification {
   id: number;

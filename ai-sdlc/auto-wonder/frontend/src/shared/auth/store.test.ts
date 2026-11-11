@@ -111,6 +111,21 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().accessLevel).toBeNull();
   });
 
+  it('clearSession keeps the workspace context so a re-login can return to the same page', () => {
+    useAuthStore.getState().setTokens('a', 'r');
+    useAuthStore.getState().setUser({ id: 1, username: 'x', nickname: 'X', email: '' });
+    useAuthStore.getState().setCurrentWorkspace({ id: 10, name: 'Workspace1', description: '' }, 'READ_WRITE');
+
+    useAuthStore.getState().clearSession();
+
+    expect(useAuthStore.getState().accessToken).toBeNull();
+    expect(useAuthStore.getState().refreshToken).toBeNull();
+    expect(useAuthStore.getState().user).toBeNull();
+    expect(useAuthStore.getState().isAuthenticated()).toBe(false);
+    expect(useAuthStore.getState().currentWorkspace?.id).toBe(10);
+    expect(useAuthStore.getState().accessLevel).toBe('READ_WRITE');
+  });
+
   it('migrates legacy forbidden domains to read-only domains while filtering unknown values', () => {
     const migrated = migrateAuthState({
       accessToken: 'access',

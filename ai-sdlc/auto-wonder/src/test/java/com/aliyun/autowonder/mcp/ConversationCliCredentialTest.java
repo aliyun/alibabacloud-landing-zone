@@ -26,7 +26,7 @@ class ConversationCliCredentialTest {
         WorkitemDO item=new WorkitemDO(); item.setId(80L); item.setTenantId(20L); when(items.findById(80L)).thenReturn(item);
         WorkspaceMemberDO member=new WorkspaceMemberDO(); member.setStatus(0); member.setIsDeleted(0); member.setAccessLevel("READ_WRITE");
         when(members.findByWorkspaceAndUser(20L,70L)).thenReturn(member);
-        when(branding.effectivePublicBaseUrl()).thenReturn("https://example.test"); when(branding.recommendedRuntimeVersion()).thenReturn("1");
+        when(branding.effectivePublicBaseUrl()).thenReturn("https://example.test"); when(branding.recommendedRuntimeVersion()).thenReturn("0.3.33");
         when(origins.validateExecution(70L,20L,scope)).thenReturn(principal);
     }
     @Test void uploadChildIsResourceAndTurnBoundAndCannotUseScheduledLegacyRoute() {

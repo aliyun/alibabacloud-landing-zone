@@ -7,6 +7,7 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchService;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.dispatch.HandoffResult;
 import com.aliyun.autowonder.user.UserDao;
@@ -28,7 +29,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** Starts an immutable scheduled Run by creating its root Dispatch on the existing delivery path. */
 @Service
@@ -43,6 +45,13 @@ public class ScheduledTaskRunOrchestrator {
     private ScheduledTaskNotificationService notificationService;
     private ScheduledTaskMetrics metrics;
     private ScheduledTaskRunService runService;
+    private ExecutionAvailabilityService executionAvailabilityService;
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @Autowired(required = false)
+    public void setTransactionManager(org.springframework.transaction.PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
+    }
 
     public ScheduledTaskRunOrchestrator(ScheduledTaskRunDao runDao, DispatchService dispatchService) {
         this.runDao = runDao;
@@ -64,6 +73,10 @@ public class ScheduledTaskRunOrchestrator {
     @Autowired(required = false)
     public void setMetrics(ScheduledTaskMetrics metrics) { this.metrics = metrics; }
     @Autowired public void setRunService(ScheduledTaskRunService runService) { this.runService = runService; }
+    @Autowired(required = false)
+    public void setExecutionAvailabilityService(ExecutionAvailabilityService service) {
+        this.executionAvailabilityService = service;
+    }
 
     @Transactional(rollbackFor = Exception.class)
     public void start(long workspaceId, long runId, long actorId) {
@@ -80,6 +93,16 @@ public class ScheduledTaskRunOrchestrator {
             if (snapshot.getJSONObject("sdlc") == null) {
                 sdlcId = null;
                 stepId = null;
+            }
+            if (executionAvailabilityService != null) {
+                try {
+                    executionAvailabilityService.requireStartable(workspaceId, run.getInitialAgentId(), sdlcId);
+                } catch (BizException unavailable) {
+                    // A periodic or queued Run rejected by management state fails visibly and
+                    // is not retried automatically; enabling again needs an explicit start.
+                    fail(run, actorId, unavailable.getCode() + ": " + unavailable.getMessage());
+                    return;
+                }
             }
             String expectedStatus = run.getStatus();
             if (runDao.initializeExecution(workspaceId, runId, expectedStatus, sdlcId,
@@ -114,7 +137,7 @@ public class ScheduledTaskRunOrchestrator {
             if (!runService.transitionSystem(run, "STARTING", "WAITING_EXECUTOR", actorId)) {
                 throw invalid("Run waiting-executor transition was lost");
             }
-            dispatchService.runPending(dispatch.getId());
+            dispatchService.runPendingAfterCommit(dispatch.getId());
         } catch (BizException failure) {
             if (ErrorCode.SCHEDULED_TASK_INVALID_STATE.getCode().equals(failure.getCode())) {
                 fail(run, actorId, failure.getCode() + ": " + failure.getMessage());
@@ -130,10 +153,21 @@ public class ScheduledTaskRunOrchestrator {
      * An after-commit callback still has the completed transaction's JDBC resource bound.
      * Starting in a new physical transaction prevents the delivery path from participating in
      * that completed transaction (and from being rolled back during its cleanup).
+     *
+     * <p>The new transaction is opened explicitly (not via {@code @Transactional}) so the same
+     * behavior holds when the orchestrator is constructed directly without a proxy, as the
+     * integration fixtures do.
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public void startAfterCommit(long workspaceId, long runId, long actorId) {
-        start(workspaceId, runId, actorId);
+        if (transactionManager == null) {
+            // No local transaction to wait for; start() schedules detached sending synchronously.
+            start(workspaceId, runId, actorId);
+            return;
+        }
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.executeWithoutResult(status -> com.aliyun.autowonder.dispatch.DispatchAfterCommitContext
+                .runOutside(() -> start(workspaceId, runId, actorId)));
     }
 
     private void fail(ScheduledTaskRunDO run, long actorId, String error) {
@@ -270,7 +304,7 @@ public class ScheduledTaskRunOrchestrator {
         try {
             DispatchDO replay = dispatchService.findHandoffBySource(source.getTenantId(), source.getId());
             if (replay != null) {
-                if ("PENDING".equals(replay.getStatus())) dispatchService.runPending(replay.getId());
+                if ("PENDING".equals(replay.getStatus())) dispatchService.runPendingAfterCommit(replay.getId());
                 return HandoffResult.agent(replay.getAgentId(), replay.getId());
             }
             if (!"SUCCEEDED".equals(source.getStatus()) || !Objects.equals(run.getCurrentAgentId(), source.getAgentId())
@@ -285,6 +319,14 @@ public class ScheduledTaskRunOrchestrator {
             if (run.getSdlcId() != null && stepId == null) {
                 throw invalid("frozen target agent SDLC is missing");
             }
+            if (executionAvailabilityService != null) {
+                try {
+                    executionAvailabilityService.requireStartable(run.getWorkspaceId(), targetAgentId, sdlcId);
+                } catch (BizException unavailable) {
+                    return HandoffResult.rejected(ExecutionAvailabilityService.failureReason(unavailable),
+                            unavailable.getMessage());
+                }
+            }
             if (runDao.updateCurrentAssignment(run.getWorkspaceId(), run.getId(), sdlcId, targetAgentId, stepId,
                     run.getVersion(), 0L) != 1) {
                 return HandoffResult.rejected("RUN_VERSION_CONFLICT", "scheduled run changed during handoff");
@@ -293,7 +335,7 @@ public class ScheduledTaskRunOrchestrator {
             DispatchDO downstream = dispatchService.enqueueScheduledHandoff(run.getWorkspaceId(), run.getId(), stepId,
                     targetAgentId, source.getId(), attempt, 0L);
             dispatchService.pinScheduledAgentVersion(downstream.getId(), run.getWorkspaceId(), frozenVersion);
-            dispatchService.runPending(downstream.getId());
+            dispatchService.runPendingAfterCommit(downstream.getId());
             if (notificationService != null) notificationService.handoff(run);
             return HandoffResult.agent(targetAgentId, downstream.getId());
         } catch (BizException invalid) {
@@ -331,6 +373,11 @@ public class ScheduledTaskRunOrchestrator {
         if (source == null || source.getAgentId() == null) return false;
         JSONObject snapshot = parseAndValidate(run);
         long version = frozenVersion(snapshot, source.getAgentId());
+        // Checked before the QUEUED -> STARTING write so a rejected resume leaves the source
+        // PAUSED with its checkpoint and remains explicitly resumable.
+        if (executionAvailabilityService != null) {
+            executionAvailabilityService.requireStartable(workspaceId, source.getAgentId(), run.getSdlcId());
+        }
         if (runDao.initializeExecution(workspaceId, runId, "QUEUED", run.getSdlcId(), source.getAgentId(),
                 source.getSdlcStepId(), run.getVersion(), userId) != 1) return false;
         run = runDao.findById(workspaceId, runId);
@@ -341,7 +388,7 @@ public class ScheduledTaskRunOrchestrator {
                 source.getAgentId(), attempt, source.getId(), false, userId);
         dispatchService.pinScheduledAgentVersion(continuation.getId(), workspaceId, version);
         if (!runService.transitionSystem(run, "STARTING", "WAITING_EXECUTOR", userId)) return false;
-        dispatchService.runPending(continuation.getId());
+        dispatchService.runPendingAfterCommit(continuation.getId());
         return true;
     }
 

@@ -49,7 +49,8 @@ public class DispatchResultStore {
         if (dispatch.executionSourceType() != ExecutionSourceType.WORKITEM) return;
         jdbc.queryForList("SELECT id FROM workitem WHERE tenant_id=? AND id=? FOR UPDATE",
                 dispatch.getTenantId(), dispatch.getWorkitemId());
-        jdbc.update("INSERT IGNORE INTO workitem_execution_control (tenant_id,workitem_id) VALUES (?,?)",
+        jdbc.update("INSERT INTO workitem_execution_control (tenant_id,workitem_id) VALUES (?,?) "
+                        + "ON DUPLICATE KEY UPDATE workitem_id=workitem_id",
                 dispatch.getTenantId(), dispatch.getWorkitemId());
         jdbc.queryForList("SELECT closed FROM workitem_execution_control WHERE tenant_id=? AND workitem_id=? FOR UPDATE",
                 dispatch.getTenantId(), dispatch.getWorkitemId());
@@ -59,6 +60,11 @@ public class DispatchResultStore {
     }
     public Decision findLocked(long tenantId, long dispatchId, String resultId) {
         return find(tenantId, dispatchId, resultId, true);
+    }
+    public List<Long> checkpointSequences(long tenantId, long dispatchId, long executorId, String sha256) {
+        return jdbc.queryForList("SELECT DISTINCT checkpoint_seq FROM dispatch_result_decision "
+                        + "WHERE tenant_id=? AND dispatch_id=? AND executor_id=? AND checkpoint_sha256=? "
+                        + "AND checkpoint_seq>0", Long.class, tenantId, dispatchId, executorId, sha256);
     }
     private Decision find(long tenantId, long dispatchId, String resultId, boolean locked) {
         List<Decision> rows = jdbc.query("SELECT executor_id,payload_sha256,ack_json,handoff_json "

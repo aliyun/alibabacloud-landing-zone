@@ -38,7 +38,7 @@ const mockConclusion = {
 };
 
 describe('RepoDetailPage', () => {
-  it('renders only info and relation tabs with the scan entry hidden', async () => {
+  it('renders only info and relation tabs with retired project and scan entries hidden', async () => {
     server.use(
       http.get('/api/repos/1', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: mockRepo,
@@ -56,6 +56,7 @@ describe('RepoDetailPage', () => {
     renderPage();
     expect(await screen.findByRole('tab', { name: '基础信息' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '仓库关系' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '前端子项目' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('tab')).toHaveLength(2);
     expect(screen.queryByRole('tab', { name: '扫描结论' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /发起扫描/ })).not.toBeInTheDocument();

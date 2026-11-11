@@ -97,6 +97,36 @@ public class UserDeletionService {
                 targetUserId, operatorId, adminInitiated);
     }
 
+    /** 逻辑删除后的关联清理：空间成员关系与 IM 工号一律软删除（恢复不自动带回）。 */
+    private void releaseUserRelations(Long targetUserId, Long operatorId) {
+        workspaceMemberDao.softDeleteAllByUser(targetUserId, operatorId);
+        userImIdentityDao.softDeleteAllByUser(targetUserId, operatorId);
+    }
+
+    /**
+     * 拒绝注册申请：复用逻辑删除的身份释放与关联清理，但只允许未删除且待审核的记录转换，
+     * 并与并发通过/拒绝/常规删除竞争时只认先成功的一笔。
+     */
+    @Transactional
+    public void rejectPendingRegistration(Long targetUserId, Long operatorId) {
+        UserDO user = userDao.findByIdIncludingDeleted(targetUserId);
+        if (user == null) {
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "user.not_found", null, "用户不存在");
+        }
+        if (!UserAccountStates.isPendingReview(user)) {
+            throw new BizException(ErrorCode.USER_REGISTRATION_REVIEW_ALREADY_HANDLED);
+        }
+        Long auditTenantId = UserPlatformAudit.resolveTenantId(
+                workspaceMemberDao, targetUserId, operatorId);
+        if (userDao.logicalDeletePendingReview(targetUserId, new Date(), operatorId) != 1) {
+            throw new BizException(ErrorCode.USER_REGISTRATION_REVIEW_ALREADY_HANDLED);
+        }
+        releaseUserRelations(targetUserId, operatorId);
+        UserPlatformAudit.record(auditLogService, auditTenantId, operatorId,
+                "USER_REGISTRATION_REJECT", targetUserId, user.getUsername());
+        LOGGER.info("Registration rejected targetId={} operatorId={}", targetUserId, operatorId);
+    }
+
     /** 仅平台管理员可调用（控制器已鉴权）；存量已注销用户不可恢复。 */
     @Transactional
     public void restore(Long targetUserId, Long operatorId) {

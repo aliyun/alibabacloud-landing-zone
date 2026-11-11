@@ -21,14 +21,16 @@ import java.util.*;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
-/** Read-time projection for legacy checkpoints that omitted files using a directory receipt. */
+/** Read-time projection for legacy receipts and omitted handoff control bytes. */
 @Component
 final class LegacyCheckpointNormalizer {
     private static final Logger log = LoggerFactory.getLogger(LegacyCheckpointNormalizer.class);
     private static final int MAX_ARCHIVE_BYTES = 256 * 1024 * 1024;
     private static final int MAX_JSON_BYTES = 1024 * 1024;
     private static final int MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
-    private static final String SUFFIX = ".compat-exact-ref-v1.tar.gz";
+    private static final String SUFFIX = ".compat-handoff-v2.tar.gz";
+    private static final String HANDOFF = "handoff/metadata.json";
+    private static final String PAYLOAD_MAP = "publication-payload-map.json";
     private final ArtifactDao artifacts;
     private final ObjectStorage storage;
 
@@ -38,6 +40,8 @@ final class LegacyCheckpointNormalizer {
     }
 
     static String compatibilityRef(String original) { return original + SUFFIX; }
+
+    static String legacyCompatibilityRef(String original) { return original + ".compat-exact-ref-v1.tar.gz"; }
 
     DispatchCheckpointDO normalize(DispatchCheckpointDO source) {
         try {
@@ -98,6 +102,7 @@ final class LegacyCheckpointNormalizer {
                 changed = true;
             }
         }
+        changed |= restoreHandoffControl(source, members);
         if (!changed) return source;
         // Preserve metadata, progress, receipts and producer stateSha256 byte-for-byte.
         // stateSha256 is a producer fingerprint, not the transport archive checksum.
@@ -118,6 +123,79 @@ final class LegacyCheckpointNormalizer {
         return projected;
     }
 
+    private boolean restoreHandoffControl(DispatchCheckpointDO source, Map<String, byte[]> members) throws Exception {
+        JSONObject payloadMap = null;
+        List<ArtifactDO> rows = null;
+        Map<String, byte[]> payloads = new LinkedHashMap<>();
+        long restoredBytes = 0;
+        boolean changed = false;
+        for (Map.Entry<String, byte[]> member : members.entrySet()) {
+            if (!manifest(member.getKey())) continue;
+            JSONObject document = json(member.getValue());
+            JSONArray entries = document.getJSONArray("entries");
+            if (entries == null) continue;
+            boolean edited = false;
+            for (int i = 0; i < entries.size(); i++) {
+                JSONObject entry = entries.getJSONObject(i);
+                if (!HANDOFF.equals(entry.getString("path"))
+                        || !"reference_only".equals(entry.getString("disposition"))) continue;
+                if (rows == null) rows = artifacts.listByWorkitem(source.getTenantId(), source.getWorkitemId());
+                String ref = entry.getString("remoteRef"), digest = entry.getString("sha256");
+                Long size = entry.getLong("sizeBytes");
+                require(size != null && size >= 0 && size <= MAX_JSON_BYTES
+                        && digest != null && digest.matches("sha256:[0-9a-fA-F]{64}"));
+                List<ArtifactDO> matches = rows == null ? List.of() : rows.stream()
+                        .filter(row -> Objects.equals(ref, row.getOssRef())).toList();
+                require(matches.size() == 1);
+                ArtifactDO row = matches.get(0);
+                String prefix = "t/" + source.getTenantId() + "/workitem/" + source.getWorkitemId() + "/dispatch/";
+                int slash = ref == null ? -1 : ref.indexOf('/');
+                String hash = digest.substring(7).toLowerCase(Locale.ROOT);
+                require(Objects.equals(row.getTenantId(), source.getTenantId())
+                        && Objects.equals(row.getWorkitemId(), source.getWorkitemId())
+                        && "WORKITEM".equals(row.getSourceType()) && Objects.equals(row.getSize(), size)
+                        && row.getDispatchId() != null && safePath(row.getName())
+                        && slash > 0 && ref.substring(0, slash).matches("[a-zA-Z0-9][a-zA-Z0-9._-]*")
+                        && ownedObjectKey(ref.substring(slash + 1),
+                                prefix + row.getDispatchId() + "/", row.getName(), hash));
+                String payload = "publication-payloads/" + hash;
+                byte[] bytes = payloads.get(payload);
+                if (bytes == null) {
+                    require(size <= MAX_ARCHIVE_BYTES - restoredBytes);
+                    restoredBytes += size;
+                    bytes = storage.get(ref);
+                    require(bytes != null && bytes.length == size && sha(bytes).equals(hash));
+                    payloads.put(payload, bytes);
+                }
+                require(bytes.length == size);
+                if (payloadMap == null) {
+                    payloadMap = json(members.get(PAYLOAD_MAP));
+                    require("autowonder.publicationPayloadMap.v1".equals(payloadMap.getString("schemaVersion")));
+                    if (payloadMap.getJSONArray("entries") == null) payloadMap.put("entries", new JSONArray());
+                }
+                String target = member.getKey().substring(0, member.getKey().lastIndexOf('/') + 1) + HANDOFF;
+                for (Object mapping : payloadMap.getJSONArray("entries")) {
+                    require(!target.equals(((JSONObject) mapping).getString("target")));
+                }
+                JSONObject mapping = new JSONObject(true);
+                mapping.put("target", target); mapping.put("payload", payload);
+                mapping.put("sha256", "sha256:" + hash); mapping.put("sizeBytes", size);
+                payloadMap.getJSONArray("entries").add(mapping);
+                entry.put("disposition", "upload"); entry.remove("remoteRef");
+                edited = true;
+            }
+            if (edited) {
+                member.setValue(document.toJSONString().getBytes(StandardCharsets.UTF_8));
+                changed = true;
+            }
+        }
+        if (changed) {
+            members.put(PAYLOAD_MAP, payloadMap.toJSONString().getBytes(StandardCharsets.UTF_8));
+            members.putAll(payloads);
+        }
+        return changed;
+    }
+
     private String resolve(DispatchCheckpointDO source, List<ArtifactDO> rows, String prefix,
                            String path, String digest, long size) throws Exception {
         String name = "artifacts/output/" + path;
@@ -129,13 +207,20 @@ final class LegacyCheckpointNormalizer {
                 && Objects.equals(row.getWorkitemId(), source.getWorkitemId())
                 && Objects.equals(row.getDispatchId(), source.getDispatchId())
                 && "WORKITEM".equals(row.getSourceType()) && Objects.equals(row.getSize(), size));
+        String hash = digest.substring(7).toLowerCase(Locale.ROOT);
         String ref = row.getOssRef();
         int slash = ref == null ? -1 : ref.indexOf('/');
         require(slash > 0 && ref.substring(0, slash).matches("[a-zA-Z0-9][a-zA-Z0-9._-]*")
-                && ref.substring(slash + 1).equals(prefix + name));
+                && ownedObjectKey(ref.substring(slash + 1), prefix, name, hash));
         byte[] bytes = storage.get(ref);
-        require(bytes != null && bytes.length == size && sha(bytes).equalsIgnoreCase(digest.substring(7)));
+        require(bytes != null && bytes.length == size && sha(bytes).equals(hash));
         return ref;
+    }
+
+    // Current uploads are content-addressed under objects/sha256/<digest>/; legacy receipts used the flat dispatch key.
+    private static boolean ownedObjectKey(String key, String dispatchPrefix, String name, String hash) {
+        return key.equals(dispatchPrefix + name)
+                || key.equals(dispatchPrefix + "objects/sha256/" + hash + "/" + name);
     }
 
     private static boolean manifest(String name) {
@@ -175,7 +260,7 @@ final class LegacyCheckpointNormalizer {
                 require(entry.getSize() >= 0 && total <= MAX_ARCHIVE_BYTES);
                 // Normal modern checkpoints need only this bounded metadata scan.
                 // Never retain unrelated artifact or repository payloads in memory.
-                if (manifest(name) || name.equals("checkpoint.json")
+                if (manifest(name) || name.equals("checkpoint.json") || name.equals(PAYLOAD_MAP)
                         || name.equals("state/accepted-publication-pending.json")) {
                     require(entry.getSize() <= MAX_JSON_BYTES);
                     byte[] data = tar.readNBytes((int) entry.getSize());
@@ -189,13 +274,21 @@ final class LegacyCheckpointNormalizer {
 
     private static byte[] pack(byte[] original, Map<String, byte[]> replacements) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Map<String, byte[]> remaining = new LinkedHashMap<>(replacements);
+        long total = 0;
+        int count = 0;
         try (TarArchiveInputStream input = new TarArchiveInputStream(new GZIPInputStream(new ByteArrayInputStream(original)));
              TarArchiveOutputStream output = new TarArchiveOutputStream(new GZIPOutputStream(out))) {
             output.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
             for (TarArchiveEntry entry; (entry = input.getNextTarEntry()) != null;) {
-                byte[] replacement = replacements.get(entry.getName());
+                byte[] replacement = remaining.remove(entry.getName());
                 long originalSize = entry.getSize();
+                if (replacement != null && entry.getName().startsWith("publication-payloads/")) {
+                    require(originalSize == replacement.length && Arrays.equals(replacement, input.readNBytes(replacement.length)));
+                }
                 if (replacement != null) entry.setSize(replacement.length);
+                total += entry.getSize();
+                require(++count <= 10000 && total <= MAX_ARCHIVE_BYTES);
                 output.putArchiveEntry(entry);
                 if (replacement != null) output.write(replacement);
                 else input.transferTo(output);
@@ -203,7 +296,16 @@ final class LegacyCheckpointNormalizer {
                 // The input stream retains this header and uses its size to skip padding.
                 entry.setSize(originalSize);
             }
+            for (var addition : remaining.entrySet()) {
+                require(addition.getKey().startsWith("publication-payloads/") && safePath(addition.getKey()));
+                total += addition.getValue().length;
+                require(++count <= 10000 && total <= MAX_ARCHIVE_BYTES);
+                TarArchiveEntry entry = new TarArchiveEntry(addition.getKey());
+                entry.setSize(addition.getValue().length); entry.setMode(0600); entry.setModTime(0);
+                output.putArchiveEntry(entry); output.write(addition.getValue()); output.closeArchiveEntry();
+            }
         }
+        require(out.size() <= MAX_ARCHIVE_BYTES);
         return out.toByteArray();
     }
 

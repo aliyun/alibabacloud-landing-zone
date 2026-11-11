@@ -66,17 +66,30 @@ class ExecutorDaoSqlTest {
     }
 
     @Test
-    void listByClientKindOrdersNewestHeartbeatFirst() throws Exception {
+    void listByClientKindAndTenantScopesCandidatesToTheWorkspaceAndOrdersNewestHeartbeatFirst() throws Exception {
         String xml = Files.readString(MAPPER_XML);
 
-        assertTrue(xml.contains("id=\"listByClientKind\""),
-                "mapper must contain listByClientKind statement");
-        assertTrue(xml.contains("client_kind = #{clientKind}"),
-                "candidate query must filter by client kind");
-        assertTrue(xml.contains("WHERE client_kind = #{clientKind} AND is_deleted = 0"),
-                "candidate query must exclude deleted executors");
+        assertTrue(xml.contains("id=\"listByClientKindAndTenant\""),
+                "mapper must contain the workspace-scoped candidate statement");
+        assertFalse(xml.contains("id=\"listByClientKind\""),
+                "the unscoped candidate statement must not survive: it would mix workspaces");
+        assertTrue(xml.contains("WHERE tenant_id = #{tenantId} AND client_kind = #{clientKind} AND is_deleted = 0"),
+                "candidate query must scope by workspace, client kind and exclude deleted executors");
         assertTrue(xml.contains("ORDER BY last_heartbeat DESC, id ASC"),
                 "candidate query must prefer newest heartbeats deterministically");
+    }
+
+    @Test
+    void listActiveTenantClientKindsEnumeratesLiveWorkspaceProviderPairs() throws Exception {
+        String xml = Files.readString(MAPPER_XML);
+
+        assertTrue(xml.contains("id=\"listActiveTenantClientKinds\""),
+                "mapper must contain the workspace enumeration statement");
+        assertTrue(xml.contains("SELECT DISTINCT tenant_id, client_kind FROM executor"),
+                "the scheduler scan must return distinct workspace/client-kind pairs");
+        assertTrue(xml.contains("tenant_id IS NOT NULL"), "a null workspace is not a refresh scope");
+        assertTrue(xml.contains("TRIM(client_kind) != ''"), "a blank client kind is not a refresh scope");
+        assertTrue(xml.contains("is_deleted = 0"), "the scan must ignore deleted executors");
     }
 
     @Test

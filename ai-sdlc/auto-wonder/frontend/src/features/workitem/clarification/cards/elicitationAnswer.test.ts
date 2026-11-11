@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { OTHER_SENTINEL, computeElicitationContent, validateElicitation } from './elicitationAnswer';
+import { OTHER_SENTINEL, computeElicitationContent, unansweredFields, validateElicitation } from './elicitationAnswer';
 import type { ElicitationField } from './schemaForm';
 
 const f = (over: Partial<ElicitationField>): ElicitationField =>
@@ -42,6 +42,23 @@ describe('computeElicitationContent', () => {
     const fields = [f({ name: 'j', control: 'json' })];
     expect(computeElicitationContent(fields, { j: '{"x":1}' }, {})).toEqual({ x: 1 });
     expect(computeElicitationContent(fields, { j: 'not-json' }, {})).toEqual({});
+  });
+});
+
+describe('unansweredFields', () => {
+  it('列出未作答题目，答过的（含「其他想法」填字）不再计入', () => {
+    const fields = [
+      f({ name: 'a', control: 'select' }),
+      f({ name: 'b', control: 'text' }),
+      f({ name: 'c', control: 'multiselect' }),
+    ];
+    expect(unansweredFields(fields, {}, {}).map((x) => x.name)).toEqual(['a', 'b', 'c']);
+    expect(unansweredFields(fields, { a: 'A', b: 'x', c: ['C'] }, {}).map((x) => x.name)).toEqual([]);
+    expect(unansweredFields([fields[0]], { a: OTHER_SENTINEL }, { a: '自定义' })).toEqual([]);
+  });
+
+  it('json 控件把内容展开成任意键，不能算作未作答', () => {
+    expect(unansweredFields([f({ name: 'j', control: 'json' })], {}, {})).toEqual([]);
   });
 });
 

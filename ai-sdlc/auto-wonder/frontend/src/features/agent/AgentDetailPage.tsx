@@ -7,15 +7,17 @@ import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { Alert, Card, Tag, Button, Space, Popconfirm, message, Spin, Result, Tabs, Typography } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { RollbackOutlined, EditOutlined, PoweroffOutlined, PlayCircleOutlined, DeleteOutlined } from '@ant-design/icons';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAgent, useAgentVersions, useAgentVersion, useRollback, useOfflineAgent, useOnlineAgent, useDeleteAgent, useAgentWorkitems, useAgentMemories } from './hooks';
-import { getVersion, type AgentVersion, type AgentVersionSummary, type RepoPermItem, type SkillItem, type AgentEnvironmentVariableRef } from './api';
+import { getVersion, type AgentVersionSummary, type RepoPermItem, type SkillItem, type AgentEnvironmentVariableRef } from './api';
 import { getSdlcTemplate } from '@/features/sdlc/api';
 import type { ColumnsType } from 'antd/es/table';
 import { AgentStatCards } from './components/AgentStatCards';
 import { AgentWorkitemList } from './components/AgentWorkitemList';
+import { AgentVersionDiff } from './components/AgentVersionDiff';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -23,6 +25,7 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 
 const { Text } = Typography;
+const EMPTY_CELL = '-';
 
 const versionStatusColors = new Map<string, string>([
   ['DRAFT', 'default'], ['PENDING_REVIEW', 'processing'], ['APPROVED', 'success'],
@@ -32,18 +35,6 @@ const agentStatusColors = new Map<string, string>([
   ['DRAFT', 'default'], ['ONLINE', 'success'], ['OFFLINE', 'default'], ['PENDING_REVIEW', 'processing'],
 ]);
 
-/** Mirrors the edit page: a version without an explicit mode is treated as ASSISTED. */
-function versionEvolutionMode(version: AgentVersion) {
-  if (version.evolutionMode) return version.evolutionMode;
-  if (!version.identityJson) return 'ASSISTED';
-  try {
-    const parsed = JSON.parse(version.identityJson) as { evolutionMode?: string };
-    return parsed.evolutionMode || 'ASSISTED';
-  } catch {
-    return 'ASSISTED';
-  }
-}
-
 /** 优先显示模板名称（当前生效值可复用已查到的 name）；未知/未加载时退回 #id。 */
 function sdlcLabel(sdlcId?: number | null, name?: string) {
   if (sdlcId == null) return i18n.t('display.notBound', { ns: 'agent' });
@@ -52,13 +43,6 @@ function sdlcLabel(sdlcId?: number | null, name?: string) {
 
 function countSuffix(count?: number) {
   return count ? ` (${count})` : '';
-}
-
-interface DraftDiffRow {
-  key: string;
-  field: string;
-  current: string;
-  draft: string;
 }
 
 function AgentIdentitySection({ title, content }: { title: string; content?: string | null }) {
@@ -78,6 +62,16 @@ function EmptyHint({ text }: { text: string }) {
   return <Text type="secondary">{text}</Text>;
 }
 
+/** One labelled identity attribute: the label sits above its value and wraps with it on narrow screens. */
+function NamedAttribute({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div style={{ flex: '1 1 160px', minWidth: 140, maxWidth: 320 }}>
+      <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>{label}</Text>
+      <div style={{ marginTop: 4, wordBreak: 'break-word' }}>{children}</div>
+    </div>
+  );
+}
+
 /** 仅绑定了 SDLC 时才发起单查，解析不出名称时退回 #id。 */
 function useSdlcName(sdlcId?: number | null) {
   const { data } = useQuery({
@@ -92,17 +86,6 @@ function useSdlcName(sdlcId?: number | null) {
 export function AgentDetailPage() {
   const { t } = useTranslation('agent');
   const permissionLabels = new Map<string, string>([['READ', t('permissions.READ')], ['WRITE', t('permissions.WRITE')], ['ADMIN', t('permissions.ADMIN')]]);
-  const draftDiffColumns: ColumnsType<DraftDiffRow> = [
-    { title: t('display.field'), dataIndex: 'field', width: 120 },
-    {
-      title: t('display.effective'), dataIndex: 'current', ellipsis: { showTitle: false },
-      render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText>,
-    },
-    {
-      title: t('display.status.DRAFT'), dataIndex: 'draft', ellipsis: { showTitle: false },
-      render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText>,
-    },
-  ];
 
   const repoPermColumns: ColumnsType<RepoPermItem> = [
     { title: t('fields.repository'), dataIndex: 'repoName', render: (v: string, r) => v || `#${r.repoId}` },
@@ -132,7 +115,11 @@ export function AgentDetailPage() {
   const accessCommand = useAccessCommand();
   const agentId = Number(id);
   const { data: agent, isLoading, isError, error } = useAgent(agentId);
-  const { data: versions = [] } = useAgentVersions(agentId);
+  const {
+    data: versions = [],
+    isLoading: versionsLoading,
+    isError: versionsError,
+  } = useAgentVersions(agentId);
   const { data: workitems = [] } = useAgentWorkitems(agentId);
   const { data: memories = [] } = useAgentMemories(agentId);
   const sdlcName = useSdlcName(agent?.sdlcId);
@@ -161,7 +148,20 @@ export function AgentDetailPage() {
     queryFn: () => getVersion(agentId, draftVersionNo as number),
     enabled: draftDiffOpen && draftVersionNo != null && draftVersionNo > 0,
   });
-
+  const onlineVersionNo = agent?.onlineVersionId == null
+    ? null
+    : versions.find((version) => version.id === agent.onlineVersionId)?.versionNo ?? null;
+  // Baseline snapshot is only loaded while the comparison is expanded (versionNo 0 disables the query).
+  const {
+    data: draftBaseVersion,
+    isLoading: draftBaseLoading,
+    isError: draftBaseError,
+  } = useAgentVersion(agentId, draftDiffOpen && onlineVersionNo != null ? onlineVersionNo : 0);
+  // While the version list is still loading we cannot know whether the baseline exists, so the
+  // degraded notice must wait; a failed list also means the baseline cannot be resolved.
+  const draftBaselineUnavailable = agent?.onlineVersionId != null
+    && !versionsLoading
+    && (versionsError || onlineVersionNo == null || draftBaseError);
   if (!agentId || isNaN(agentId)) return (
     <Result status="404" title={t('errors.invalidId')} extra={<Button onClick={() => navigate(-1)}>{t('actions.back')}</Button>} />
   );
@@ -228,6 +228,12 @@ export function AgentDetailPage() {
     { title: t('display.statusTitle'), dataIndex: 'status', width: 100, render: (s: string) => <Tag color={versionStatusColors.get(s)}>{getAgentStatusLabel(s)}</Tag> },
     { title: t('display.createdAt'), dataIndex: 'gmtCreate', width: 160, render: (t: string) => formatDateTime(t) },
     {
+      title: t('display.submitNoteColumn'), dataIndex: 'submitNote', ellipsis: { showTitle: false },
+      render: (note?: string | null) => (note
+        ? <EllipsisText tooltip={note}>{note}</EllipsisText>
+        : <Text type="secondary">{EMPTY_CELL}</Text>),
+    },
+    {
       title: t('fields.actions'), width: 100,
       render: (_: unknown, record: AgentVersionSummary) =>
         record.status === 'ONLINE' || record.status === 'APPROVED' ? (
@@ -255,20 +261,7 @@ export function AgentDetailPage() {
   const statusInfo = { color: agentStatusColors.get(agent.status) || 'default', label: getAgentStatusLabel(agent.status) };
   const isPlatform = agent.kind === 'PLATFORM';
 
-  const draftDiffRows: DraftDiffRow[] = draftVersion
-    ? [
-      { key: 'roleName', field: t('fields.roleName'), current: getAgentRoleLabel(agent.roleCode, agent.roleName) || '-', draft: getAgentRoleLabel(draftVersion.roleCode, draftVersion.roleName) || '-' },
-      { key: 'roleCode', field: t('fields.roleCode'), current: agent.roleCode || '-', draft: draftVersion.roleCode || '-' },
-      { key: 'sdlcId', field: t('fields.sdlc'), current: sdlcLabel(agent.sdlcId, sdlcName), draft: sdlcLabel(draftVersion.sdlcId) },
-      {
-        key: 'evolutionMode', field: t('fields.evolution'),
-        current: getEvolutionModeLabel(agent.evolutionMode),
-        draft: getEvolutionModeLabel(versionEvolutionMode(draftVersion)),
-      },
-      { key: 'soul', field: 'SOUL.md', current: agent.businessBackground || '-', draft: draftVersion.businessBackground || '-' },
-      { key: 'agentmd', field: 'AGENT.md', current: agent.responsibilities || '-', draft: draftVersion.responsibilities || '-' },
-    ]
-    : [];
+  const sdlcNameOf = (sdlcId: number) => (sdlcId === agent.sdlcId ? sdlcName : undefined);
 
   return (
     <div>
@@ -386,24 +379,51 @@ export function AgentDetailPage() {
 
       {draftDiffOpen && draftVersionNo != null && (
         <Card size="small" title={t('display.diffTitle', { version: draftVersionNo })} style={{ marginBottom: 16 }}>
-          <Table rowKey="key" size="small" columns={draftDiffColumns} dataSource={draftDiffRows}
-            pagination={false} loading={!draftVersion} />
+          {!draftVersion || draftBaseLoading ? (
+            <Spin style={{ display: 'block', margin: '24px auto' }} />
+          ) : (
+            <AgentVersionDiff
+              base={draftBaseVersion ?? null}
+              target={draftVersion}
+              variant="inline"
+              baselineUnavailable={draftBaselineUnavailable}
+              sdlcNameOf={sdlcNameOf}
+            />
+          )}
         </Card>
       )}
 
       <Card title={t('display.identity')} style={{ marginBottom: 16 }}>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Space size={8} wrap>
-            {getAgentRoleLabel(agent.roleCode, agent.roleName) && <Tag color="blue">{getAgentRoleLabel(agent.roleCode, agent.roleName)}</Tag>}
-            {agent.roleCode && <Tag>{agent.roleCode}</Tag>}
-            <Tag color="geekblue">{t('display.sdlcTag', { name: sdlcLabel(agent.sdlcId, sdlcName) })}</Tag>
-            <Tag color="purple">{t('display.evolutionTag', { mode: getEvolutionModeLabel(agent.evolutionMode) })}</Tag>
-            {agent.executorTotalCount != null && (
-              <Tag color={agent.executorOnlineCount ? 'success' : 'default'}>
-                {t('display.executorRatio', { online: agent.executorOnlineCount ?? 0, total: agent.executorTotalCount })}
-              </Tag>
-            )}
-          </Space>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }} data-testid="agent-attributes">
+            <NamedAttribute label={t('fields.roleName')}>
+              {getAgentRoleLabel(agent.roleCode, agent.roleName) || <Text type="secondary">{t('display.notConfigured')}</Text>}
+            </NamedAttribute>
+            <NamedAttribute label={t('fields.roleCode')}>
+              {agent.roleCode || <Text type="secondary">{t('display.notConfigured')}</Text>}
+            </NamedAttribute>
+            <NamedAttribute label={t('fields.evolution')}>
+              {getEvolutionModeLabel(agent.evolutionMode)}
+            </NamedAttribute>
+            <NamedAttribute label={t('fields.sdlc')}>
+              {agent.sdlcId == null ? (
+                <Text type="secondary">{t('display.notBound')}</Text>
+              ) : (
+                <Link to={`/sdlcs/${agent.sdlcId}`}>{sdlcLabel(agent.sdlcId, sdlcName)}</Link>
+              )}
+            </NamedAttribute>
+            <NamedAttribute label={t('display.executor')}>
+              {agent.executorTotalCount == null ? (
+                <Text type="secondary">{t('display.executorUnknown')}</Text>
+              ) : agent.executorTotalCount === 0 ? (
+                <Text type="secondary">{t('display.executorNone')}</Text>
+              ) : (
+                <Link to={`/executors?agentId=${agentId}&view=agent`}>
+                  {t('display.onlineRatio', { online: agent.executorOnlineCount ?? 0, total: agent.executorTotalCount })}
+                </Link>
+              )}
+            </NamedAttribute>
+          </div>
           {!!agent.squadNames?.length && (
             <Space size={8} wrap>
               {agent.squadNames.map((name, i) => <Tag key={name + i} color="cyan">{name}</Tag>)}

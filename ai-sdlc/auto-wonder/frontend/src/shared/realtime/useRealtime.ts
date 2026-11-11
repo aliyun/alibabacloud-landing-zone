@@ -10,13 +10,15 @@ interface UseRealtimeOptions {
 }
 
 export function useRealtime(channel: string | null, { onEvent, enabled = true, onReconnect }: UseRealtimeOptions) {
+  const workspaceId = useAuthStore(s => s.currentWorkspace?.id);
+  const userId = useAuthStore(s => s.user?.id);
   const handlerRef = useRef(onEvent);
   handlerRef.current = onEvent;
   const reconnectRef = useRef(onReconnect);
   reconnectRef.current = onReconnect;
 
   useEffect(() => {
-    if (!channel || !enabled) return;
+    if (!channel || !enabled || !useAuthStore.getState().accessToken) return;
     const client = getRealtimeClient();
     if (client.state === 'disconnected') {
       client.connect(useAuthStore.getState().accessToken || '');
@@ -30,5 +32,5 @@ export function useRealtime(channel: string | null, { onEvent, enabled = true, o
       previouslyConnected = state === 'connected';
     });
     return () => { sub.unsubscribe(); unsubscribeState(); };
-  }, [channel, enabled]);
+  }, [channel, enabled, workspaceId, userId]);
 }

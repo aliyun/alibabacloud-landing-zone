@@ -14,7 +14,8 @@ public class JwtProperties {
     private final Environment environment;
     private String secret;
     private long accessTtlSeconds = 7200L;
-    private long refreshTtlSeconds = 604800L;
+    // 登录会话采用滚动 365 天：实际使用触发续期时才顺延，默认有效期覆盖该上限。
+    private long refreshTtlSeconds = 31536000L;
 
     public JwtProperties(Environment environment) {
         this.environment = environment;

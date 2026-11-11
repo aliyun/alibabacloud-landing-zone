@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.feature.PlatformFeatureSwitchDao">
+    <select id="findByKey" resultType="com.aliyun.autowonder.feature.PlatformFeatureSwitchDO">
+        SELECT * FROM platform_feature_switch WHERE switch_key = #{switchKey} LIMIT 1
+    </select>
+
+    <update id="updateEnabled">
+        UPDATE platform_feature_switch
+        SET enabled = #{enabled}, modifier_id = #{modifierId}, version = version + 1
+        WHERE switch_key = #{switchKey} AND version = #{version}
+    </update>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.feature.PlatformFeatureSwitchDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO platform_feature_switch (switch_key, enabled, modifier_id, version)
+        VALUES (#{switchKey}, #{enabled}, #{modifierId}, 0)
+    </insert>
+</mapper>

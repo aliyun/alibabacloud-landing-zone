@@ -117,6 +117,19 @@
     "titlePlaceholder": "Enter a work item title",
     "descriptionPlaceholder": "Describe the work item (Markdown supported)"
   },
+  "duplicateCheck": {
+    "title": "Possible duplicate work items",
+    "description": "These work items may duplicate this request. Opening a link keeps your input, and you can ignore this reminder.",
+    "id": "ID: {{id}}",
+    "open": "Open in a new tab",
+    "dismiss": "Ignore and continue",
+    "truncated": "Too many identical titles; only part of the results is shown.",
+    "partial": "Duplicate intent detection did not cover every candidate.",
+    "matchType": {
+      "exactTitle": "Identical title",
+      "sameIntent": "Same intent"
+    }
+  },
   "scope": {
     "all": "All",
     "pending": "Awaiting my decision",
@@ -181,7 +194,15 @@
     "tagConditionNoOptions": "No tags available",
     "tagConditionOptionsLoadFailed": "Failed to load tags",
     "tagConditionSummary": "Tag condition: {{op}} {{tags}}",
-    "clearTagCondition": "Clear tag condition"
+    "clearTagCondition": "Clear tag condition",
+    "squadLabel": "Squad",
+    "squadPlaceholder": "Select squads (multiple)",
+    "squadUnassigned": "Unassigned squad",
+    "squadNoData": "No squads",
+    "squadLoadFailed": "Failed to load squads",
+    "clearSquadFilter": "Clear squad filter",
+    "squadFilterNames": "Squad: {{names}}",
+    "squadFilterMore": "Squad: {{names}} ({{total}} total)"
   },
   "recycleBin": {
     "title": "Work item recycle bin",
@@ -256,7 +277,8 @@
     "documentsUploaded": "Requirement documents uploaded.",
     "documentUploadFailed": "Could not upload requirement documents.",
     "documentDeleted": "Requirement document deleted.",
-    "documentDeleteFailed": "Could not delete the requirement document."
+    "documentDeleteFailed": "Could not delete the requirement document.",
+    "executionRestartLatestRequested": "Restart with the latest workflow requested"
   },
   "transition": {
     "updated": "Status updated to “{{name}}”.",
@@ -350,7 +372,11 @@
     "removeAttachment": "Remove attachment {{name}}",
     "attachmentHint": "Any file type; drop files or paste screenshots. Up to 5 MB per file.",
     "attachmentStorageHint": "Files are uploaded to the work item’s requirements and design attachments when sent, sharing a limit of 10 files and 20 MB total. Uploaded files remain there and can be deleted from that section.",
-    "uploadingAttachments": "Uploading attachments…"
+    "uploadingAttachments": "Uploading attachments…",
+    "mentionSquadName": " ({{squad}})",
+    "mentionGroupCurrentSquad": "Current delivery squad: {{squad}}",
+    "mentionGroupCurrentSquadUnknown": "Current delivery squad",
+    "mentionGroupOthers": "Other squad members"
   },
   "interaction": {
     "loadError": "Execution records are temporarily unavailable. Check the comment for the reply status.",
@@ -384,6 +410,16 @@
     "stale": "Last activity was {{count}} seconds ago. No new events have arrived; current progress is unknown.",
     "underlyingError": "Underlying error",
     "underlyingErrorDispatch": "Underlying error · Execution #{{id}}",
+    "stopEnd": "End this execution",
+    "stopForce": "Force end",
+    "ending": "Ending",
+    "endingHint": "End requested; awaiting executor stop confirmation",
+    "stopPending": "Platform ended this execution; the executor stop is unconfirmed",
+    "endConfirmTitle": "End execution #{{id}}?",
+    "endConfirmBody": "Ends only this worker's interaction under this comment. Other interactions and the formal delivery are unaffected. Submitted artifacts are retained; @mention again to create a new interaction.",
+    "forceConfirmTitle": "Force end execution #{{id}}?",
+    "stopFailed": "The end request failed. The current state is unconfirmed; refresh and try again.",
+    "refresh": "Refresh status",
     "waited_one": "Waited {{count}} second",
     "duration_one": "Total time: {{count}} second",
     "lastActivity_one": "Last activity was {{count}} second ago"
@@ -464,6 +500,8 @@
     "completed": "Execution complete"
   },
   "timeline": {
+    "earlierPage": "View earlier records",
+    "newerPage": "View newer records",
     "justNow": "Just now",
     "minutes_other": "{{count}} minutes ago",
     "hours_other": "{{count}} hours ago",
@@ -522,14 +560,14 @@
     "execution": "Execution {{number}} · {{status}}",
     "previewName": "Preview artifact {{name}}",
     "downloadName": "Download artifact {{name}}",
+    "openName": "Open artifact {{name}}",
+    "meta": "{{size}} · {{type}}",
     "executionSummary_other": "{{latest}}{{label}} · {{count}} artifacts",
     "executionSummary_one": "{{latest}}{{label}} · {{count}} artifact",
     "latest": "Latest · ",
     "categoryCount": "{{label}} ({{count}})",
     "agentCount_other": "Artifacts ({{count}} artifacts)",
-    "agentCount_one": "Artifacts ({{count}} artifact)",
-    "fileSummary": "{{name}} · {{type}}{{size}}",
-    "bytes": " · {{size}} bytes"
+    "agentCount_one": "Artifacts ({{count}} artifact)"
   },
   "debug": {
     "title": "Debug logs",
@@ -632,7 +670,9 @@
       "running": "The execution is still running.",
       "online": "The execution is still online and cannot continue.",
       "notResumable": "This execution cannot be continued or retried."
-    }
+    },
+    "restartLatest": "Restart with latest workflow",
+    "restartLatestBody": "Start a new round from the entry of this worker’s currently enabled workflow. Keep historical artifacts and operation receipts; the new round starts without the old session or checkpoint."
   },
   "executionControl": {
     "loadEarlier_one": "Load {{count}} earlier record",
@@ -795,9 +835,14 @@
     "retryCount": "Automatic retry {{number}}/{{maximum}}",
     "retryScheduled": "Automatic retry {{number}}/{{maximum}}; next attempt: {{time}}",
     "rounds": "Delivery restart rounds ({{count}})",
-    "startedDispatchRound": "Delivery round {{number}} started (Dispatch #{{id}})"
+    "startedDispatchRound": "Delivery round {{number}} started (Dispatch #{{id}})",
+    "roundSource": "Source execution #{{id}}",
+    "roundWorkflow": "Workflow #{{id}}"
   },
   "runtimeLog": {
+    "windowHint": "Shows up to 200 log events at a time; search covers the current window.",
+    "earlierWindow": "View earlier logs",
+    "latestWindow": "Return to latest logs",
     "compactStarted": "Context compaction started",
     "compactCompleted": "Context compaction completed",
     "compactAuto": "Automatic",
@@ -989,7 +1034,8 @@
     "commentRework": "Comment rework",
     "continue": "Continue",
     "humanHandoff": "Hand off to a person",
-    "commentReworkId": "User rework (comment #{{id}})"
+    "commentReworkId": "User rework (comment #{{id}})",
+    "restart": "Delivery restart"
   },
   "clarification": {
     "ownedNotice": {
@@ -1030,6 +1076,11 @@
     "previousQuestion": "Previous question",
     "submit": "Submit",
     "nextQuestion": "Next question",
+    "cancel": "Cancel",
+    "unansweredTitle": "Some questions are unanswered",
+    "unansweredBody": "These questions are still unanswered. Submit to let the agent continue with the current answers:",
+    "unansweredTag_one": "{{count}} question unanswered",
+    "unansweredTag_other": "{{count}} questions unanswered",
     "questionTitle": "Question {{number}}: {{label}}",
     "questionCount": "Question {{current}}/{{total}}",
     "collapseCard": "Collapse question card",
@@ -1076,6 +1127,7 @@
     "historyStale": "Could not refresh history. The last successfully loaded content is shown below.",
     "replyEndedSyncing": "The reply has ended. Syncing the conversation state; input is temporarily unavailable.",
     "loadingHistory": "Loading message history…",
+    "loadingLatestConversation": "Opening the most recent conversation…",
     "noHistory": "No message history yet",
     "bottom": "Back to bottom",
     "resizeInput": "Resize the message input",
@@ -1369,5 +1421,7 @@
     "preview": "View content",
     "nextPage": "Next page",
     "file": "{{name}} · {{size}} B"
-  }
+  },
+  "clarificationBrowserTitle": "Workitem #{{id}} needs your answer",
+  "clarificationBrowserBody": "Click to return to the clarification conversation."
 }

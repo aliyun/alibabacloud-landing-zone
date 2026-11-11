@@ -2,18 +2,25 @@ import { formatDateTime } from '@/shared/i18n/format';
 import { useTranslation } from 'react-i18next';
 import { i18n } from '@/shared/i18n';
 import { PageHeading } from '@/shared/ui/PageHeading';
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import {
   Alert, Button, Card, Empty, List, Pagination, Popconfirm, Space, Tabs, Tag, Typography, message,
 } from 'antd';
 import { CloseCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
-  deleteNotification, listNotifications, markAllNotificationsRead, markNotificationRead,
+  deleteNotification, getNotification, listNotifications, markAllNotificationsRead, markNotificationRead,
 } from './api';
 import type { NotificationStatusFilter } from './api';
 import type { Notification } from '@/shared/types/notification';
-import { NotificationDetailDrawer } from './NotificationDetailDrawer';
+import { ApiError, ErrorCodes } from '@/shared/types/common';
+import {
+  getBrowserNotificationPermission,
+  requestBrowserNotificationPermission,
+} from '@/shared/notifications/browserNotification';
+import type { BrowserNotificationPermission } from '@/shared/notifications/browserNotification';
+import { NotificationDetailDrawer, hasDuplicateLinks } from './NotificationDetailDrawer';
 
 const { Text } = Typography;
 
@@ -30,14 +37,34 @@ function summaryOf(content: string | null): string {
   return content.length > SUMMARY_LENGTH ? `${content.slice(0, SUMMARY_LENGTH)}...` : content;
 }
 
+/** `?notificationId=` 深链只接受正整数；畸形值不触发任何请求。 */
+export function parseNotificationDeepLink(value: string | null): number | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+const PERMISSION_TEXT_KEYS = {
+  default: 'browserPermissionDefault',
+  granted: 'browserPermissionGranted',
+  denied: 'browserPermissionDenied',
+  unsupported: 'browserPermissionUnsupported',
+} as const;
+
 export function NotificationCenterPage() {
   const { t } = useTranslation('notification');
   const tabItems = [{ key: 'ALL', label: t('all') }, { key: 'UNREAD', label: t('unread') }, { key: 'READ', label: t('read') }];
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [tab, setTab] = useState('ALL');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Notification | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkId = parseNotificationDeepLink(searchParams.get('notificationId'));
+  // 同一个 ID 只自动打开一次，关闭抽屉后不因详情缓存再次弹出。
+  const openedDeepLinkRef = useRef<number | null>(null);
+  const [permission, setPermission] = useState<BrowserNotificationPermission>(getBrowserNotificationPermission);
 
   const status = tab === 'ALL' ? undefined : (tab as NotificationStatusFilter);
 
@@ -67,6 +94,46 @@ export function NotificationCenterPage() {
     onSuccess: invalidate,
     onError: () => message.error(i18n.t('notification:readFailed')),
   });
+
+  const deepLinkQuery = useQuery({
+    queryKey: ['notifications', 'detail', deepLinkId],
+    enabled: deepLinkId != null,
+    retry: false,
+    queryFn: () => getNotification(deepLinkId as number),
+  });
+
+  useEffect(() => {
+    if (deepLinkId == null) {
+      openedDeepLinkRef.current = null;
+      return;
+    }
+    const record = deepLinkQuery.data;
+    if (!record || openedDeepLinkRef.current === deepLinkId) return;
+    openedDeepLinkRef.current = deepLinkId;
+    setSelected(record);
+    setDrawerOpen(true);
+    // 成功读取后才标已读，读取失败的深链不能误报已读。
+    if (record.status === 'UNREAD') {
+      markRead.mutate(record.id);
+    }
+  }, [deepLinkId, deepLinkQuery.data, markRead]);
+
+  useEffect(() => {
+    // 权限可能在浏览器站点设置里被改动；回到页面时重新读取真实状态。
+    const refreshPermission = () => setPermission(getBrowserNotificationPermission());
+    window.addEventListener('focus', refreshPermission);
+    document.addEventListener('visibilitychange', refreshPermission);
+    return () => {
+      window.removeEventListener('focus', refreshPermission);
+      document.removeEventListener('visibilitychange', refreshPermission);
+    };
+  }, []);
+
+  const enableBrowserNotifications = async () => {
+    setPermission(await requestBrowserNotificationPermission());
+  };
+  // JSX 里不直接写状态比较字面量，避免被判成未走 i18n 的 UI 文本。
+  const canRequestBrowserPermission = permission === 'default';
 
   const markAllRead = useMutation({
     mutationFn: markAllNotificationsRead,
@@ -99,6 +166,34 @@ export function NotificationCenterPage() {
     }
   };
 
+  // 单一目标的通知点击整行就直接进入关联页面；重复工单提醒在详情里有多个工单目标，
+  // 先留在抽屉里让用户选择，没有 link 的通知也只能看详情。
+  const directLinkOf = (item: Notification): string | null => (
+    item.link && !hasDuplicateLinks(item) ? item.link : null
+  );
+
+  const openItem = (item: Notification) => {
+    const target = directLinkOf(item);
+    if (!target) {
+      openDetail(item);
+      return;
+    }
+    if (item.status === 'UNREAD') {
+      markRead.mutate(item.id);
+    }
+    navigate(target);
+  };
+
+  // 关闭抽屉只移除深链参数，保留其他查询参数。
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    if (searchParams.has('notificationId')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('notificationId');
+      setSearchParams(next, { replace: true });
+    }
+  };
+
   // 标记已读后该行可能因筛选而离开当前页，此时回退到打开抽屉时的快照，避免详情突然变空
   const detail = useMemo(() => {
     if (!selected) return null;
@@ -112,6 +207,16 @@ export function NotificationCenterPage() {
 
   const rowActions = (item: Notification): ReactNode[] => {
     const actions: ReactNode[] = [];
+    // 整行直达关联页面后，仍要有一个入口能看完整正文与关联对象。
+    if (directLinkOf(item)) {
+      actions.push(
+        <span key="detail" onClick={stopRowClick}>
+          <Button type="link" size="small" aria-label={t('viewDetail')} onClick={() => openDetail(item)}>
+            {t('viewDetail')}
+          </Button>
+        </span>,
+      );
+    }
     if (item.status === 'UNREAD') {
       actions.push(
         <span key="read" onClick={stopRowClick}>
@@ -156,6 +261,49 @@ export function NotificationCenterPage() {
         </Button>
       }
     >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          padding: '12px 16px',
+          marginBottom: 12,
+          borderRadius: 8,
+          background: 'var(--aw-soft-bg, rgba(0, 0, 0, 0.02))',
+        }}
+      >
+        <div>
+          <Text strong>{t('browserNotifications')}</Text>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t(PERMISSION_TEXT_KEYS[permission])}
+            </Text>
+          </div>
+        </div>
+        {/* 只在用户点击时申请授权；拒绝后引导去浏览器站点设置，不反复弹窗。 */}
+        {canRequestBrowserPermission && (
+          <Button onClick={() => { void enableBrowserNotifications(); }}>
+            {t('enableBrowserNotifications')}
+          </Button>
+        )}
+      </div>
+
+      {deepLinkId != null && deepLinkQuery.isError && (
+        <Alert
+          type="error"
+          showIcon
+          icon={<CloseCircleFilled aria-hidden="true" />}
+          message={
+            deepLinkQuery.error instanceof ApiError && deepLinkQuery.error.code === ErrorCodes.NOT_FOUND
+              ? t('notificationNotFound')
+              : t('detailLoadFailed')
+          }
+          action={<Button size="small" onClick={() => { void deepLinkQuery.refetch(); }}>{t('retry')}</Button>}
+          style={{ marginBottom: 12 }}
+        />
+      )}
+
       <Tabs activeKey={tab} items={tabItems} onChange={handleTabChange} />
 
       {isError ? (
@@ -177,7 +325,7 @@ export function NotificationCenterPage() {
             renderItem={(item) => (
               <List.Item
                 style={{ cursor: 'pointer' }}
-                onClick={() => openDetail(item)}
+                onClick={() => openItem(item)}
                 actions={rowActions(item)}
               >
                 <List.Item.Meta
@@ -224,7 +372,7 @@ export function NotificationCenterPage() {
       <NotificationDetailDrawer
         notification={detail}
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeDrawer}
       />
     </Card>
   );

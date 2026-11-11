@@ -31,8 +31,26 @@ export interface FederationConnection {
   subjectClaim: string | null;
   nameClaim: string | null;
   emailClaim: string | null;
+  /** 认证结果中飞书 user_id 的属性名；空表示不同步。 */
+  feishuUserIdClaim: string | null;
+  /** 首次登录未绑定时自动创建内部普通账号。 */
+  autoProvision: boolean;
+  /** 平台单行配置派生的唯一默认登录入口。 */
+  defaultLogin: boolean;
   allowedTenants: string | null;
   sortOrder: number | null;
+}
+
+/** 平台认证配置：注册开关与全平台唯一默认连接。 */
+export interface PlatformAuthConfig {
+  registrationEnabled: boolean;
+  defaultProviderId: number | null;
+}
+
+export interface UpdatePlatformAuthConfigParams {
+  registrationEnabled?: boolean;
+  defaultProviderId?: number;
+  clearDefaultProvider?: boolean;
 }
 
 /** 普通用户可见的只读概览：字段由后端白名单投影，不含端点、证书、客户端 ID 或密钥。 */
@@ -85,6 +103,9 @@ export interface CreateConnectionParams {
   subjectClaim?: string | null;
   nameClaim?: string | null;
   emailClaim?: string | null;
+  feishuUserIdClaim?: string | null;
+  autoProvision?: number;
+  defaultLogin?: boolean;
   allowedTenants?: string | null;
 }
 
@@ -104,16 +125,44 @@ export interface UpdateConnectionParams {
   subjectClaim?: string | null;
   nameClaim?: string | null;
   emailClaim?: string | null;
+  feishuUserIdClaim?: string | null;
+  autoProvision?: number;
+  defaultLogin?: boolean;
   allowedTenants?: string | null;
 }
 
 export const FEDERATION_IDPS_QUERY_KEY = ['platform', 'federation', 'idps'] as const;
 export const FEDERATION_CONNECTIONS_QUERY_KEY = ['platform', 'federation', 'connections'] as const;
 export const FEDERATION_OVERVIEW_QUERY_KEY = ['platform', 'federation', 'overview'] as const;
+export const FEDERATION_AUTH_CONFIG_QUERY_KEY = ['platform', 'federation', 'auth-config'] as const;
+export const PLATFORM_IM_SELECTION_QUERY_KEY = ['platform', 'im-channels', 'selection'] as const;
+
+export interface PlatformImSelection {
+  provider: string;
+}
+
+/** 当前平台消息通道：飞书映射仅在 FEISHU 时生效。 */
+export async function fetchPlatformImSelection(): Promise<PlatformImSelection> {
+  const resp = await apiClient.get<PlatformImSelection>('/api/platform/im-channels/selection');
+  return resp.data;
+}
 
 const IDPS_PATH = '/api/platform/federation/idps';
 const CONNECTIONS_PATH = '/api/platform/federation/connections';
 const OVERVIEW_PATH = '/api/platform/federation/overview';
+const AUTH_CONFIG_PATH = '/api/platform/federation/auth-config';
+
+export async function fetchPlatformAuthConfig(): Promise<PlatformAuthConfig> {
+  const resp = await apiClient.get<PlatformAuthConfig>(AUTH_CONFIG_PATH);
+  return resp.data;
+}
+
+export async function updatePlatformAuthConfig(
+  params: UpdatePlatformAuthConfigParams,
+): Promise<PlatformAuthConfig> {
+  const resp = await apiClient.put<PlatformAuthConfig>(AUTH_CONFIG_PATH, params);
+  return resp.data;
+}
 
 /** 已登录用户均可读取；仅返回白名单概览，管理面 CRUD 仍走管理员端点。 */
 export async function fetchFederationOverview(): Promise<FederationOverview> {

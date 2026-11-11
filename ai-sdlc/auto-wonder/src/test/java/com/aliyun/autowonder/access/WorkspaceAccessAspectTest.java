@@ -127,7 +127,7 @@ class WorkspaceAccessAspectTest {
     @Test
     void allWorkspaceReadsRemainAvailableAndAdministratorIgnoresReadOnlyDomains() {
         var workspaceService = org.mockito.Mockito.mock(com.aliyun.autowonder.workspace.WorkspaceService.class);
-        var controller = proxy(new com.aliyun.autowonder.workspace.WorkspaceController(workspaceService, null));
+        var controller = proxy(new com.aliyun.autowonder.workspace.WorkspaceController(workspaceService, null, null));
         setContext(7L, 100L, WorkspaceAccessLevel.READ_WRITE);
         setContextMemberReadOnlyDomains("[\"WORKSPACE\"]");
         controller.currentMembership();

@@ -33,6 +33,18 @@ class WorkitemServiceRestartHandlerTest {
     }
 
     @Test
+    void replaysDoNotAllocateOrPublishAnotherRoundAfterTheDefaultChanges() {
+        when(restartStore.roundByToken(100L, 500L, "same-request")).thenReturn(1);
+        when(restartStore.request(100L, 500L, 1)).thenReturn(new DeliveryRestartStore.RestartRequest(40013L, 300031L, null));
+        assertTrue(handler.replay(100, 500, "same-request", 40013L, null, null));
+        verify(restartStore, never()).allocateRound(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong(), any(), any(), any(), any(), any());
+        verify(eventPublisher, never()).publishEvent(any(Object.class));
+        org.junit.jupiter.api.Assertions.assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> handler.replay(100, 500, "same-request", 40014L, null, null));
+    }
+
+    @Test
     void reopensClosedDeliveryAndPublishesRestartEventWithRoundKey() {
         WorkitemDO w = new WorkitemDO();
         w.setId(500L);

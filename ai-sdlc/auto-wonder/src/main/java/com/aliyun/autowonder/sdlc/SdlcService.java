@@ -383,7 +383,9 @@ public class SdlcService {
 
     @Transactional
     public void disable(long id, long tenantId, long userId) {
-        SdlcDO s = sdlcDao.findById(id);
+        // Row lock makes disable the linearization peer of dispatch admission: whichever
+        // transaction commits first decides whether an in-flight attempt may be sent.
+        SdlcDO s = sdlcDao.findByIdForUpdate(id, tenantId);
         if (s == null) {
             throw new BizException(ErrorCode.SDLC_NOT_FOUND);
         }

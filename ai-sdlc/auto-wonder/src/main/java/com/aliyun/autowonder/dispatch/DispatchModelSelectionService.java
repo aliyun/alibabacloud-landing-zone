@@ -40,7 +40,8 @@ public class DispatchModelSelectionService {
             if (decision.getModel() != null) {
                 String provider = ExecutorLaunchOptionsService.resolveProvider(executor.getClientKind());
                 if (ExecutorLaunchOptionsService.isQoderFamily(provider)
-                        && options.models(provider).stream().noneMatch(m -> decision.getModel().equals(m.getValue()))) {
+                        && options.models(dispatch.getTenantId(), provider).stream()
+                                .noneMatch(m -> decision.getModel().equals(m.getValue()))) {
                     decision.setModel(null); decision.setThreshold(null); decision.setReasonCode("MODEL_UNAVAILABLE");
                 }
             }

@@ -1,0 +1,94 @@
+{
+  "flowTitle": "新空间初始化引导流程",
+  "previous": "上一步",
+  "next": "下一步",
+  "sentReview": "初始化消息已发送。你可以查看会话，再继续下一步。",
+  "entry": "打开 Chief",
+  "entryChooseWorkspace": "请先进入一个工作空间，再使用 Chief。",
+  "entrySetupRequired": "请进入工作空间，完成 Chief 配置并启动执行器。",
+  "entryCheckFailed": "暂时无法检查 Chief 状态，请重试。",
+  "entryHint": "顶部机器人入口",
+  "phaseProgress": "第{{stage}}/4阶段 · 当前配置子步骤{{substep}}/6",
+  "stageProgress": "第{{stage}}/4阶段",
+  "stage": {
+    "configure": {
+      "title": "配置 Chief",
+      "description": "先完成 Chief 配置，执行器在线可用后才能继续。"
+    },
+    "open": {
+      "title": "进入 Chief",
+      "description": "点击顶部机器人入口。系统会自动以全屏模式打开 Chief。"
+    },
+    "send": {
+      "title": "发送初始化请求",
+      "description": "提示词已填好。请检查后点击发送，不会自动发送。"
+    },
+    "handoff": {
+      "title": "Chief 接力",
+      "description": "请在 Chief 中完成空间初始化流程，Chief 会继续引导你完成配置。"
+    }
+  },
+  "substep": {
+    "client": "选择执行客户端",
+    "completeSetup": "补齐 Chief 配置",
+    "hostOs": "选择执行器所在电脑或服务器的系统",
+    "generate": "生成启动命令",
+    "copy": "复制命令并启动",
+    "waitOnline": "等待 Chief 执行器上线"
+  },
+  "start": "开始配置 Chief",
+  "confirm": "确定",
+  "next": "下一步",
+  "skip": "跳过",
+  "never": "不再提示",
+  "retry": "重试",
+  "manualCopied": "已手动复制",
+  "dialog": {
+    "title": "不再显示新空间引导？",
+    "body": "确认后，当前及今后新建空间都不再显示此引导。后续可通过顶部平台Chief入口完成空间初始化配置。",
+    "cancel": "取消",
+    "confirm": "确认并关闭"
+  },
+  "setup": {
+    "clientLabel": "执行客户端",
+    "clientQoder": "Qoder",
+    "clientQoderCn": "Qoder 中国版",
+    "confirmClient": "确认选择",
+    "completeAction": "补齐配置",
+    "osLabel": "执行器所在系统",
+    "posix": "macOS / Linux",
+    "windows": "Windows",
+    "confirmOs": "确认选择",
+    "generateAction": "生成启动命令",
+    "copyAction": "复制命令",
+    "copyIcon": "一键复制完整命令",
+    "readyTag": "在线可用",
+    "existingClient": "已存在执行器，继续使用当前客户端。",
+    "existingStep": "已具备条件，已自动跳过",
+    "chooseOs": "请选择执行器所在电脑或服务器的系统",
+    "copyFailed": "复制失败，请手动选择上方文本复制。",
+    "copiedHint": "请在运行执行器的电脑或服务器上打开终端，粘贴命令并执行，保持进程运行。检测到Chief在线可用后即可继续。",
+    "waiting": "正在等待 Chief 执行器上线。",
+    "checkStatus": "手动检查",
+    "autoChecking": "后台自动探测中",
+    "autoCheckPaused": "自动探测已暂停",
+    "autoCheckHint": "系统会在后台自动探测，检测到执行器在线后将自动进入下一步。",
+    "waitExpired": "暂未检测到执行器在线可用。可重试、检查终端中的命令，或暂时跳过。",
+    "actionFailed": "操作未成功，请重试；仍停留在当前步骤。"
+  },
+  "prompt": {
+    "initial": "请初始化当前工作空间，并引导我完成软件研发交付所需的配置。"
+  },
+  "draftBlocked": "已有草稿，未覆盖。请先发送或清理草稿后点击重试。",
+  "capabilityMissing": "空间初始化能力尚未就绪，暂不能交接。请稍后重试。",
+  "sendFailed": "发送失败，草稿已保留，请重试。",
+  "reserveFailed": "无法准备初始化对话，请重试。",
+  "advanceFailed": "引导进度保存失败，请刷新后重试。",
+  "conflict": "引导进度已更新，已按最新状态继续。",
+  "skipFailed": "保存跳过状态失败，请重试。",
+  "disableFailed": "偏好保存失败，请重试。引导未关闭。",
+  "prefReadFailed": "无法读取新空间引导偏好，引导未展示。",
+  "loadFailed": "无法加载新空间引导。",
+  "expandHint": "已自动打开全屏 Chief",
+  "progressSaved": "进度已保存"
+}

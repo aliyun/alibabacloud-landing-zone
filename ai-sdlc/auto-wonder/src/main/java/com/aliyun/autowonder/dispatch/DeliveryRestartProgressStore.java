@@ -28,7 +28,7 @@ public class DeliveryRestartProgressStore {
     private int update(long tenantId, long workitemId, String idempotencyKey,
             String status, String stopReason, Long dispatchId) {
         return jdbc.update("UPDATE workitem_delivery_restart SET status=?,stop_reason=?,dispatch_id=?,"
-                        + "gmt_modified=NOW(3) WHERE tenant_id=? AND workitem_id=? AND restart_round=?",
+                        + "gmt_modified=NOW(3) WHERE tenant_id=? AND workitem_id=? AND restart_round=? AND status<>'SUPERSEDED'",
                 status, stopReason, dispatchId, tenantId, workitemId, roundOf(idempotencyKey));
     }
 

@@ -4,6 +4,7 @@ import { RepoScanRenderer } from './RepoScanRenderer';
 import { MemoryImportRenderer } from './MemoryImportRenderer';
 import { SdlcGenRenderer } from './SdlcGenRenderer';
 import { AgentConfigGenRenderer } from './AgentConfigGenRenderer';
+import { PrdDesignRenderer } from './PrdDesignRenderer';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const rendererRegistry: Record<string, ComponentType<AiResultRendererProps<any>>> = {
@@ -11,4 +12,5 @@ export const rendererRegistry: Record<string, ComponentType<AiResultRendererProp
   MEMORY_IMPORT: MemoryImportRenderer,
   SDLC_GEN: SdlcGenRenderer,
   AGENT_CONFIG_GEN: AgentConfigGenRenderer,
+  PRD_DESIGN: PrdDesignRenderer,
 };

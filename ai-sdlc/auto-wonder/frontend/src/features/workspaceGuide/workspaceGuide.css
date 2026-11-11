@@ -1,0 +1,223 @@
+/* 新空间 Chief 初始化引导：蒙版、引导卡与窄屏布局。 */
+
+body.aw-guide-lock { overflow: hidden; }
+
+.aw-guide-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(21, 32, 59, .6);
+}
+
+.aw-guide-card {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1100;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  border: 1px solid var(--aw-border);
+  border-radius: 14px;
+  background: var(--aw-panel);
+  color: var(--aw-text);
+  box-shadow: 0 12px 60px #0003;
+}
+
+.aw-guide-card-content {
+  width: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 26px;
+  border-radius: inherit;
+}
+
+.aw-guide-connector {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1090;
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke: rgb(var(--aw-accent-rgb));
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .14));
+}
+.aw-guide-connector-line { stroke-dasharray: 6 6; }
+.aw-guide-connector-arrow { stroke-width: 2.2; }
+
+.aw-guide-card:focus-visible { outline: 3px solid rgba(var(--aw-accent-rgb), .55); outline-offset: 2px; }
+.aw-guide-card h2 { margin: 10px 0; font-size: 24px; }
+.aw-guide-card p { font-size: 15px; line-height: 1.7; }
+.aw-guide-secondary { color: var(--aw-muted); font-size: 13px; }
+.aw-guide-flow-title { margin-bottom: 8px; font-size: 16px; font-weight: 600; }
+.aw-guide-navigation { display: flex; flex-wrap: wrap; gap: 8px; }
+.aw-guide-confirm { display: flex; justify-content: flex-end; }
+
+.aw-guide-skip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--aw-border);
+}
+
+.aw-guide-never { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+
+.aw-guide-dialog-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 32, 62, .6);
+}
+
+.aw-guide-dialog {
+  width: min(460px, 92vw);
+  padding: 22px;
+  border: 1px solid var(--aw-border);
+  border-radius: 14px;
+  background: var(--aw-panel);
+  color: var(--aw-text);
+  box-shadow: 0 12px 60px #0003;
+}
+
+.aw-guide-dialog h2 { margin-top: 0; font-size: 19px; }
+.aw-guide-dialog p { line-height: 1.8; }
+.aw-guide-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+/* 只抬高阶段 2 的机器人，白底隔开下层蒙版；覆盖全局按钮阴影和交互态。 */
+html .aw-chief-entry.ant-btn.aw-guide-focus,
+html .aw-chief-entry.ant-btn.aw-guide-focus:is(:hover, :active, :focus-visible) {
+  --aw-accent-text: #087f5b;
+  --aw-accent-rgb: 8, 127, 91;
+  --aw-panel: #fff;
+  position: relative;
+  z-index: 1100;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 2px solid var(--aw-accent-text);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 0 0 3px #fff, 0 0 0 5px rgba(var(--aw-accent-rgb), .35), 0 4px 12px #0003;
+}
+
+html .aw-chief-entry.aw-guide-focus svg { width: 28px; height: 28px; }
+html .aw-chief-entry.aw-guide-focus svg path { stroke-width: 2.2; }
+
+/* 引导中的 Chief：同一实例抬到蒙版之上，收起态的悬浮球在引导期间不出现。 */
+.aw-chief.aw-chief-guide { z-index: 1050; }
+.aw-chief-guide .aw-chief-launch { display: none; }
+.aw-chief-guide .aw-chief-guide-panel { box-shadow: 0 12px 55px #0003; }
+
+@media (min-width: 701px) {
+  .aw-chief-guide .aw-chief-guide-panel:not(.aw-chief-expanded) {
+    position: fixed;
+    left: 24px;
+    right: auto;
+    top: auto;
+    bottom: 24px;
+    width: min(560px, calc(100vw - 460px));
+    height: min(70dvh, 640px);
+  }
+}
+
+.aw-chief-setup-guided .ant-btn,
+.aw-chief-setup-guided .ant-select { margin: 12px 8px 0 0; }
+.aw-chief-setup-guided .ant-alert { margin-top: 12px; }
+.aw-chief-guide-check { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; }
+.aw-chief-setup-guided .aw-chief-guide-check .ant-btn { margin: 0; }
+.aw-chief-guide-command {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--aw-border);
+  border-radius: 8px;
+  background: var(--aw-raised);
+}
+.aw-chief-setup-guided .aw-chief-guide-command .ant-btn { margin: 0; }
+.aw-chief-guide-command pre {
+  width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.aw-guide-card[data-setup-panel] {
+  top: auto;
+  bottom: 12px;
+  transform: translateX(-50%);
+  max-height: calc(40dvh - 24px);
+}
+body:has(.aw-guide-card[data-setup-panel]) .aw-chief-guide .aw-chief-guide-panel:not(.aw-chief-expanded) {
+  top: 12px;
+  bottom: auto;
+  max-height: calc(60dvh - 12px);
+}
+
+@media (min-width: 1100px) {
+  .aw-guide-card[data-setup-panel] {
+    top: 50%;
+    bottom: auto;
+    left: auto;
+    right: 24px;
+    transform: translateY(-50%);
+    max-height: calc(100dvh - 32px);
+  }
+  body:has(.aw-guide-card[data-setup-panel]) .aw-chief-guide .aw-chief-guide-panel:not(.aw-chief-expanded) {
+    top: auto;
+    bottom: 24px;
+    max-width: calc(100vw - 592px);
+    max-height: calc(100dvh - 48px);
+  }
+}
+
+.aw-guide-notice {
+  position: fixed;
+  left: 18px;
+  bottom: 16px;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--aw-border);
+  border-radius: 10px;
+  background: var(--aw-panel);
+  color: var(--aw-text);
+  font-size: 13px;
+  box-shadow: 0 6px 20px #0002;
+}
+
+@media (max-width: 700px) {
+  .aw-guide-card-content { padding: 18px; }
+  .aw-chief-guide .aw-chief-guide-panel:not(.aw-chief-expanded) {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: 72px;
+    bottom: auto;
+    width: auto;
+    height: calc(100dvh - 360px);
+  }
+  .aw-guide-dialog-actions { flex-direction: column-reverse; }
+  .aw-guide-dialog-actions .ant-btn { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aw-guide-card { scroll-behavior: auto; }
+}

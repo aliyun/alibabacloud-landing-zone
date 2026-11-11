@@ -37,7 +37,7 @@ afterEach(() => {
 
 describe('帮助中心静态文档', () => {
   it('公开截图引用与磁盘文件一致，内部身份和凭证截图均不发布', () => {
-    const retained = ['02', '06', '09', '14'];
+    const retained = ['02', '14'];
     for (const [corpus, locale] of [[chapters, 'zh-CN'], [englishChapters, 'en-US']] as const) {
       const references = corpus.flatMap(chapter => [...chapter.markdown.matchAll(/!\[[^\]]*\]\(\/help\/assets\/([^\s)]+\.png)/g)].map(match => match[1]));
       expect(references).toEqual(retained.map(id => `${id}-${locale}.png`));
@@ -45,7 +45,7 @@ describe('帮助中心静态文档', () => {
     const assetDirectory = resolve(process.cwd(), 'public/help/assets');
     expect(readdirSync(assetDirectory).filter(file => file.endsWith('.png')).sort()).toEqual(retained.flatMap(id => ['en-US', 'zh-CN'].flatMap(locale => ['dark', 'light'].map(theme => `${id}-${locale}-${theme}.png`))).sort());
     const content = JSON.stringify([chapters, englishChapters]);
-    for (const number of ['01', '03', '04', '05', '07', '08', '10', '11', '12', '13', '15']) {
+    for (const number of ['01', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '15']) {
       expect(content).not.toContain(`/help/assets/${number}-`);
       expect(readdirSync(assetDirectory).some(file => file.startsWith(`${number}-`))).toBe(false);
     }
@@ -57,6 +57,8 @@ describe('帮助中心静态文档', () => {
     expect(link).toHaveAttribute('href', '/help');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(link).toHaveAttribute('title', '帮助中心');
+    expect(link.textContent).toBe('');
   });
 
   it('匿名加载静态JSON，不发送凭据或鉴权头', async () => {
@@ -79,7 +81,7 @@ describe('帮助中心静态文档', () => {
     const article = document.querySelector('article')!;
     const headings = within(article).queryAllByRole('heading', { level: 2 });
     expect(headings.map((heading) => ({ id: heading.id, title: heading.textContent }))).toEqual(chapter.sections.filter(section => section.level !== 3));
-    expect(article.querySelector('.help-markdown')!.textContent!.length).toBeGreaterThan(200);
+    expect(article.querySelector('.help-markdown')!.textContent!.length).toBeGreaterThan(chapter.id === 'project-onboarding' ? 100 : 200);
     expect(screen.queryByText(/版式预览|正文待接入|原始截图待接入/)).not.toBeInTheDocument();
     if (chapter.sections.length === 0) expect(screen.queryByRole('navigation', { name: '本页目录' })).not.toBeInTheDocument();
     for (const image of Array.from(article.querySelectorAll('img'))) {
@@ -157,20 +159,35 @@ describe('帮助中心静态文档', () => {
     expect([...document.querySelectorAll('.help-markdown strong')].some(el => el.textContent?.includes('项目管理员'))).toBe(true);
   });
 
-  it('社区项目交付截图保留安全步骤图及顺序，排除内部截图', async () => {
+  it('项目接入说明区分跳过引导和不再提醒的后果', async () => {
     renderHelp('/help?chapter=project-onboarding');
     await screen.findByRole('heading', { level: 1, name: '新项目接入' });
-    expect([...document.querySelectorAll('.help-markdown img')].map(img => img.getAttribute('src')?.slice(13, 15)))
-      .toEqual(['06', '09']);
+    const article = screen.getByRole('article');
+    expect(article).toHaveTextContent('需要另建一个工作空间');
+    expect(article).toHaveTextContent('当前账号以后新建工作空间时都不会再显示引导');
   });
 
   it('IM配置保留公开截图及全部教程章节', async () => {
     renderHelp('/help?chapter=im-integration');
     await screen.findByRole('heading', { level: 1, name: 'IM平台集成' });
     expect([...document.querySelectorAll('.help-markdown img')].map(img => img.getAttribute('src')?.slice(13, 15))).toEqual(['14']);
-    for (const name of ['机器人配置', '个人工号设置', '项目机器人配置']) {
+    for (const name of ['机器人配置', '个人工号设置', '空间群聊绑定']) {
       expect(screen.getByRole('heading', { name })).toBeInTheDocument();
     }
+  });
+
+  it('documents platform-managed bots and a workspace Project Manager without an SDLC workflow', () => {
+    const zh = chapters.find(chapter => chapter.id === 'im-integration')!.markdown;
+    const en = englishChapters.find(chapter => chapter.id === 'im-integration')!.markdown;
+    expect(zh).toContain('平台集成 → 消息渠道集成');
+    expect(zh).toContain('不带 SDLC 流程的项目经理数字人');
+    expect(zh).toContain('必须使用不同的应用身份');
+    expect(zh).toContain('conversationId');
+    expect(en).toContain('Project Manager Agent without an SDLC workflow');
+    expect(en).toContain('different application identities');
+    expect(en).toContain('conversationId');
+    expect(zh).toContain('每个使用平台的人员在“个人账号中心”配置“工号”，这样平台的系统通知才能通知到对应的IM工具。');
+    expect(en).toContain('Every platform user should set their Employee ID in “Personal settings” so system notifications can reach them through the configured IM tool.');
   });
 
   it('最佳实践各子模块的有序列表从1开始', async () => {
@@ -181,18 +198,15 @@ describe('帮助中心静态文档', () => {
     expect(lists.every(list => !list.hasAttribute('start') || list.getAttribute('start') === '1')).toBe(true);
   });
 
-  it('本页目录包含六个接入步骤并链接到对应正文标题', async () => {
+  it('本页目录链接到两个接入步骤和提示', async () => {
     renderHelp('/help?chapter=project-onboarding');
     await screen.findByRole('heading', { level: 1, name: '新项目接入' });
-    const steps = chapters.find(chapter => chapter.id === 'project-onboarding')!.sections.filter(section => section.level === 3);
-    expect(steps).toHaveLength(6);
+    const steps = chapters.find(chapter => chapter.id === 'project-onboarding')!.sections;
+    expect(steps.map(step => step.id)).toEqual(['project-onboarding-step-1', 'project-onboarding-step-2', 'project-onboarding-tips']);
     for (const step of steps) {
-      expect(screen.getByRole('heading', { level: 3, name: step.title })).toHaveAttribute('id', step.id);
-      const link = screen.getByRole('link', { name: step.navTitle });
-      expect(link).toHaveAttribute('title', step.title);
+      expect(screen.getByRole('heading', { level: 2, name: step.title })).toHaveAttribute('id', step.id);
+      const link = screen.getByRole('link', { name: step.title });
       expect(link).toHaveAttribute('href', `/help?chapter=project-onboarding#${step.id}`);
-      fireEvent.click(link);
-      expect(link).toHaveClass('help-outline-step');
     }
   });
 
@@ -206,6 +220,36 @@ describe('帮助中心静态文档', () => {
 
 // Real route output catches a missing locale subscription/fetch dependency, not a setup import.
 describe('help locale lifecycle', () => {
+  it('opens the Runtime Hook guide, copies complete templates, and switches language on the same chapter', async () => {
+    server.use(http.get('/help/content.en-US.json', () => HttpResponse.json(englishChapters)));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    renderHelp('/help?chapter=runtime-hooks#runtime-hooks-commit');
+    await screen.findByRole('heading', { level: 1, name: 'Runtime Hooks 配置与示例' });
+    expect(screen.getByRole('heading', { name: 'Qoder 支持范围与配置区别' })).toHaveAttribute('id', 'runtime-hooks-support');
+    expect(screen.getByRole('cell', { name: 'PreToolUse' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'PostToolUse' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '示例二：提交前检查暂存区' })).toHaveAttribute('id', 'runtime-hooks-commit');
+    const blocks = Array.from(document.querySelectorAll('.help-code'));
+    const yaml = blocks.filter(block => block.querySelector('code.language-yaml'));
+    expect(yaml).toHaveLength(2);
+    expect(yaml[0]).toHaveTextContent('trigger: beforeAgentStart');
+    expect(yaml[1]).toHaveTextContent('cwd: triggeringRepo');
+    for (const block of blocks) {
+      const text = block.querySelector('pre code')!.textContent;
+      fireEvent.click(within(block as HTMLElement).getByRole('button', { name: '复制代码' }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(text));
+    }
+    await act(() => i18n.changeLanguage('en-US'));
+    await screen.findByRole('heading', { level: 1, name: 'Runtime Hooks: setup and examples' });
+    expect(screen.getByRole('heading', { name: 'Qoder support and configuration differences' })).toHaveAttribute('id', 'runtime-hooks-support');
+    expect(screen.getByRole('heading', { name: 'Example 2: check staged changes before commit' })).toHaveAttribute('id', 'runtime-hooks-commit');
+    const officialDocs = screen.getByRole('link', { name: 'official Qoder CLI Hooks documentation' });
+    expect(officialDocs).toHaveAttribute('href', 'https://docs.qoder.com/cli/hooks');
+    expect(officialDocs).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(officialDocs).toHaveAttribute('target', '_blank');
+  });
+
   const english = chapters.map(chapter => ({ ...chapter, title: `English ${chapter.id}`, markdown: chapter.markdown.replace(/Q：/g, 'Q:').replace(/A：/g, 'A:') }));
   function routed(path = '/help?chapter=project-onboarding&keep=raw#project-onboarding-step-4') {
     const router = createMemoryRouter([{ path: '/help', element: <><LanguageSwitch /><HelpCenterPage /></> }], { initialEntries: [path] });
@@ -272,9 +316,9 @@ describe('complete bilingual help corpus', () => {
       [...chapter.markdown.matchAll(/!\[[^\]]*\]\((\/help\/assets\/[^ ]+)/g)].map(match => match[1]));
     const english = imagePaths(englishChapters);
     const chinese = imagePaths(chapters);
-    expect(english).toHaveLength(4);
-    expect(chinese).toHaveLength(4);
-    expect(new Set([...english, ...chinese].flatMap(path => ['light', 'dark'].map(appearance => path.replace(/\.png$/, `-${appearance}.png`)))).size).toBe(16);
+    expect(english).toHaveLength(2);
+    expect(chinese).toHaveLength(2);
+    expect(new Set([...english, ...chinese].flatMap(path => ['light', 'dark'].map(appearance => path.replace(/\.png$/, `-${appearance}.png`)))).size).toBe(8);
     for (const [paths, locale] of [[english, 'en-US'], [chinese, 'zh-CN']] as const) {
       for (const path of paths) {
         expect(path).toMatch(new RegExp(`-${locale}\\.png$`));
@@ -332,12 +376,6 @@ describe('complete bilingual help corpus', () => {
     const gettingStarted = englishChapters.find(chapter => chapter.id === 'getting-started')!.markdown;
     expect(gettingStarted).toContain('/auto-wonder Analyze');
     expect(gettingStarted).toContain('Standard Automated Delivery Squad');
-    const onboarding = englishChapters.find(chapter => chapter.id === 'project-onboarding')!.markdown;
-    for (const literal of ['/initialize-autowonder-harness Initialize', '{{}}', 'ProjectID', 'JobID', '18000', '19000', 'MySQL 8.0', 'dev_user', 'https://gitlab.com/xxx.git', 'Write permission', 'Soul.md', 'Agent.md', 'Qwen3.8-Max', 'Qwne3.8-Flash', 'Medium', '1M', 'NO1', 'autowonder-executor', 'start, stop, and status', 'spec.md', 'plan.md']) {
-      expect(onboarding).toContain(literal);
-    }
-    expect(onboarding).toContain('The frontend repository depends on the backend repository.');
-    expect(onboarding).toContain('The backend repository depends on the API and middleware repositories.');
     expect(englishChapters.find(chapter => chapter.id === 'im-integration')!.markdown).toContain('Project Manager');
   });
   it.each(englishChapters)('renders the complete English $id with stable headings, assets and translated code bytes', async chapter => {
@@ -367,11 +405,8 @@ describe('complete bilingual help corpus', () => {
       expect(article).toHaveTextContent('Use the AutoWonder platform MCP to perform operations.');
     }
     if (chapter.id === 'project-onboarding') {
-      expect([...article.querySelectorAll('img')].map(img => img.getAttribute('src'))).toEqual(['/help/assets/06-en-US-light.png', '/help/assets/09-en-US-light.png']);
-      expect(article).toHaveTextContent('Quick Delivery Squad');
-      expect(article).toHaveTextContent('Requirements Clarification');
-      expect(article).toHaveTextContent('Quick Full-Stack Developer');
-      expect(article).toHaveTextContent('Quick Deployment Engineer');
+      expect(article).toHaveTextContent('create another Workspace to see the guide again');
+      expect(article).toHaveTextContent('the guide will no longer appear in new Workspaces you create with this account');
     }
     if (chapter.id === 'im-integration') {
       expect([...article.querySelectorAll('img')].map(img => img.getAttribute('src'))).toEqual(['/help/assets/14-en-US-light.png']);

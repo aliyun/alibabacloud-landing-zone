@@ -186,6 +186,7 @@
     "advancedHint": "These features currently have no standard menu entry. Their permissions still apply to their APIs. Collapsing this section preserves selections.",
     "description": {
       "WORKITEM": "Work items: lists, details, creation, editing, assignment, and status actions.",
+      "PRD": "PRD design: binding a target project, generating and reviewing design versions, and confirming a version. Read-only cannot change a design or confirm a version.",
       "SCHEDULEDTASK": "Scheduled tasks: configuration, run history, and documents. Requires workspace support.",
       "DISPATCH": "Execution records: details, dispatch, retries, recovery, and human approvals and Q&A during execution.",
       "ARTIFACT": "Requirement documents and delivery artifacts in work item details, including upload, preview, and download.",

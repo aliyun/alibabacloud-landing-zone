@@ -174,7 +174,7 @@
     "noteRefresh": "固定 30 秒自动刷新，不再提供刷新频率选项",
     "noteRange": "与下方「流水线健康」的时间段互不关联",
     "kpiHint": {
-      "todayCreatedWorkitems": "今日创建工单",
+      "todayCreatedWorkitems": "今日创建工单（不含已取消）",
       "runningWorkitems": "执行中工单",
       "todayCompletedTasks": "工单",
       "weekCompletedTasks": "工单"
@@ -228,7 +228,9 @@
     "reworkRate": "返工重试率",
     "reworkSub": "{{reworked}} / {{executed}} 工单有返工",
     "reworkTooltipRetry": "返工重试次数：{{retries}} 次",
-    "reworkTooltipFormula": "返工重试率 = 有返工重试的工单 / 有执行行为的工单（{{reworked}} / {{executed}}）· {{range}}",
+    "reworkTooltipFormula": "返工重试率 = 有返工重试的工单 / {{range}}发起执行的工单（{{reworked}} / {{executed}}）",
+    "reworkTooltipCaliber": "口径说明：按执行发起时间归属区间，与「工单概况 · 今日完成」的工单完成口径不同，两者无需对齐。",
+    "reworkTooltipCaliberRange": "口径说明：按执行发起时间归属区间，与「工单交付」页的工单已完成口径不同，两者无需对齐。",
     "avgDuration": "平均耗时",
     "avgSub": "工单口径 · 创建→首次完成",
     "realtimeTag": "实时",
@@ -286,6 +288,7 @@
     "retry": "重试",
     "loading": "加载工单…",
     "emptyRunning": "暂无运行中的工单",
+    "emptyTodayCreated": "暂无今日新建的工单",
     "emptyCompleted": "暂无工单"
   },
   "squadLines": {

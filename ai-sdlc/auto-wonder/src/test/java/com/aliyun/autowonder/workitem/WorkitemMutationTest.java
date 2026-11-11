@@ -45,12 +45,18 @@ class WorkitemMutationTest {
         externalWorkitemLinkDao = mock(ExternalWorkitemLinkDao.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
         sdlcResolver = mock(com.aliyun.autowonder.dispatch.AgentSdlcResolver.class);
+        var agents = mock(com.aliyun.autowonder.agent.AgentDao.class);
+        var agent = new com.aliyun.autowonder.agent.AgentDO(); agent.setId(40013L); agent.setTenantId(100L);
+        when(agents.findById(40013L)).thenReturn(agent);
+        when(sdlcResolver.resolveSdlcId(100L, 40013L)).thenReturn(77L);
+        var entry = new com.aliyun.autowonder.sdlc.SdlcStepDO(); entry.setId(88L); entry.setTenantId(100L);
+        when(sdlcResolver.firstStep(100L, 77L)).thenReturn(entry);
         service = new WorkitemService(workitemDao, commentDao, eventDao,
                 templateDao, nodeDao, transitionDao,
                 mock(com.aliyun.autowonder.sdlc.SdlcDao.class), mock(com.aliyun.autowonder.sdlc.SdlcStepDao.class),
                 dispatchDao,
                 mock(com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao.class),
-                mock(com.aliyun.autowonder.agent.AgentDao.class),
+                agents,
                 sdlcResolver,
                 mock(com.aliyun.autowonder.squad.SquadMemberDao.class),
                 mock(com.aliyun.autowonder.executor.ExecutorDao.class),
@@ -334,7 +340,7 @@ class WorkitemMutationTest {
 
         verify(workitemDao).updateContent(5L, 100L, "new title", "new body", 0, 7L);
         verify(eventDao).insert(argThat((WorkitemEventDO e) -> "EDIT".equals(e.getEventType())));
-        verify(eventPublisher).publishEvent(new WorkitemContentUpdatedEvent(100L, 5L, "new title", "new body", 7L));
+        verify(eventPublisher).publishEvent(new WorkitemContentUpdatedEvent(100L, 5L, "new title", "new body", 7L, true));
     }
 
     @Test
@@ -345,7 +351,7 @@ class WorkitemMutationTest {
         service.updateContent(5L, null, "new body", 100L, 7L);
 
         verify(workitemDao).updateContent(5L, 100L, "old title", "new body", 0, 7L);
-        verify(eventPublisher).publishEvent(new WorkitemContentUpdatedEvent(100L, 5L, "old title", "new body", 7L));
+        verify(eventPublisher).publishEvent(new WorkitemContentUpdatedEvent(100L, 5L, "old title", "new body", 7L, false));
     }
 
     @Test

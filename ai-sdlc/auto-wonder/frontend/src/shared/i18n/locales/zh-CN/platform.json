@@ -246,6 +246,28 @@
   "ssoSecretConfigured": "密钥已配置",
   "ssoSecretMissing": "密钥未配置",
   "ssoValueMissing": "—",
+  "ssoRegistrationSection": "注册设置",
+  "ssoRegistrationLabel": "允许用户自行注册",
+  "ssoRegistrationToggleAria": "允许用户自行注册",
+  "ssoRegistrationHint": "关闭后隐藏注册入口并禁止公开注册；SSO 首次登录自动建号由连接单独控制。",
+  "ssoRegistrationUpdated": "注册设置已保存",
+  "ssoRegistrationUpdateFailed": "注册设置保存失败",
+  "ssoDefaultLogin": "默认登录",
+  "ssoDefaultLoginAria": "切换 {{name}} 的默认登录状态",
+  "ssoDefaultLoginLabel": "默认登录入口",
+  "ssoDefaultLoginHint": "全平台最多一个。打开登录页时自动发起认证；连接或所属 IdP 停用后不再自动发起。",
+  "ssoDefaultLoginSet": "已设为唯一默认登录入口",
+  "ssoDefaultLoginCleared": "已取消默认登录入口",
+  "ssoDefaultLoginUpdateFailed": "默认登录设置失败",
+  "ssoAutoProvisionLabel": "首次登录自动创建账号",
+  "ssoAutoProvisionHint": "未绑定身份首次认证成功后，创建无本地密码的普通账号并绑定；不自动授予管理员或工作空间权限。",
+  "ssoFeishuUserIdClaim": "飞书用户 ID 声明",
+  "ssoFeishuUserIdClaimPlaceholder": "例如 feishu_user_id",
+  "ssoFeishuClaimHintActive": "可选，留空不同步。值须为飞书 user_id；有值更新，缺失保留。",
+  "ssoFeishuClaimHintInactive": "可选，留空不同步。当前消息通道为{{channel}}，该映射暂不生效，填写内容会保留。",
+  "ssoChannelFeishu": "飞书",
+  "ssoChannelDingtalk": "钉钉",
+  "ssoChannelUnknown": "未知渠道",
   "themes": {
     "aliyun-orange": "阿里橙",
     "ocean-blue": "海洋蓝",
@@ -262,5 +284,37 @@
   "groupChatNewIdentitySecretHint": "更换应用后必须填写新应用的 AppSecret",
   "groupChatNewIdentityTokenHint": "更换应用后必须填写新应用的 Verification Token",
   "groupChatIdentityChangeTitle": "即将更换群聊机器人应用身份",
-  "groupChatIdentityChangeImpact": "保存后会影响该渠道下所有共享群绑定，旧应用未发送的回复将终止；请先把新机器人加入目标群。应用凭据的真实可用性以保存后的实际连接状态为准。"
+  "groupChatIdentityChangeImpact": "保存后会影响该渠道下所有共享群绑定，旧应用未发送的回复将终止；请先把新机器人加入目标群。应用凭据的真实可用性以保存后的实际连接状态为准。",
+  "featureSwitchTab": "开关配置",
+  "featureSwitches": {
+    "saved": "开关配置已保存",
+    "saveFailed": "开关保存失败，请重试。",
+    "readOnly": "仅平台管理员可以修改功能开关。",
+    "duplicateIntent": {
+      "title": "重复工单意图检测",
+      "statusOn": "已开启",
+      "statusOff": "已关闭",
+      "toggle": "切换重复工单意图检测",
+      "scopeLabel": "生效范围：",
+      "scopeValue": "全平台",
+      "scopeHint": "此开关统一应用于所有工作空间，默认关闭。",
+      "description": "开启后，新建工单成功或修改标题并保存后，系统会在后台静默检查当前空间近 30 天工单中是否存在同意图的重复需求。发现可能重复的工单时，向本次操作者发送系统通知；没有重复则不通知，检查不影响创建或保存。",
+      "eligibility": "仅在当前空间 Chief 已配置且可用时执行。Chief 不可用或检查失败时静默结束，不提示、不等待、不轮询恢复。",
+      "hint": "工单标题同名检测无需使用 AI，通过规则比较判断标题是否相同，始终启用，不受此开关影响。输入工单标题后，如发现标题相同的工单，会弹窗提醒，可忽略后继续。"
+    },
+    "registrationReview": {
+      "title": "用户注册审核",
+      "toggle": "切换用户注册审核",
+      "statusOn": "已开启",
+      "statusOff": "已关闭",
+      "hint": "开启后，后续自助注册的用户通过审核后才能登录；关闭后，已待审用户仍需审核，新注册直接可用。"
+    },
+    "workspaceCreationDefault": {
+      "title": "默认允许用户创建空间",
+      "toggle": "切换默认允许用户创建空间",
+      "statusOn": "已开启",
+      "statusOff": "已关闭",
+      "hint": "开启时所有可登录用户均可创建；关闭后，普通用户需由平台管理员单独授权。"
+    }
+  }
 }

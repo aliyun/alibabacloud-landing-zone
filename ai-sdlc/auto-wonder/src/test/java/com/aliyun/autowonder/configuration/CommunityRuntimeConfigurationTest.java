@@ -28,7 +28,8 @@ class CommunityRuntimeConfigurationTest {
 
     @ParameterizedTest
     @CsvSource(delimiter = '|', value = {
-            "spring.redis-meta.poolMaxWaitMs|REDIS_POOL_MAX_WAIT_MS|2000|4500",
+            "spring.redis-meta.poolMaxWaitMs|REDIS_POOL_MAX_WAIT_MS|1000|4500",
+            "spring.redis-meta.poolMaxWaitMs|AW_REDIS_POOL_WAIT_MS|1000|2500",
             "autowonder.im.notification.dlq-stream-key|AUTOWONDER_IM_NOTIFICATION_DLQ_STREAM_KEY|autowonder:im-notification:dlq|custom:dlq",
             "autowonder.im.notification.dlq-max-length|AUTOWONDER_IM_NOTIFICATION_DLQ_MAX_LENGTH|10000|20000",
             "autowonder.im.notification.max-backoff-ms|AUTOWONDER_IM_NOTIFICATION_MAX_BACKOFF_MS|30000|60000",
@@ -49,6 +50,18 @@ class CommunityRuntimeConfigurationTest {
 
         sources.addFirst(new MapPropertySource("testEnvironment", Map.of(variable, override)));
         assertEquals(override, resolver.getProperty(key));
+    }
+
+    @Test
+    void sourceRedisOverrideTakesPrecedenceOverLegacyFallback() {
+        var sources = new MutablePropertySources();
+        sources.addFirst(new MapPropertySource("testEnvironment", Map.of(
+                "AW_REDIS_POOL_WAIT_MS", "2500", "REDIS_POOL_MAX_WAIT_MS", "4500",
+                "AW_REDIS_POOL_MAX", "240", "REDIS_POOL_MAX_TOTAL", "280")));
+        sources.addLast(new PropertiesPropertySource("applicationYaml", applicationProperties()));
+        var resolver = new PropertySourcesPropertyResolver(sources);
+        assertEquals("2500", resolver.getProperty("spring.redis-meta.poolMaxWaitMs"));
+        assertEquals("240", resolver.getProperty("spring.redis-meta.poolMaxTotal"));
     }
 
     @Test

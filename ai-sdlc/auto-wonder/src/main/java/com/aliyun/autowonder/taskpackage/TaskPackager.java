@@ -225,8 +225,10 @@ public class TaskPackager {
             List<Map<String, Object>> teammatesManifest = new ArrayList<>();
             writeTeammates(zos, ctx, teammatesManifest, fileDigests);
             List<Map<String, Object>> requirementDocumentsManifest = writeRequirementDocuments(zos, ctx, fileDigests);
+            List<Map<String, Object>> prdDesignManifest = writePrdDesign(zos, ctx, fileDigests);
 
-            putEntry(zos, "workitem.md", nz(ctx.getWorkitemTitle()) + "\n\n" + nz(ctx.getWorkitemContentMd()), fileDigests);
+            putEntry(zos, "workitem.md", nz(ctx.getWorkitemTitle()) + "\n\n" + nz(ctx.getWorkitemContentMd())
+                    + externalOperationContract(ctx), fileDigests);
             if (ctx.getClarificationMd() != null && !ctx.getClarificationMd().isBlank()) {
                 putEntry(zos, "clarification.md", ctx.getClarificationMd(), fileDigests);
             }
@@ -288,6 +290,10 @@ public class TaskPackager {
 			manifest.put("trialArm", nz(ctx.getTrialArm()));
             manifest.put("dispatchId", str(ctx.getDispatchId()));
             manifest.put("sourceDispatchId", str(ctx.getSourceDispatchId()));
+            if (ctx.getDeliveryRoundId() != null) {
+                manifest.put("deliveryRoundId", str(ctx.getDeliveryRoundId()));
+                manifest.put("workflowSnapshotSha256", nz(ctx.getWorkflowSnapshotSha256()));
+            }
             manifest.put("attempt", ctx.getAttempt() == null ? 1 : ctx.getAttempt());
             manifest.put("idempotencyKey", nz(ctx.getIdempotencyKey()));
             manifest.put("sdlcId", str(ctx.getSdlcId()));
@@ -301,6 +307,10 @@ public class TaskPackager {
             manifest.put("fileDigests", fileDigests);
             manifest.put("teammates", teammatesManifest);
             manifest.put("requirementDocuments", requirementDocumentsManifest);
+            if (prdDesignManifest != null && !prdDesignManifest.isEmpty()) {
+                manifest.put("design", ctx.getPrdDesign().manifest());
+                manifest.put("designFiles", prdDesignManifest);
+            }
             if (commentIndex != null) {
                 manifest.put("commentIndex", commentIndex);
             }
@@ -700,6 +710,25 @@ public class TaskPackager {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
+    private static String externalOperationContract(PackageContext ctx) {
+        if (ctx.getDeliveryRoundId() == null) return "";
+        return "\n\n## Delivery round and external operations\n\n"
+                + "Delivery round: " + ctx.getDeliveryRoundId() + "; source dispatch: " + ctx.getSourceDispatchId()
+                + "; workflow snapshot: " + ctx.getWorkflowSnapshotSha256() + ".\n"
+                + "Before creating a PR, posting an external comment, or mutating cloud resources, use the authenticated "
+                + "autowonder.external_operation MCP tool (action=claim). Use a stable business operationKey based on "
+                + "repository/branch, comment intent, or cloud resource/request; never include dispatch, round or retry numbers. "
+                + "Supply kind PR_CREATE, COMMENT_CREATE or CLOUD_MUTATION and requestSha256 of the intended request. "
+                + "Execute only when mayExecute=true. Reuse SUCCEEDED receipts; do not issue the operation again. "
+                + "IN_FLIGHT or UNKNOWN requires authoritative external readback. An inconclusive or timed-out lookup must "
+                + "remain UNKNOWN. Use action=reconcile with the returned version and settled SUCCEEDED or NOT_FOUND plus "
+                + "evidenceRef; only a confirmed NOT_FOUND may be claimed again. After executing, use action=complete with "
+                + "the claimToken, status SUCCEEDED and receiptRef, or UNKNOWN if the outcome is uncertain. Never put credentials "
+                + "or signed URLs into keys, receipts or evidence. The receipt ledger survives every workflow restart.\n\n"
+                + "Existing receipts (refresh with action=list before acting):\n```json\n"
+                + JSON.toJSONString(ctx.getExternalOperations() == null ? List.of() : ctx.getExternalOperations()) + "\n```\n";
+    }
+
     private static byte[] generatedSkill(Map<String, Object> capability, String name) {
         String description = stringValue(capability.get("description"));
         Object rawConfig = capability.get("config");
@@ -799,6 +828,43 @@ public class TaskPackager {
             throw new IllegalArgumentException("unsafe requirement document path " + rawName);
         }
         return "requirements/" + filename;
+    }
+
+    /**
+     * Write the frozen PRD inputs under {@code design/} and return their manifest entries.
+     *
+     * <p>The bytes were already resolved and digest-verified by {@code PrdDeliveryFreezeService}, so
+     * this only serializes them; a missing frozen input is a hard packaging failure rather than a
+     * silent downgrade to whatever design happens to be latest. Entry names are fixed by the
+     * delivery contract and never derived from user data.
+     */
+    private List<Map<String, Object>> writePrdDesign(ZipOutputStream zos, PackageContext ctx,
+                                                     Map<String, String> digests) throws Exception {
+        List<Map<String, Object>> manifest = new ArrayList<>();
+        PrdDesignPackage prd = ctx.getPrdDesign();
+        if (prd == null || prd.files() == null || prd.files().isEmpty()) {
+            return manifest;
+        }
+        for (Map.Entry<String, byte[]> entry : prd.files().entrySet()) {
+            String entryName = safeArchivePath(entry.getKey());
+            if (!entryName.startsWith("design/") || entryName.contains("..")) {
+                throw new IllegalArgumentException("unsafe design entry path " + entry.getKey());
+            }
+            byte[] bytes = entry.getValue();
+            if (bytes == null) {
+                log.error("prd design file missing dispatchId={} entry={}", ctx.getDispatchId(), entryName);
+                throw new IllegalArgumentException("prd design file is unavailable: " + entryName);
+            }
+            putEntryBytes(zos, entryName, bytes, digests);
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("name", entryName);
+            item.put("size", bytes.length);
+            item.put("sha256", sha256(bytes));
+            manifest.add(item);
+        }
+        log.info("prd design written dispatchId={} versionNo={} files={}",
+                ctx.getDispatchId(), prd.versionNo(), manifest.size());
+        return manifest;
     }
 
     private List<Map<String, Object>> resolveRepos(PackageContext ctx) {

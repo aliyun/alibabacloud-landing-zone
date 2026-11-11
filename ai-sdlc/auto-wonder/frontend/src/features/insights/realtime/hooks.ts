@@ -7,6 +7,7 @@ import {
   getRealtimeCost,
   getRealtimeDashboard,
   getTodayCompleted,
+  getTodayCreatedWorkitems,
   getWeekCompleted,
   getRunningWorkitems,
 } from './api';
@@ -102,6 +103,15 @@ export function useTodayCompleted(enabled: boolean) {
   return useQuery({
     queryKey: ['dashboard-completed-today'],
     queryFn: getTodayCompleted,
+    enabled,
+    staleTime: 0,
+  });
+}
+
+export function useTodayCreatedWorkitems(enabled: boolean) {
+  return useQuery({
+    queryKey: ['dashboard-created-today-workitems'],
+    queryFn: getTodayCreatedWorkitems,
     enabled,
     staleTime: 0,
   });

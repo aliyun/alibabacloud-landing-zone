@@ -85,7 +85,7 @@ public class ExecutorService {
         req.setClientKind(ExecutorLaunchOptionsService.requireCreatableClientKind(
                 req.getClientKind(), ErrorCode.EXECUTOR_CLIENT_KIND_INVALID));
         // 先校验启动配置再落库：非法取值不能留下一个已创建的执行器和一个已签发的 Token。
-        ExecutorLaunchConfigService.LaunchConfig launchConfig = launchConfigService.resolveForCreate(req);
+        ExecutorLaunchConfigService.LaunchConfig launchConfig = launchConfigService.resolveForCreate(tenantId, req);
 
         ExecutorDO e = new ExecutorDO();
         e.setTenantId(tenantId);
@@ -173,7 +173,7 @@ public class ExecutorService {
         }
         ExecutorVO vo = toVO(e, presenceManager.presenceState(e.getId()),
                 restartService == null ? null : restartService.status(e.getId()));
-        fillModelNames(List.of(vo));
+        fillModelNames(tenantId, List.of(vo));
         fillUpdates(tenantId, List.of(vo));
         return vo;
     }
@@ -204,13 +204,13 @@ public class ExecutorService {
                     restarts.get(e.getId())));
         }
         fillSquads(tenantId, result);
-        fillModelNames(result);
+        fillModelNames(tenantId, result);
         fillUpdates(tenantId, result);
         return result;
     }
 
-    /** Resolves catalog display names for reported model ids, one catalog read per provider. */
-    private void fillModelNames(List<ExecutorVO> result) {
+    /** Resolves catalog display names from the owning workspace's catalog, one read per provider. */
+    private void fillModelNames(long tenantId, List<ExecutorVO> result) {
         if (providerModelCatalogService == null) {
             return;
         }
@@ -223,17 +223,18 @@ public class ExecutorService {
             if (provider == null) {
                 continue;
             }
-            String name = namesByProvider.computeIfAbsent(provider, this::catalogNames).get(vo.getModel());
+            String name = namesByProvider.computeIfAbsent(provider, key -> catalogNames(tenantId, key))
+                    .get(vo.getModel());
             if (name != null) {
                 vo.setModelName(name);
             }
         }
     }
 
-    private java.util.Map<String, String> catalogNames(String provider) {
+    private java.util.Map<String, String> catalogNames(long tenantId, String provider) {
         try {
             java.util.Map<String, String> names = new java.util.HashMap<>();
-            for (var item : providerModelCatalogService.read(provider).getModels()) {
+            for (var item : providerModelCatalogService.read(tenantId, provider).getModels()) {
                 if (item.getId() != null && item.getName() != null) {
                     names.putIfAbsent(item.getId(), item.getName());
                 }

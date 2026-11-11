@@ -1,6 +1,6 @@
 import { formatDateTime } from '@/shared/i18n/format';
 import { useTranslation } from 'react-i18next';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Drawer, Input, Space, Switch, Typography } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { ReloadOutlined, LoadingOutlined, SearchOutlined, InfoCircleFilled, CloseCircleFilled } from '@ant-design/icons';
@@ -21,6 +21,8 @@ export function RuntimeLogDrawer({ dispatchId, onClose, terminal = false }: { di
 export function RuntimeLogPanel({ dispatchId, terminal = false, enabled = true, embedded = false }: { dispatchId: number; terminal?: boolean; enabled?: boolean; embedded?: boolean }) {
   const { t } = useTranslation('workitem');
   const [events, setEvents] = useState<RuntimeTraceEvent[]>([]);
+  const [beforeId, setBeforeId] = useState<number>();
+  const [nextBeforeId, setNextBeforeId] = useState<number>();
   const [pageSize, setPageSize] = usePageSizePreference('autowonder.runtimeLog.pageSize', [10, 20, 50, 100], 10);
   const [aggregate, setAggregate] = useState(true);
   const [auto, setAuto] = useState(true);
@@ -30,7 +32,7 @@ export function RuntimeLogPanel({ dispatchId, terminal = false, enabled = true, 
   const [updated, setUpdated] = useState<string | null>(null);
   const refresh = useRef<() => void>(() => {});
   const autoRef = useRef(auto);
-  autoRef.current = auto && enabled;
+  autoRef.current = auto && enabled && beforeId == null;
 
   useEffect(() => {
     let disposed = false;
@@ -39,12 +41,15 @@ export function RuntimeLogPanel({ dispatchId, terminal = false, enabled = true, 
     const controller = new AbortController();
     setEvents([]); setError(null); setUpdated(null);
     const load = async () => {
-      if (busy || disposed) return;
+      if (busy || disposed || !enabled) return;
       busy = true; setLoading(true);
       try {
-        const data = await getRuntimeLog(dispatchId, seq, controller.signal);
+        const data = await getRuntimeLog(dispatchId, seq, controller.signal, beforeId);
         if (disposed) return;
-        if (seq == null || data.changed) setEvents(data.events ?? []);
+        if (seq == null || data.changed) {
+          setEvents(data.events ?? []);
+          setNextBeforeId(data.nextBeforeId ?? undefined);
+        }
         seq = data.lastSeq ?? seq;
         setUpdated(new Date().toISOString()); setError(null);
       } catch (e) {
@@ -56,14 +61,17 @@ export function RuntimeLogPanel({ dispatchId, terminal = false, enabled = true, 
     };
     refresh.current = () => { void load(); };
     void load();
-    const timer = window.setInterval(() => { if (autoRef.current) void load(); }, 3000);
+    const timer = window.setInterval(() => { if (autoRef.current && !document.hidden) void load(); }, 3000);
     return () => { disposed = true; controller.abort(); window.clearInterval(timer); };
-  }, [dispatchId]);
+  }, [dispatchId, beforeId, enabled]);
 
-  const rows: RuntimeLogRow[] = aggregate ? aggregateRuntimeMessages(events) : events;
-  const filtered = rows.filter(event => !query || JSON.stringify(event).toLowerCase().includes(query.toLowerCase()));
+  const rows: RuntimeLogRow[] = useMemo(() => !terminal && aggregate ? aggregateRuntimeMessages(events) : events, [events, aggregate, terminal]);
+  const filtered = useMemo(() => rows.filter(event => !query || JSON.stringify(event).toLowerCase().includes(query.toLowerCase())), [rows, query]);
   return <div>
     <Space wrap style={{ marginBottom: 16 }}>
+      <Typography.Text type="secondary">{t('runtimeLog.windowHint')}</Typography.Text>
+      <Button disabled={!nextBeforeId || loading} onClick={() => setBeforeId(nextBeforeId)}>{t('runtimeLog.earlierWindow')}</Button>
+      {beforeId != null && <Button onClick={() => setBeforeId(undefined)}>{t('runtimeLog.latestWindow')}</Button>}
       <Input.Search enterButton={<Button aria-label={t('runtimeLog.search')} icon={<SearchOutlined aria-hidden="true" />} />} aria-label={t('runtimeLog.search')} placeholder={t('runtimeLog.search')} allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('runtimeLog.clearSearch')} /> }} value={query} onChange={e => setQuery(e.target.value)} style={{ width: 'min(300px, 100%)' }} />
       {!terminal && <Switch checked={aggregate} onChange={setAggregate} checkedChildren={t('runtimeLog.aggregate')} unCheckedChildren={t('runtimeLog.raw')} />}
       <Switch checked={auto} onChange={setAuto} checkedChildren={t('runtimeLog.auto')} unCheckedChildren={t('runtimeLog.paused')} />

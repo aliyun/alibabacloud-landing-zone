@@ -25,15 +25,20 @@ import type { ColumnsType } from 'antd/es/table';
 import type { PlatformBranding } from './brandingApi';
 import { resolvePlatformBaseUrl } from './platformBaseUrl';
 import {
+  FEDERATION_AUTH_CONFIG_QUERY_KEY,
   FEDERATION_CONNECTIONS_QUERY_KEY,
   FEDERATION_IDPS_QUERY_KEY,
+  PLATFORM_IM_SELECTION_QUERY_KEY,
   createFederationConnection,
   createFederationIdp,
   federationCallbackUrl,
   fetchFederationConnections,
   fetchFederationIdps,
+  fetchPlatformAuthConfig,
+  fetchPlatformImSelection,
   updateFederationConnection,
   updateFederationIdp,
+  updatePlatformAuthConfig,
   type CreateConnectionParams,
   type FederationConnection,
   type FederationIdp,
@@ -60,6 +65,9 @@ interface ConnectionFormValues {
   subjectClaim?: string;
   nameClaim?: string;
   emailClaim?: string;
+  feishuUserIdClaim?: string;
+  autoProvision: boolean;
+  defaultLogin: boolean;
   allowedTenants?: string;
 }
 
@@ -92,6 +100,9 @@ function toCreateParams(values: ConnectionFormValues): CreateConnectionParams {
     subjectClaim: text(values.subjectClaim),
     nameClaim: text(values.nameClaim),
     emailClaim: text(values.emailClaim),
+    feishuUserIdClaim: text(values.feishuUserIdClaim),
+    autoProvision: values.autoProvision ? 1 : 0,
+    defaultLogin: values.defaultLogin,
   };
   if (values.protocol === 'SAML2') {
     return {
@@ -129,6 +140,9 @@ function toUpdateParams(params: CreateConnectionParams): UpdateConnectionParams 
     subjectClaim: params.subjectClaim,
     nameClaim: params.nameClaim,
     emailClaim: params.emailClaim,
+    feishuUserIdClaim: params.feishuUserIdClaim,
+    autoProvision: params.autoProvision,
+    defaultLogin: params.defaultLogin,
     allowedTenants: params.allowedTenants,
   };
 }
@@ -152,8 +166,20 @@ export function SsoConfigPanel({ branding }: { branding?: PlatformBranding | nul
     queryFn: fetchFederationConnections,
     retry: false,
   });
+  const authConfigQuery = useQuery({
+    queryKey: FEDERATION_AUTH_CONFIG_QUERY_KEY,
+    queryFn: fetchPlatformAuthConfig,
+    retry: false,
+  });
+  const channelQuery = useQuery({
+    queryKey: PLATFORM_IM_SELECTION_QUERY_KEY,
+    queryFn: fetchPlatformImSelection,
+    retry: false,
+  });
   const idps = idpsQuery.data ?? [];
   const connections = connectionsQuery.data ?? [];
+  const registrationEnabled = authConfigQuery.data?.registrationEnabled ?? true;
+  const channelProvider = channelQuery.data?.provider ?? null;
 
   const [connectionEditor, setConnectionEditor] = useState<FederationConnection | 'new' | null>(null);
   const [idpEditor, setIdpEditor] = useState<FederationIdp | 'new' | null>(null);
@@ -164,12 +190,42 @@ export function SsoConfigPanel({ branding }: { branding?: PlatformBranding | nul
 
   // 保存成功必须以服务端回读为准：写后重新拉取两个列表，任一失败都不提示成功。
   const readback = async () => {
-    const [nextIdps, nextConnections] = await Promise.all([
+    const [nextIdps, nextConnections, nextAuthConfig] = await Promise.all([
       fetchFederationIdps(),
       fetchFederationConnections(),
+      fetchPlatformAuthConfig(),
     ]);
     queryClient.setQueryData(FEDERATION_IDPS_QUERY_KEY, nextIdps);
     queryClient.setQueryData(FEDERATION_CONNECTIONS_QUERY_KEY, nextConnections);
+    queryClient.setQueryData(FEDERATION_AUTH_CONFIG_QUERY_KEY, nextAuthConfig);
+  };
+
+  const toggleRegistration = async (enabled: boolean) => {
+    setBusyKey('registration');
+    try {
+      await updatePlatformAuthConfig({ registrationEnabled: enabled });
+      await readback();
+      message.success(i18n.t('platform:ssoRegistrationUpdated'));
+    } catch (error) {
+      message.error(errorText(error, i18n.t('platform:ssoRegistrationUpdateFailed')));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const toggleDefaultLogin = async (connection: FederationConnection) => {
+    setBusyKey(`default-${connection.id}`);
+    try {
+      await updateFederationConnection(connection.id, { defaultLogin: !connection.defaultLogin });
+      await readback();
+      message.success(i18n.t(connection.defaultLogin
+        ? 'platform:ssoDefaultLoginCleared'
+        : 'platform:ssoDefaultLoginSet'));
+    } catch (error) {
+      message.error(errorText(error, i18n.t('platform:ssoDefaultLoginUpdateFailed')));
+    } finally {
+      setBusyKey(null);
+    }
   };
 
   const handleConnectionSubmit = async (values: ConnectionFormValues) => {
@@ -245,17 +301,24 @@ export function SsoConfigPanel({ branding }: { branding?: PlatformBranding | nul
     }
   };
 
-  if (idpsQuery.error || connectionsQuery.error) {
-    const error = idpsQuery.error || connectionsQuery.error;
+  const loadError = idpsQuery.error || connectionsQuery.error || authConfigQuery.error;
+  if (loadError) {
     return (
       <Card styles={{ body: { padding: 18 } }}>
         <Alert
           type="error"
           showIcon
           message={t('ssoLoadFailed')}
-          description={error instanceof Error ? error.message : t('retryLater')}
+          description={loadError instanceof Error ? loadError.message : t('retryLater')}
           action={
-            <Button size="small" onClick={() => { void idpsQuery.refetch(); void connectionsQuery.refetch(); }}>
+            <Button
+              size="small"
+              onClick={() => {
+                void idpsQuery.refetch();
+                void connectionsQuery.refetch();
+                void authConfigQuery.refetch();
+              }}
+            >
               {t('ssoRetry')}
             </Button>
           }
@@ -352,6 +415,22 @@ export function SsoConfigPanel({ branding }: { branding?: PlatformBranding | nul
       render: (idpName: string | null) => idpName || t('ssoValueMissing'),
     },
     {
+      title: t('ssoDefaultLogin'),
+      key: 'defaultLogin',
+      width: 110,
+      render: (_, connection) => {
+        const usable = connection.enabled === 1 && enabledIdpIds.has(connection.idpId);
+        return (
+          <Switch
+            aria-label={t('ssoDefaultLoginAria', { name: connection.name })}
+            checked={connection.defaultLogin}
+            disabled={!usable || busyKey === `default-${connection.id}`}
+            onChange={() => void toggleDefaultLogin(connection)}
+          />
+        );
+      },
+    },
+    {
       title: t('ssoProtocol'),
       dataIndex: 'protocol',
       width: 120,
@@ -413,6 +492,26 @@ export function SsoConfigPanel({ branding }: { branding?: PlatformBranding | nul
         message={t('ssoHint')}
         style={{ marginBottom: 16 }}
       />
+
+      <Card
+        title={t('ssoRegistrationSection')}
+        style={{ marginBottom: 16 }}
+        styles={{ body: { padding: 18 } }}
+      >
+        <Space size={16} align="start">
+          <Switch
+            aria-label={t('ssoRegistrationToggleAria')}
+            checked={registrationEnabled}
+            disabled={busyKey === 'registration'}
+            onChange={(checked) => void toggleRegistration(checked)}
+          />
+          <div>
+            <Text strong>{t('ssoRegistrationLabel')}</Text>
+            <br />
+            <Text type="secondary">{t('ssoRegistrationHint')}</Text>
+          </div>
+        </Space>
+      </Card>
 
       <Card
         title={t('ssoIdpSection')}
@@ -497,6 +596,7 @@ export function SsoConfigPanel({ branding }: { branding?: PlatformBranding | nul
         open={connectionEditor !== null}
         connection={connectionEditorValue}
         idps={idps}
+        channelProvider={channelProvider}
         saving={savingConnection}
         onCancel={() => setConnectionEditor(null)}
         onSubmit={(values) => void handleConnectionSubmit(values)}
@@ -574,12 +674,21 @@ interface SsoConnectionModalProps {
   open: boolean;
   connection: FederationConnection | null;
   idps: FederationIdp[];
+  channelProvider: string | null;
   saving: boolean;
   onCancel: () => void;
   onSubmit: (values: ConnectionFormValues) => void;
 }
 
-function SsoConnectionModal({ open, connection, idps, saving, onCancel, onSubmit }: SsoConnectionModalProps) {
+function SsoConnectionModal({
+  open,
+  connection,
+  idps,
+  channelProvider,
+  saving,
+  onCancel,
+  onSubmit,
+}: SsoConnectionModalProps) {
   const { t } = useTranslation('platform');
   const [form] = Form.useForm<ConnectionFormValues>();
   const [protocol, setProtocol] = useState<FederationProtocol>('SAML2');
@@ -611,6 +720,9 @@ function SsoConnectionModal({ open, connection, idps, saving, onCancel, onSubmit
         subjectClaim: connection.subjectClaim ?? '',
         nameClaim: connection.nameClaim ?? '',
         emailClaim: connection.emailClaim ?? '',
+        feishuUserIdClaim: connection.feishuUserIdClaim ?? '',
+        autoProvision: connection.autoProvision,
+        defaultLogin: connection.defaultLogin,
         allowedTenants: connection.allowedTenants ?? '',
       });
       return;
@@ -633,11 +745,16 @@ function SsoConnectionModal({ open, connection, idps, saving, onCancel, onSubmit
       subjectClaim: '',
       nameClaim: '',
       emailClaim: '',
+      feishuUserIdClaim: '',
+      autoProvision: false,
+      defaultLogin: false,
       allowedTenants: '',
     });
   }, [open, connection, defaultIdpId, form]);
 
   const idpOptions = idps.map((idp) => ({ value: idp.id, label: idp.name }));
+  const channelIsFeishu = channelProvider === 'FEISHU';
+  const channelIsDingtalk = channelProvider === 'DINGTALK';
 
   return (
     <Modal
@@ -784,6 +901,17 @@ function SsoConnectionModal({ open, connection, idps, saving, onCancel, onSubmit
           <Form.Item label={t('ssoEmailClaim')} name="emailClaim">
             <Input placeholder={t('ssoEmailClaimPlaceholder')} />
           </Form.Item>
+          <Form.Item
+            label={t('ssoFeishuUserIdClaim')}
+            name="feishuUserIdClaim"
+            extra={channelIsFeishu
+              ? t('ssoFeishuClaimHintActive')
+              : t('ssoFeishuClaimHintInactive', {
+                channel: channelIsDingtalk ? t('ssoChannelDingtalk') : t('ssoChannelUnknown'),
+              })}
+          >
+            <Input placeholder={t('ssoFeishuUserIdClaimPlaceholder')} maxLength={128} />
+          </Form.Item>
         </div>
 
         <Divider>{t('ssoConnectionStatus')}</Divider>
@@ -791,6 +919,26 @@ function SsoConnectionModal({ open, connection, idps, saving, onCancel, onSubmit
           <Switch aria-label={t('ssoEnableConnection')} />
         </Form.Item>
         {!editing && <Text type="secondary">{t('ssoNewConnectionDisabledHint')}</Text>}
+        <Form.Item noStyle shouldUpdate={(prev, next) => prev.enabled !== next.enabled}>
+          {({ getFieldValue }) => (
+            <Form.Item
+              label={t('ssoDefaultLoginLabel')}
+              name="defaultLogin"
+              valuePropName="checked"
+              extra={t('ssoDefaultLoginHint')}
+            >
+              <Switch aria-label={t('ssoDefaultLoginLabel')} disabled={!getFieldValue('enabled')} />
+            </Form.Item>
+          )}
+        </Form.Item>
+        <Form.Item
+          label={t('ssoAutoProvisionLabel')}
+          name="autoProvision"
+          valuePropName="checked"
+          extra={t('ssoAutoProvisionHint')}
+        >
+          <Switch aria-label={t('ssoAutoProvisionLabel')} />
+        </Form.Item>
       </Form>
     </Modal>
   );

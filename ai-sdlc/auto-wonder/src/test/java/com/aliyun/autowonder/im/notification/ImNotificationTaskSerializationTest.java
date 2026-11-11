@@ -1,10 +1,14 @@
 package com.aliyun.autowonder.im.notification;
 
+import com.aliyun.autowonder.notification.NotificationLink;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -156,6 +160,35 @@ class ImNotificationTaskSerializationTest {
         assertEquals("WORKITEM_ASSIGNED", deserialized.notificationType());
         assertNull(deserialized.sourceType());
     }
+    @Test
+    void duplicateLinksRoundTripAndLegacyPayloadRemainsNull() throws Exception {
+        ImNotificationTask original = new ImNotificationTask(
+                "duplicate-intent:88:DINGTALK:2", 88L, 1L, 55L, 2L,
+                "SYSTEM", 0L, "数字员工", null, "重复提醒",
+                ImNotificationTask.TYPE_DUPLICATE_INTENT, "新旧标题")
+                .withRelatedLinks(List.of(
+                        new NotificationLink("SUBMITTED", "new", "/workitems/55?workspaceId=1"),
+                        new NotificationLink("DUPLICATE", "old", "/workitems/2?workspaceId=1")))
+                .withRecipientLocale("en-US");
+
+        String json = objectMapper.writeValueAsString(original);
+        ImNotificationTask deserialized = objectMapper.readValue(json, ImNotificationTask.class);
+
+        assertEquals("en-US", deserialized.recipientLocale());
+        assertEquals(original.relatedLinks(), deserialized.relatedLinks());
+        assertEquals(2, deserialized.relatedLinks().size());
+        assertEquals("old", deserialized.relatedLinks().get(1).title());
+
+        String legacy = "{\"notificationKey\":\"1:FEISHU:9\",\"workitemEventId\":1,\"tenantId\":7,"
+                + "\"workitemId\":42,\"recipientUserId\":9,\"actorType\":\"AGENT\",\"actorRef\":3,"
+                + "\"actorDisplayName\":\"数字人\",\"requestId\":null,\"workitemTitle\":\"raw\","
+                + "\"notificationType\":\"DUPLICATE_INTENT\",\"commentContentMd\":null,\"sourceType\":null}";
+        ImNotificationTask oldTask = objectMapper.readValue(legacy, ImNotificationTask.class);
+        assertNull(oldTask.relatedLinks());
+        // 旧载荷重新序列化时不能凭空新增字段，否则滚动升级中的旧消费者会看到不同载荷。
+        assertFalse(objectMapper.writeValueAsString(oldTask).contains("relatedLinks"));
+    }
+
     @Test
     void optionalSnapshotAndOriginsRoundTripButOldJsonAndHelpersRemainExact() throws Exception {
         String literal = "{\"notificationKey\":\"1:FEISHU:9\",\"workitemEventId\":1,\"tenantId\":7,\"workitemId\":42,\"recipientUserId\":9,\"actorType\":\"AGENT\",\"actorRef\":3,\"actorDisplayName\":\"数字人\",\"requestId\":null,\"workitemTitle\":\"raw\",\"notificationType\":\"COMMENT_MENTION\",\"commentContentMd\":null,\"sourceType\":\"SCHEDULED_TASK_RUN\"}";

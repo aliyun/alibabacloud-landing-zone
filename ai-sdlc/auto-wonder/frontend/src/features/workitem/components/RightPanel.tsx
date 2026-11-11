@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Collapse, Space, Tooltip } from 'antd';
-import { RightOutlined, MessageOutlined, ArrowLeftOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
+import { RightOutlined, ArrowLeftOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
+import { PrdWorkitemEntry } from '@/features/prd/components/PrdWorkitemEntry';
 import { WorkitemClarificationPanel } from '../clarification/WorkitemClarificationPanel';
 import { CLARIFICATION_THEME } from '../clarification/theme';
 import { SquadMembers } from './SquadMembers';
@@ -239,16 +240,9 @@ export function RightPanel({
   return (
     <div style={{ padding: 0, overflow: 'auto', height: '100%' }}>
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
-        {AI_CLARIFICATION_ENABLED ? (
-          <Button
-            type="primary"
-            icon={<MessageOutlined />}
-            block
-            onClick={() => accessCommand('READ_WRITE', t('detail.clarifyCommand'), () => switchMode('clarify'))}
-          >
-            {t('detail.aiClarification')}
-          </Button>
-        ) : null}
+        <PrdWorkitemEntry onClarify={AI_CLARIFICATION_ENABLED
+          ? () => accessCommand('READ_WRITE', t('detail.clarifyCommand'), () => switchMode('clarify'))
+          : undefined} />
 
         <Collapse
           size="small"
@@ -286,7 +280,7 @@ export function RightPanel({
           loading={stepsLoading}
           onExecutionAction={(attempt, action) => accessCommand(
             'READ_WRITE',
-            action === 'pause' ? t('detail.pauseCommand') : action === 'resume' ? t('detail.resumeCommand') : t('detail.endExecutionCommand'),
+            action === 'restartLatest' ? t('delivery.restartLatest') : action === 'pause' ? t('detail.pauseCommand') : action === 'resume' ? t('detail.resumeCommand') : t('detail.endExecutionCommand'),
             () => executionControl.mutate({ dispatchId: attempt.dispatchId, action }),
           )}
           pendingExecutionAction={executionControl.isPending ? executionControl.variables ?? null : null}

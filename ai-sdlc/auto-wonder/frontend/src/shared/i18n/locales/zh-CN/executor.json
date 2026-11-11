@@ -231,5 +231,13 @@
   "restartWhenIdle": "空闲时重启",
   "restartWhenIdleHelp": "空闲时重启：停止接收新任务，等待当前任务和对话结束后，按保存的参数重启。",
   "restartForceHelp": "强制重启会中断当前任务和对话。任务将按已有恢复数据重新准备或从最近可用的 checkpoint 恢复，部分工作可能重复；对话不保证恢复。有活动任务时不能切换工作目录。",
-  "restartPolicyTimedOut": "在线应用长时间未收到客户端进度或重启心跳，请检查客户端。"
+  "restartPolicyTimedOut": "在线应用长时间未收到客户端进度或重启心跳，请检查客户端。",
+  "agentParamInvalid": "链接中的数字员工参数无效，已显示全部执行器。",
+  "agentParamClear": "清除无效参数",
+  "directAgentUnavailable": "目标数字员工不存在或无权访问，未显示其他数字员工的执行器。",
+  "listLoadFailed": "执行器列表加载失败",
+  "retry": "重试",
+  "noExecutors": "暂无执行器",
+  "noExecutorsForAgent": "该数字员工暂无执行器",
+  "agentIdFallback": "#{{id}}"
 }

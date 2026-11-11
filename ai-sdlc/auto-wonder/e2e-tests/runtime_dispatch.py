@@ -482,7 +482,7 @@ def preflight(runtime_version=None):
         metadata = json.loads((package / "package.json").read_text())
     except (OSError, ValueError):
         raise CheckFailure("RUNTIME_PACKAGE_REQUIRED") from None
-    if not isinstance(metadata, dict) or metadata.get("name") != "autowonder" or metadata.get("version") != runtime_version:
+    if not isinstance(metadata, dict) or metadata.get("name") != "@alicloud/autowonder" or metadata.get("version") != runtime_version:
         raise CheckFailure("RUNTIME_VERSION_MISMATCH")
     system = platform.system().lower()
     arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64"}.get(platform.machine())

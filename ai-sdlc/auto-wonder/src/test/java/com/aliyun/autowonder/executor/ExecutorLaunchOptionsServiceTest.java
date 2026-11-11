@@ -20,6 +20,8 @@ import static org.mockito.Mockito.*;
  */
 class ExecutorLaunchOptionsServiceTest {
 
+    private static final long WORKSPACE = 100L;
+
     ProviderModelCatalogService modelCatalogService;
     ExecutorLaunchOptionsService service;
 
@@ -31,9 +33,9 @@ class ExecutorLaunchOptionsServiceTest {
 
     @Test
     void launchOptionsFallsBackToTheStaticModelListWithoutACatalog() {
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
 
-        ExecutorLaunchOptionsVO vo = service.launchOptions("QODER_CLI");
+        ExecutorLaunchOptionsVO vo = service.launchOptions(WORKSPACE, "QODER_CLI");
 
         assertEquals("QODER_CLI", vo.getClientKind());
         assertEquals("qoder", vo.getProvider());
@@ -49,14 +51,14 @@ class ExecutorLaunchOptionsServiceTest {
     @Test
     void launchOptionsPrefersTheLiveCatalogAndReportsItsRefreshTime() {
         Date refreshedAt = new Date(1_800_000_000_000L);
-        when(modelCatalogService.read("qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
+        when(modelCatalogService.read(WORKSPACE, "qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
                 java.util.Arrays.asList(new ProviderModelCatalogItemVO("qmodel_latest", "Qwen3.7-Max"),
                         new ProviderModelCatalogItemVO("lite", null),
                         new ProviderModelCatalogItemVO("  ", "ignored"),
                         null),
                 refreshedAt));
 
-        ExecutorLaunchOptionsVO vo = service.launchOptions("qoder_cn_cli");
+        ExecutorLaunchOptionsVO vo = service.launchOptions(WORKSPACE, "qoder_cn_cli");
 
         assertEquals("QODER_CN_CLI", vo.getClientKind());
         assertEquals("qodercn", vo.getProvider());
@@ -69,11 +71,11 @@ class ExecutorLaunchOptionsServiceTest {
 
     @Test
     void launchOptionsKeepsTheAutoDefaultWhenTheCatalogDropsThePreferredModel() {
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO("auto", "Auto (default)"),
                         new ProviderModelCatalogItemVO("ultimate", "Ultimate")), null));
 
-        ExecutorLaunchOptionsVO vo = service.launchOptions("QODER_CLI");
+        ExecutorLaunchOptionsVO vo = service.launchOptions(WORKSPACE, "QODER_CLI");
 
         assertEquals("auto", vo.getDefaultModel());
         assertEquals("auto", vo.getDefaultCreateModel());
@@ -82,10 +84,10 @@ class ExecutorLaunchOptionsServiceTest {
 
     @Test
     void launchOptionsUsesTheUltimateReasoningEffortWhenOnlyUltimateIsOffered() {
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
                 List.of(new ProviderModelCatalogItemVO("ultimate", "Ultimate")), null));
 
-        ExecutorLaunchOptionsVO vo = service.launchOptions("QODER_CLI");
+        ExecutorLaunchOptionsVO vo = service.launchOptions(WORKSPACE, "QODER_CLI");
 
         assertEquals("ultimate", vo.getDefaultModel());
         assertEquals("high", vo.getDefaultReasoningEffort());
@@ -93,9 +95,9 @@ class ExecutorLaunchOptionsServiceTest {
 
     @Test
     void launchOptionsSurvivesAnUnavailableCatalog() {
-        when(modelCatalogService.read("qoder")).thenThrow(new IllegalStateException("redis down"));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenThrow(new IllegalStateException("redis down"));
 
-        ExecutorLaunchOptionsVO vo = assertDoesNotThrow(() -> service.launchOptions("QODER_CLI"));
+        ExecutorLaunchOptionsVO vo = assertDoesNotThrow(() -> service.launchOptions(WORKSPACE, "QODER_CLI"));
 
         assertEquals(ExecutorLaunchOptionsService.fallbackModels(), vo.getModels());
         assertNull(vo.getModelCatalogLastSuccessfulAt());
@@ -103,24 +105,24 @@ class ExecutorLaunchOptionsServiceTest {
 
     @Test
     void modelsFallsBackWhenTheCatalogReadFails() {
-        when(modelCatalogService.read("qoder")).thenThrow(new IllegalStateException("redis down"));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenThrow(new IllegalStateException("redis down"));
 
-        assertEquals(ExecutorLaunchOptionsService.fallbackModels(), service.models("qoder"));
+        assertEquals(ExecutorLaunchOptionsService.fallbackModels(), service.models(WORKSPACE, "qoder"));
     }
 
     @Test
     void aCatalogSnapshotWithoutModelsKeepsTheFallbackList() {
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder", null, new Date()));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder", null, new Date()));
 
-        assertEquals(ExecutorLaunchOptionsService.fallbackModels(), service.models("qoder"));
+        assertEquals(ExecutorLaunchOptionsService.fallbackModels(), service.models(WORKSPACE, "qoder"));
     }
 
     @Test
     void anAbsentCatalogServiceStillOffersTheFallbackList() {
         ExecutorLaunchOptionsService withoutCatalog = new ExecutorLaunchOptionsService(null);
 
-        assertEquals(ExecutorLaunchOptionsService.fallbackModels(), withoutCatalog.models("qoder"));
-        ExecutorLaunchOptionsVO vo = withoutCatalog.launchOptions("QODER_CLI");
+        assertEquals(ExecutorLaunchOptionsService.fallbackModels(), withoutCatalog.models(WORKSPACE, "qoder"));
+        ExecutorLaunchOptionsVO vo = withoutCatalog.launchOptions(WORKSPACE, "QODER_CLI");
         assertEquals(ExecutorLaunchOptionsService.fallbackModels(), vo.getModels());
         assertEquals("qmodel_latest", vo.getDefaultModel());
         assertNull(vo.getModelCatalogLastSuccessfulAt());
@@ -129,19 +131,19 @@ class ExecutorLaunchOptionsServiceTest {
     @Test
     void launchOptionsRejectsClientKindsTheCreateFormHides() {
         for (String clientKind : new String[]{"CLAUDE_CODE", "CODEX_CLI", "CURSOR_CLI", "QODER_WEB", null, " "}) {
-            BizException ex = assertThrows(BizException.class, () -> service.launchOptions(clientKind),
+            BizException ex = assertThrows(BizException.class, () -> service.launchOptions(WORKSPACE, clientKind),
                     String.valueOf(clientKind));
             assertEquals("27003", ex.getCode(), String.valueOf(clientKind));
             assertTrue(ex.getMessage().contains("clientKind 仅支持 QODER_CLI/QODER_CN_CLI"), ex.getMessage());
         }
-        verify(modelCatalogService, never()).read(anyString());
+        verify(modelCatalogService, never()).read(anyLong(), anyString());
     }
 
     @Test
     void launchOptionsAlwaysOffersTheSameMemoryReasoningAndContextChoices() {
-        when(modelCatalogService.read(anyString())).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
+        when(modelCatalogService.read(anyLong(), anyString())).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
 
-        ExecutorLaunchOptionsVO vo = service.launchOptions("QODER_CLI");
+        ExecutorLaunchOptionsVO vo = service.launchOptions(WORKSPACE, "QODER_CLI");
 
         assertEquals(List.of("platform", "provider-local", "none"), values(vo.getMemoryModes()));
         assertEquals(List.of("1000000", "400000", "260000"), values(vo.getContextWindows()));
@@ -195,8 +197,8 @@ class ExecutorLaunchOptionsServiceTest {
 
     @Test
     void modelsReturnsNothingForProvidersWithoutAModelCatalog() {
-        assertEquals(List.of(), service.models("claude"));
-        verify(modelCatalogService, never()).read(anyString());
+        assertEquals(List.of(), service.models(WORKSPACE, "claude"));
+        verify(modelCatalogService, never()).read(anyLong(), anyString());
     }
 
     @Test
@@ -213,38 +215,38 @@ class ExecutorLaunchOptionsServiceTest {
 
     @Test
     void liveCatalogIsNullForProvidersWithoutAModelCatalog() {
-        assertNull(service.liveCatalog("claude"));
-        assertNull(service.liveCatalog(null));
-        verify(modelCatalogService, never()).read(anyString());
+        assertNull(service.liveCatalog(WORKSPACE, "claude"));
+        assertNull(service.liveCatalog(WORKSPACE, null));
+        verify(modelCatalogService, never()).read(anyLong(), anyString());
     }
 
     @Test
     void liveCatalogIsNullUntilRedisHoldsUsableIds() {
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
-        assertNull(service.liveCatalog("qoder"));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
+        assertNull(service.liveCatalog(WORKSPACE, "qoder"));
 
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder", null, new Date()));
-        assertNull(service.liveCatalog("qoder"));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder", null, new Date()));
+        assertNull(service.liveCatalog(WORKSPACE, "qoder"));
 
-        when(modelCatalogService.read("qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
+        when(modelCatalogService.read(WORKSPACE, "qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
                 java.util.Arrays.asList(new ProviderModelCatalogItemVO("  ", "blank"), null), null));
-        assertNull(service.liveCatalog("qodercn"));
+        assertNull(service.liveCatalog(WORKSPACE, "qodercn"));
     }
 
     @Test
     void liveCatalogIsNullWhenTheCatalogStoreIsUnavailable() {
-        when(modelCatalogService.read("qoder")).thenThrow(new IllegalStateException("redis down"));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenThrow(new IllegalStateException("redis down"));
 
-        assertNull(service.liveCatalog("qoder"));
+        assertNull(service.liveCatalog(WORKSPACE, "qoder"));
     }
 
     @Test
     void liveCatalogReturnsTheSnapshotTheServerResolvesAgainst() {
         Date refreshedAt = new Date(1_800_000_000_000L);
-        when(modelCatalogService.read("qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
+        when(modelCatalogService.read(WORKSPACE, "qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
                 List.of(new ProviderModelCatalogItemVO("qmodel_latest", "Qwen3.7-Max")), refreshedAt));
 
-        ProviderModelCatalogVO catalog = service.liveCatalog("qodercn");
+        ProviderModelCatalogVO catalog = service.liveCatalog(WORKSPACE, "qodercn");
 
         assertNotNull(catalog);
         assertEquals("qodercn", catalog.getProvider());
@@ -255,26 +257,26 @@ class ExecutorLaunchOptionsServiceTest {
 
     @Test
     void liveModelIdsReturnsTheCatalogOrderAndSkipsUnusableEntries() {
-        when(modelCatalogService.read("qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
+        when(modelCatalogService.read(WORKSPACE, "qodercn")).thenReturn(new ProviderModelCatalogVO("qodercn",
                 java.util.Arrays.asList(new ProviderModelCatalogItemVO("qmodel_latest", "Qwen3.7-Max"),
                         new ProviderModelCatalogItemVO("  ", "blank"),
                         null,
                         new ProviderModelCatalogItemVO("lite", null)), new Date()));
 
-        assertEquals(List.of("qmodel_latest", "lite"), service.liveModelIds("qodercn"));
+        assertEquals(List.of("qmodel_latest", "lite"), service.liveModelIds(WORKSPACE, "qodercn"));
     }
 
     @Test
     void liveModelIdsIsEmptyRatherThanFallingBackToTheBuiltinList() {
-        assertEquals(List.of(), service.liveModelIds("claude"));
-        assertEquals(List.of(), service.liveModelIds(null));
-        verify(modelCatalogService, never()).read(anyString());
+        assertEquals(List.of(), service.liveModelIds(WORKSPACE, "claude"));
+        assertEquals(List.of(), service.liveModelIds(WORKSPACE, null));
+        verify(modelCatalogService, never()).read(anyLong(), anyString());
 
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
-        assertEquals(List.of(), service.liveModelIds("qoder"));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
+        assertEquals(List.of(), service.liveModelIds(WORKSPACE, "qoder"));
 
-        when(modelCatalogService.read("qoder")).thenThrow(new IllegalStateException("redis down"));
-        assertEquals(List.of(), service.liveModelIds("qoder"));
+        when(modelCatalogService.read(WORKSPACE, "qoder")).thenThrow(new IllegalStateException("redis down"));
+        assertEquals(List.of(), service.liveModelIds(WORKSPACE, "qoder"));
     }
 
     @Test
@@ -308,6 +310,39 @@ class ExecutorLaunchOptionsServiceTest {
         assertEquals("ultimate", ExecutorLaunchOptionsService.chooseModel(
                 List.of(SelectOptionVO.of("ultimate", "Ultimate")), null));
         assertEquals("auto", ExecutorLaunchOptionsService.chooseModel(List.of(), "auto"));
+    }
+
+    @Test
+    void theSameClientKindReadsEachWorkspaceCatalogIndependently() {
+        when(modelCatalogService.read(100L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+                List.of(new ProviderModelCatalogItemVO("auto", "Auto (default)")), new Date(1L)));
+        when(modelCatalogService.read(200L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+                List.of(new ProviderModelCatalogItemVO("auto", "Auto (default)"),
+                        new ProviderModelCatalogItemVO("ultimate", "Ultimate")), new Date(2L)));
+
+        ExecutorLaunchOptionsVO restricted = service.launchOptions(100L, "QODER_CLI");
+        ExecutorLaunchOptionsVO complete = service.launchOptions(200L, "QODER_CLI");
+
+        assertEquals(List.of("auto"), values(restricted.getModels()));
+        assertEquals(List.of("auto", "ultimate"), values(complete.getModels()));
+        assertEquals(List.of("auto"), service.liveModelIds(100L, "qoder"));
+        assertEquals(List.of("auto", "ultimate"), service.liveModelIds(200L, "qoder"));
+        assertEquals(List.of("auto"), values(service.models(100L, "qoder")));
+        assertEquals(List.of("auto", "ultimate"), values(service.models(200L, "qoder")));
+        verify(modelCatalogService, never()).read(200L, "qodercn");
+    }
+
+    @Test
+    void aWorkspaceWithoutASnapshotGetsTheBuiltinFallbackNotAnotherWorkspacesList() {
+        when(modelCatalogService.read(200L, "qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
+                List.of(new ProviderModelCatalogItemVO("ultimate", "Ultimate")), new Date()));
+        // Workspace 100 has no snapshot at all.
+        when(modelCatalogService.read(100L, "qoder"))
+                .thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
+
+        assertEquals(ExecutorLaunchOptionsService.fallbackModels(), service.models(100L, "qoder"));
+        assertEquals(List.of(), service.liveModelIds(100L, "qoder"));
+        assertEquals(List.of("ultimate"), service.liveModelIds(200L, "qoder"));
     }
 
     private static List<String> values(List<SelectOptionVO> options) {

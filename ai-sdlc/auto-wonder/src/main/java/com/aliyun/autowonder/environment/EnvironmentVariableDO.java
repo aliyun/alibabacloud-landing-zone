@@ -10,4 +10,6 @@ public class EnvironmentVariableDO extends BaseDO {
     private String name;
     private String credentialRef;
     private String description;
+    private Integer onlineMountCount;
+    private Integer draftMountCount;
 }

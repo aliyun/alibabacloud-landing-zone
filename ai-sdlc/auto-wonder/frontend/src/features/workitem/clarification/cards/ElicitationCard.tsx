@@ -4,6 +4,7 @@ import { QuestionCircleOutlined } from '@ant-design/icons';
 import type { AcpElicitationAction } from '../types';
 import { CLARIFICATION_THEME } from '../theme';
 import { elicitationMessage, parseElicitationSchema, type ElicitationField } from './schemaForm';
+import { unansweredFields } from './elicitationAnswer';
 
 export interface ElicitationReply {
   action: 'accept' | 'decline';
@@ -35,6 +36,10 @@ export function ElicitationCard({
 }: ElicitationCardProps) {
   const { t } = useTranslation('workitem');
   const form = parseElicitationSchema(schema);
+  // 只答了一部分就提交是历史事故：已答卡片必须把漏答题目数标出来。
+  const unanswered = resolved && action === 'accept'
+    ? unansweredFields(form.fields, answers ?? {}, {}).length
+    : 0;
 
   return (
     <div
@@ -51,6 +56,11 @@ export function ElicitationCard({
         <Typography.Text strong style={{ fontSize: 16, flex: 1 }}>
           {elicitationMessage(message, schema) || form.title || t('clarification.confirmation')}
         </Typography.Text>
+        {unanswered > 0 ? (
+          <Tag data-testid={`elicitation-card-unanswered-${requestId}`} color="orange" style={{ marginInlineEnd: 0 }}>
+            {t('clarification.unansweredTag', { count: unanswered })}
+          </Tag>
+        ) : null}
         {resolved ? (
           <Tag color={action === 'accept' ? 'green' : 'default'} style={{ marginInlineEnd: 0 }}>
             {expired ? t('clarification.history.expired') : (action && RESOLVED_LABEL[action] && t(RESOLVED_LABEL[action])) || t('clarification.resolved')}

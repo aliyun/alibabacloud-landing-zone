@@ -6,10 +6,20 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import type { Notification } from '@/shared/types/notification';
-import { NotificationCenterPage } from './NotificationCenterPage';
+import { NotificationCenterPage, parseNotificationDeepLink } from './NotificationCenterPage';
 import { NotificationBell } from '@/shared/ui/NotificationBell';
 import { i18n } from '@/shared/i18n';
 import { message } from 'antd';
+
+const browserNotification = vi.hoisted(() => ({
+  getBrowserNotificationPermission: vi.fn(() => 'default'),
+  requestBrowserNotificationPermission: vi.fn(async () => 'granted'),
+}));
+
+vi.mock('@/shared/notifications/browserNotification', () => ({
+  getBrowserNotificationPermission: browserNotification.getBrowserNotificationPermission,
+  requestBrowserNotificationPermission: browserNotification.requestBrowserNotificationPermission,
+}));
 
 function ok(data: unknown) {
   return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data });
@@ -21,6 +31,9 @@ let unreadCountCalls = 0;
 let readCalls: number[] = [];
 let readAllCalls = 0;
 let deleteCalls: number[] = [];
+let detailRequests: number[] = [];
+let detailStore = new Map<number, Notification>();
+let detailFailures = 0;
 
 function notification(overrides: Partial<Notification> = {}): Notification {
   return {
@@ -33,6 +46,7 @@ function notification(overrides: Partial<Notification> = {}): Notification {
     refId: 42,
     status: 'UNREAD',
     gmtCreate: '2026-09-01T10:00:00.000Z',
+    relatedLinks: null,
     ...overrides,
   };
 }
@@ -53,6 +67,11 @@ function lastListRequest() {
 
 function rows(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>('li.ant-list-item'));
+}
+
+// 单目标通知的整行点击会直达关联页面，要检查详情只能用行内「详情」动作。
+async function openDrawerByDetail(container: HTMLElement, index = 0) {
+  await userEvent.click(within(rows(container)[index]).getByRole('button', { name: /详情|Details/ }));
 }
 
 // 一个会随写操作变化的假后端，这样断言的是「操作后 UI 与角标真的刷新」而不是只断言请求发出
@@ -92,14 +111,33 @@ function installApi() {
       store = store.filter((n) => n.id !== id);
       return ok(null);
     }),
+    http.get('/api/notifications/:id', ({ params }) => {
+      const id = Number(params.id);
+      detailRequests.push(id);
+      if (detailFailures > 0) {
+        detailFailures -= 1;
+        return HttpResponse.json(
+          { success: false, code: '10000', message: 'boom', traceId: null, data: null },
+          { status: 500 },
+        );
+      }
+      const target = detailStore.get(id);
+      if (!target) {
+        return HttpResponse.json(
+          { success: false, code: '10404', message: '通知不存在', traceId: null, data: null },
+          { status: 404 },
+        );
+      }
+      return ok(target);
+    }),
   );
 }
 
-function renderPage(options: { withBell?: boolean } = {}) {
+function renderPage(options: { withBell?: boolean; initialEntries?: string[] } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/notifications']}>
+      <MemoryRouter initialEntries={options.initialEntries ?? ['/notifications']}>
         <Routes>
           <Route
             path="/notifications"
@@ -111,6 +149,7 @@ function renderPage(options: { withBell?: boolean } = {}) {
             }
           />
           <Route path="/workitems/:id" element={<div data-testid="workitem-page">workitem page</div>} />
+          <Route path="/settings/members" element={<div data-testid="members-page">members page</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -124,6 +163,11 @@ beforeEach(() => {
   readCalls = [];
   readAllCalls = 0;
   deleteCalls = [];
+  detailRequests = [];
+  detailStore = new Map();
+  detailFailures = 0;
+  browserNotification.getBrowserNotificationPermission.mockReturnValue('default');
+  browserNotification.requestBrowserNotificationPermission.mockResolvedValue('granted');
   installApi();
 });
 
@@ -204,7 +248,7 @@ describe('NotificationCenterPage', () => {
     const { container } = renderPage();
     await screen.findByText('派单失败');
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
 
     expect(await screen.findByText('通知详情')).toBeInTheDocument();
     expect(screen.getByText(longContent)).toBeInTheDocument();
@@ -217,7 +261,7 @@ describe('NotificationCenterPage', () => {
     const { container } = renderPage();
     await screen.findByText('派单失败');
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
 
     expect(await screen.findByText('关联对象')).toBeInTheDocument();
     expect(screen.getByText('—')).toBeInTheDocument();
@@ -229,7 +273,7 @@ describe('NotificationCenterPage', () => {
     await screen.findByText('未读一');
     expect(within(rows(container)[0]).getByText('未读')).toBeInTheDocument();
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
 
     await waitFor(() => expect(readCalls).toEqual([7]));
     // 抽屉保持打开并展示打开时的快照，列表里的未读标识消失
@@ -242,7 +286,7 @@ describe('NotificationCenterPage', () => {
     const { container } = renderPage();
     await screen.findByText('派单失败');
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
 
     expect(await screen.findByText('通知详情')).toBeInTheDocument();
     expect(readCalls).toEqual([]);
@@ -253,7 +297,7 @@ describe('NotificationCenterPage', () => {
     const { container } = renderPage();
     await screen.findByText('派单失败');
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
     await userEvent.click(await screen.findByRole('button', { name: '前往处理' }));
 
     expect(await screen.findByTestId('workitem-page')).toBeInTheDocument();
@@ -270,6 +314,72 @@ describe('NotificationCenterPage', () => {
     expect(screen.queryByRole('button', { name: '前往处理' })).not.toBeInTheDocument();
   });
 
+  it('jumps straight to the related work item when a linked row is clicked', async () => {
+    store = [notification({ id: 21, title: '工单进度更新', link: '/workitems/42', status: 'UNREAD' })];
+    const { container } = renderPage();
+    await screen.findByText('工单进度更新');
+
+    await userEvent.click(rows(container)[0]);
+
+    expect(await screen.findByTestId('workitem-page')).toBeInTheDocument();
+    // 跳转前先把未读通知标记为已读，不能让用户回到列表后仍看到未读角标
+    await waitFor(() => expect(readCalls).toEqual([21]));
+  });
+
+  it('jumps straight to the access requests tab for member application notifications', async () => {
+    store = [notification({
+      id: 22,
+      type: 'WORKSPACE_ACCESS_REQUEST',
+      title: '有新的权限申请',
+      content: '张三 申请加入「项目」，申请角色：只读',
+      link: '/settings/members?tab=requests&workspaceId=10002',
+      refType: 'WORKSPACE_ACCESS_REQUEST',
+      refId: 9,
+      status: 'READ',
+    })];
+    const { container } = renderPage();
+    await screen.findByText('有新的权限申请');
+
+    await userEvent.click(rows(container)[0]);
+
+    expect(await screen.findByTestId('members-page')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '前往处理' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the detail drawer instead of jumping for duplicate-intent snapshots', async () => {
+    store = [notification({
+      id: 23,
+      type: 'DUPLICATE_INTENT',
+      title: '重复工单提醒',
+      status: 'READ',
+      relatedLinks: [
+        { kind: 'SUBMITTED', title: '新工单', url: '/workitems/55?workspaceId=10002' },
+        { kind: 'DUPLICATE', title: '旧工单', url: '/workitems/2?workspaceId=10002' },
+      ],
+    })];
+    const { container } = renderPage();
+    await screen.findByText('重复工单提醒');
+
+    // 多个工单目标时整行只打开详情让用户选择，不提供会直接跳单一链接的「详情」动作
+    expect(within(rows(container)[0]).queryByRole('button', { name: '详情' })).not.toBeInTheDocument();
+    await userEvent.click(rows(container)[0]);
+
+    expect(await screen.findByText('通知详情')).toBeInTheDocument();
+    expect(screen.queryByTestId('workitem-page')).not.toBeInTheDocument();
+  });
+
+  it('keeps the detail drawer instead of jumping when the notification has no link', async () => {
+    store = [notification({ id: 24, title: '无链接通知', link: null, status: 'READ' })];
+    const { container } = renderPage();
+    await screen.findByText('无链接通知');
+
+    expect(within(rows(container)[0]).queryByRole('button', { name: '详情' })).not.toBeInTheDocument();
+    await userEvent.click(rows(container)[0]);
+
+    expect(await screen.findByText('通知详情')).toBeInTheDocument();
+    expect(screen.queryByTestId('workitem-page')).not.toBeInTheDocument();
+  });
+
   it('keeps the current page after the drawer is closed', async () => {
     store = manyNotifications(25, 'READ');
     const { container, baseElement } = renderPage();
@@ -278,7 +388,7 @@ describe('NotificationCenterPage', () => {
     await userEvent.click(screen.getByTitle('2'));
     expect(await screen.findByText('通知 11')).toBeInTheDocument();
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
     expect(await screen.findByText('通知详情')).toBeInTheDocument();
     expect(baseElement.querySelector('.ant-drawer-open')).not.toBeNull();
 
@@ -299,7 +409,7 @@ describe('NotificationCenterPage', () => {
     await userEvent.click(screen.getByRole('tab', { name: '未读' }));
     await waitFor(() => expect(screen.queryByText('已读一')).not.toBeInTheDocument());
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
     expect(await screen.findByText('通知详情')).toBeInTheDocument();
 
     await userEvent.click(baseElement.querySelector('.ant-drawer-close') as Element);
@@ -468,7 +578,7 @@ describe('NotificationCenterPage', () => {
     expect(await screen.findByText('通知 11')).toBeInTheDocument();
     expect(lastListRequest()).toEqual({ status: 'UNREAD', page: 2, size: 10 });
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
 
     await waitFor(() => expect(readCalls).toEqual([11]));
     expect(await screen.findByText('共 10 条')).toBeInTheDocument();
@@ -523,7 +633,7 @@ describe('NotificationCenterPage', () => {
     const { container, baseElement } = renderPage();
     await screen.findByText('派单失败');
 
-    await userEvent.click(rows(container)[0]);
+    await openDrawerByDetail(container);
     expect(await screen.findByText('通知详情')).toBeInTheDocument();
 
     const wrapper = baseElement.querySelector('.ant-drawer-content-wrapper') as HTMLElement;
@@ -595,6 +705,121 @@ describe('NotificationCenterPage', () => {
     await waitFor(() => expect(within(rows(container)[0]).queryByText('未读')).not.toBeInTheDocument());
     expect(readCalls).toEqual([1]);
   });
+
+  it('opens submitted and duplicate titles in new tabs', async () => {
+    store = [notification({
+      id: 7,
+      type: 'DUPLICATE_INTENT',
+      title: '发现可能重复的工单',
+      content: '纯文本摘要',
+      relatedLinks: [
+        { kind: 'SUBMITTED', title: '新工单 [草稿]', url: '/workitems/55?workspaceId=10002' },
+        { kind: 'DUPLICATE', title: '旧工单', url: '/workitems/2?workspaceId=10002' },
+      ],
+    })];
+    const { container } = renderPage();
+    await screen.findByText('发现可能重复的工单');
+
+    await userEvent.click(rows(container)[0]);
+
+    const submitted = await screen.findByRole('link', { name: '新工单 [草稿]' });
+    const duplicate = screen.getByRole('link', { name: '旧工单' });
+    for (const link of [submitted, duplicate]) {
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+    expect(submitted).toHaveAttribute('href', '/workitems/55?workspaceId=10002');
+    expect(duplicate).toHaveAttribute('href', '/workitems/2?workspaceId=10002');
+    expect(screen.getByText('新工单')).toBeInTheDocument();
+    expect(screen.getByText('已存在的重复工单')).toBeInTheDocument();
+    // 有完整快照时标题以链接呈现，不再重复渲染纯文本摘要。
+    expect(within(screen.getByRole('dialog')).queryByText('纯文本摘要')).not.toBeInTheDocument();
+  });
+
+  it('keeps legacy duplicate notifications as plain text without link groups', async () => {
+    store = [notification({
+      id: 12,
+      type: 'DUPLICATE_INTENT',
+      content: '旧通知纯文本正文',
+      status: 'READ',
+      relatedLinks: null,
+    })];
+    const { container } = renderPage();
+    await screen.findByText('派单失败');
+
+    await openDrawerByDetail(container);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('旧通知纯文本正文')).toBeInTheDocument();
+    expect(screen.queryByText('已存在的重复工单')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '旧工单' })).not.toBeInTheDocument();
+  });
+
+  it('ignores duplicate links whose title is blank', async () => {
+    store = [notification({
+      id: 13,
+      type: 'DUPLICATE_INTENT',
+      content: '空标题快照正文',
+      status: 'READ',
+      relatedLinks: [
+        { kind: 'SUBMITTED', title: '新工单', url: '/workitems/55?workspaceId=10002' },
+        { kind: 'DUPLICATE', title: '   ', url: '/workitems/2?workspaceId=10002' },
+      ],
+    })];
+    const { container } = renderPage();
+    await screen.findByText('派单失败');
+
+    await openDrawerByDetail(container);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('空标题快照正文')).toBeInTheDocument();
+    expect(screen.queryByText('已存在的重复工单')).not.toBeInTheDocument();
+  });
+
+  it('ignores duplicate links that do not point at a workitem', async () => {
+    store = [notification({
+      id: 14,
+      type: 'DUPLICATE_INTENT',
+      content: '不安全链接正文',
+      status: 'READ',
+      relatedLinks: [
+        { kind: 'SUBMITTED', title: '新工单', url: '/workitems/55?workspaceId=10002' },
+        { kind: 'DUPLICATE', title: '旧工单', url: 'javascript:alert(1)' },
+      ],
+    })];
+    const { container } = renderPage();
+    await screen.findByText('派单失败');
+
+    await openDrawerByDetail(container);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('不安全链接正文')).toBeInTheDocument();
+    expect(screen.queryByText('已存在的重复工单')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '新工单' })).not.toBeInTheDocument();
+  });
+
+  it('localizes duplicate link group labels', async () => {
+    store = [notification({
+      id: 15,
+      type: 'DUPLICATE_INTENT',
+      title: '发现可能重复的工单',
+      content: '纯文本摘要',
+      status: 'READ',
+      relatedLinks: [
+        { kind: 'SUBMITTED', title: '新工单 [草稿]', url: '/workitems/55?workspaceId=10002' },
+        { kind: 'DUPLICATE', title: '旧工单', url: '/workitems/2?workspaceId=10002' },
+      ],
+    })];
+    const { container } = renderPage();
+    await screen.findByText('发现可能重复的工单');
+    await switchLanguage('en-US');
+
+    await userEvent.click(rows(container)[0]);
+
+    expect(await screen.findByText('Submitted work item')).toBeInTheDocument();
+    expect(screen.getByText('Existing duplicate work items')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '新工单 [草稿]' })).toHaveAttribute('target', '_blank');
+  });
 });
 
 const switchLanguage = (locale: string) => act(async () => { await i18n.changeLanguage(locale); });
@@ -608,7 +833,7 @@ it('keeps both history languages, current page and drawer while translating know
   expect(screen.getByText('历史正文<img src=x>')).toBeInTheDocument(); expect(screen.getByText('11 notifications')).toBeInTheDocument();
   expect(within(rows(container)[0]).getByText(new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-09-01T10:00:00.000Z')))).toBeInTheDocument();
   await userEvent.click(screen.getByTitle('2')); await screen.findByText('Past English title');
-  await userEvent.click(rows(container)[0]); await screen.findByText('Notification details');
+  await openDrawerByDetail(container); await screen.findByText('Notification details');
   expect(screen.getByText('Scheduled task run failed')).toBeInTheDocument(); expect(screen.getByText('Work item #42')).toBeInTheDocument();
   const body = within(screen.getByRole('dialog')).getByText('Past English body <b>raw</b>'); const calls = listRequests.length;
   expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
@@ -623,7 +848,7 @@ it('retains an unread snapshot and pending delete while completion feedback uses
   server.use(http.delete('/api/notifications/:id', async () => { await new Promise<void>(resolve => { release = resolve; }); return HttpResponse.json({ success: false, code: '10500', message: '', data: null }); }));
   const error = vi.spyOn(message, 'error').mockImplementation(() => undefined as unknown as ReturnType<typeof message.error>);
   const { container } = renderPage(); await screen.findByText('raw held'); await userEvent.click(screen.getByRole('tab', { name: '未读' }));
-  await waitFor(() => expect(lastListRequest().status).toBe('UNREAD')); await userEvent.click(rows(container)[0]); await waitFor(() => expect(readCalls).toEqual([1]));
+  await waitFor(() => expect(lastListRequest().status).toBe('UNREAD')); await openDrawerByDetail(container); await waitFor(() => expect(readCalls).toEqual([1]));
   await waitFor(() => expect(rows(container)).toHaveLength(0)); await switchLanguage('en-US');
   expect(screen.getByRole('tab', { name: 'Unread' })).toHaveAttribute('aria-selected', 'true'); expect(screen.getByText('No body')).toBeInTheDocument();
   expect(screen.getByText('future.type')).toBeInTheDocument(); expect(screen.getByText('future.ref #42')).toBeInTheDocument(); expect(readCalls).toEqual([1]);
@@ -667,4 +892,81 @@ it('keeps the open deletion confirmation decorative and cancellable in both lang
   await userEvent.click(within(popup).getByRole('button', { name: 'Cancel' }));
   expect(screen.getByText('raw history')).toBeInTheDocument();
   expect(deleteCalls).toEqual([]); expect(readCalls).toEqual([]); expect(listRequests).toHaveLength(1);
+});
+
+describe('browser notification entry', () => {
+  it('shows the current permission state and only asks after a click', async () => {
+    renderPage();
+
+    expect(await screen.findByText('尚未授权，点击后按浏览器提示申请')).toBeInTheDocument();
+    expect(browserNotification.requestBrowserNotificationPermission).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: '启用浏览器通知' }));
+
+    await waitFor(() => expect(browserNotification.requestBrowserNotificationPermission).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('当前浏览器已允许通知')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '启用浏览器通知' })).not.toBeInTheDocument();
+  });
+
+  it('does not prompt again when permission was denied', async () => {
+    browserNotification.getBrowserNotificationPermission.mockReturnValue('denied');
+    renderPage();
+
+    expect(await screen.findByText('通知已被阻止，请在浏览器站点设置中修改')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '启用浏览器通知' })).not.toBeInTheDocument();
+  });
+
+  it('explains an environment without browser notification support', async () => {
+    browserNotification.getBrowserNotificationPermission.mockReturnValue('unsupported');
+    renderPage();
+
+    expect(await screen.findByText(/当前环境不支持浏览器通知/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '启用浏览器通知' })).not.toBeInTheDocument();
+  });
+});
+
+describe('notification deep link', () => {
+  it('parses only positive safe integers', () => {
+    expect(parseNotificationDeepLink('99')).toBe(99);
+    expect(parseNotificationDeepLink(null)).toBeNull();
+    expect(parseNotificationDeepLink('abc')).toBeNull();
+    expect(parseNotificationDeepLink('0')).toBeNull();
+    expect(parseNotificationDeepLink('-1')).toBeNull();
+    expect(parseNotificationDeepLink('1.5')).toBeNull();
+  });
+
+  it('opens a notification outside the current page and marks it read', async () => {
+    detailStore.set(99, notification({ id: 99, title: '分页外通知', content: '分页外正文', status: 'UNREAD' }));
+    renderPage({ initialEntries: ['/notifications?notificationId=99'] });
+
+    expect(await screen.findByText('分页外通知')).toBeInTheDocument();
+    await waitFor(() => expect(readCalls).toContain(99));
+    // 标记已读会使 ['notifications'] 前缀失效，详情查询会再取一次，首请求必须是深链 ID。
+    expect(detailRequests[0]).toBe(99);
+  });
+
+  it('never requests a malformed deep-link id', async () => {
+    renderPage({ initialEntries: ['/notifications?notificationId=abc'] });
+
+    await screen.findByRole('tab', { name: '全部' });
+    expect(detailRequests).toEqual([]);
+  });
+
+  it('reports a deleted or foreign notification without marking it read', async () => {
+    renderPage({ initialEntries: ['/notifications?notificationId=404'] });
+
+    expect(await screen.findByText('通知不存在或已被删除')).toBeInTheDocument();
+    expect(readCalls).toEqual([]);
+  });
+
+  it('offers a retry when the deep-link read fails and opens after success', async () => {
+    detailFailures = 1;
+    detailStore.set(99, notification({ id: 99, title: '重试后可见', status: 'READ' }));
+    renderPage({ initialEntries: ['/notifications?notificationId=99'] });
+
+    expect(await screen.findByText('通知详情加载失败')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^重\s*试$/ }));
+
+    expect(await screen.findByText('重试后可见')).toBeInTheDocument();
+  });
 });

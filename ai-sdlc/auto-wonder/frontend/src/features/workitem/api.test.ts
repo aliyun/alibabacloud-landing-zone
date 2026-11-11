@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/shared/api/client';
-import { getArtifactDownloadUrl, getRuntimeActivities, listWorkitemTagOptions } from './api';
+import { getArtifactDownloadUrl, getDispatchLiveActivity, getRuntimeActivities, listWorkitemTagOptions } from './api';
 
 vi.mock('@/shared/api/client', () => ({
   apiClient: {
@@ -42,6 +42,30 @@ describe('workitem API', () => {
     expect(apiClient.get).toHaveBeenCalledWith(
       '/api/dispatches/302/runtime-trace/activities',
       { signal: controller.signal },
+    );
+  });
+
+  it('requests live activity without a background marker by default', async () => {
+    const data = { dispatchId: 303, actions: [] };
+    vi.mocked(apiClient.get).mockResolvedValue({ data } as never);
+
+    await expect(getDispatchLiveActivity(303, null, 100)).resolves.toEqual(data);
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/api/dispatches/303/live-activity',
+      { params: { limit: 100 }, backgroundActivity: undefined },
+    );
+  });
+
+  it('marks timer-driven live activity requests as background', async () => {
+    const data = { dispatchId: 303, actions: [] };
+    vi.mocked(apiClient.get).mockResolvedValue({ data } as never);
+
+    await expect(getDispatchLiveActivity(303, 7, 100, { background: true })).resolves.toEqual(data);
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/api/dispatches/303/live-activity',
+      { params: { afterSeq: 7, limit: 100 }, backgroundActivity: true },
     );
   });
 

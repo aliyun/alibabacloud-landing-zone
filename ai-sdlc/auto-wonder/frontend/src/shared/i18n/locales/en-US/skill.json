@@ -5,6 +5,14 @@
     "plugin": "Plugin",
     "hook": "Runtime Hook"
   },
+  "hookGuide": {
+    "title": "How do I configure a Runtime Hook?",
+    "setup": "Prepare a folder with hook.yaml at its root and the referenced script. Upload and save it, then add the Hook under the digital worker’s Capabilities. Newly dispatched tasks run it at the configured event.",
+    "examples": "Common templates: check Git / Node.js / npm before the agent starts; check staged whitespace errors before a commit.",
+    "templates": "View both templates and setup steps",
+    "qoderHint": "Platform beforeTool / afterTool map to Qoder PreToolUse / PostToolUse. Upload hook.yaml and scripts here; native JSON, matcher, and other native events follow Qoder documentation and cannot be uploaded as a platform package.",
+    "qoderDocs": "Qoder CLI Hooks documentation"
+  },
   "all": "All",
   "package": {
     "limit": "Up to 500 files; both the archive and extracted files must be no larger than 100 MB.",

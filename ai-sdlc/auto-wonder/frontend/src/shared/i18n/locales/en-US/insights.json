@@ -184,7 +184,7 @@
     "noteRefresh": "Fixed 30-second auto-refresh, no refresh interval selector",
     "noteRange": "Independent from the pipeline health range below",
     "kpiHint": {
-      "todayCreatedWorkitems": "Created today",
+      "todayCreatedWorkitems": "Created today, excluding canceled",
       "runningWorkitems": "Executing work items",
       "todayCompletedTasks": "Work items",
       "weekCompletedTasks": "Work items"
@@ -238,7 +238,9 @@
     "reworkRate": "Rework rate",
     "reworkSub": "{{reworked}} / {{executed}} work items reworked",
     "reworkTooltipRetry": "Rework retries: {{retries}}",
-    "reworkTooltipFormula": "Rework rate = work items reworked / work items executed ({{reworked}} / {{executed}}) · {{range}}",
+    "reworkTooltipFormula": "Rework rate = work items reworked / work items that started execution in {{range}} ({{reworked}} / {{executed}})",
+    "reworkTooltipCaliber": "Caliber: counted by when execution started, independent of \"Today completed\" in the Overview; the two are not expected to match.",
+    "reworkTooltipCaliberRange": "Caliber: counted by when execution started; different from the \"Completed\" caliber on the Work item delivery page, and the two are not expected to match.",
     "avgDuration": "Average duration",
     "avgSub": "Work item scope · created → first completion",
     "realtimeTag": "Live",
@@ -297,6 +299,7 @@
     "retry": "Retry",
     "loading": "Loading work items…",
     "emptyRunning": "No running work items",
+    "emptyTodayCreated": "No work items created today",
     "emptyCompleted": "No work items"
   },
   "squadLines": {

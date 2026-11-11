@@ -206,8 +206,11 @@ class UserDaoStatementBindingTest {
                     "keyword search must also match " + column + ", otherwise deleted users are "
                             + "unsearchable by their pre-deletion name, got: " + list);
         }
-        assertTrue(list.contains("is_deleted = 0 AND (status &lt;&gt; 1 OR password_hash &lt;&gt; 'DEACTIVATED')"),
-                "the NORMAL filter must exclude both deleted and legacy-deactivated rows, got: "
+        assertTrue(list.contains("is_deleted = 0 AND status &lt;&gt; 2 AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))"),
+                "the NORMAL filter must exclude deleted, pending-review and disabled rows "
+                        + "(status = 1 with an empty or sentinel hash), got: " + list);
+        assertTrue(list.contains("is_deleted = 0 AND status = 1 AND (password_hash IS NULL OR password_hash = 'DEACTIVATED')"),
+                "the DEACTIVATED filter must also catch status = 1 rows without any password, got: "
                         + list);
         assertTrue(list.contains("is_deleted = 1"),
                 "the DELETED filter must select logically deleted rows, got: " + list);
@@ -249,10 +252,98 @@ class UserDaoStatementBindingTest {
                 "the header total must include deleted users, got: " + countAllUsers);
     }
 
+    @Test
+    void registrationReviewTransitionsAreGuardedByPendingStatusAndDeletionState() throws IOException {
+        String approve = statement("approvePendingReview", "update");
+        assertTrue(approve.contains("WHERE id = #{id} AND is_deleted = 0 AND status = 2"),
+                "approve must only convert a live pending row, got: " + approve);
+
+        String reject = statement("logicalDeletePendingReview", "update");
+        assertTrue(reject.contains("WHERE id = #{id} AND is_deleted = 0 AND status = 2"),
+                "reject must only delete a live pending row, got: " + reject);
+        assertTrue(reject.contains("deleted_username = username"),
+                "reject must keep the pre-deletion username snapshot, got: " + reject);
+        assertTrue(reject.contains("email = NULL"),
+                "reject must release the email unique key, got: " + reject);
+    }
+
+    @Test
+    void canCreateWorkspaceFilterUsesTheSameNormalDefinitionAsTheRowFlag() throws IOException {
+        String list = statement("searchUsersForAdmin", "select");
+        String count = statement("countUsersForAdmin", "select");
+
+        String listFilter = block(list, "<if test=\"canCreateWorkspace != null\">");
+        String countFilter = block(count, "<if test=\"canCreateWorkspace != null\">");
+        assertEquals(countFilter, listFilter,
+                "the permission filter must not drift between the page and its total, got list: "
+                        + listFilter + " vs count: " + countFilter);
+
+        // 行内 canCreateWorkspace 与 AuthFilter 用 UserAccountStates.isActive 判“正常”：
+        // status=0，或 status=1 且仍有真实密码。password_hash 可空（纯 SSO），所以停用判定必须
+        // NULL 安全；否则 status=1 + NULL hash 会让权限分支与 NOT 分支同时求值为 NULL，两筛选都不包含该行。
+        String normal = "is_deleted = 0 AND status &lt;&gt; 2 "
+                + "AND (status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))";
+        assertTrue(listFilter.contains(normal),
+                "the permission filter must reuse the NULL-safe NORMAL predicate, got: " + listFilter);
+        assertTrue(listFilter.contains("AND NOT (" + normal),
+                "the no-permission branch must negate exactly the same predicate so the two filters "
+                        + "partition every row, got: " + listFilter);
+        assertFalse(listFilter.contains("status = 0"),
+                "status = 0 alone disagrees with UserAccountStates.isActive for legacy SSO accounts, "
+                        + "got: " + listFilter);
+        assertFalse(listFilter.contains("OR password_hash &lt;&gt; 'DEACTIVATED')"),
+                "a bare hash comparison is NULL for password_hash IS NULL and drops the row from both "
+                        + "filters; guard it with password_hash IS NOT NULL, got: " + listFilter);
+    }
+
+    @Test
+    void statusFiltersPartitionDisabledAccountsWithoutAPassword() throws IOException {
+        String list = statement("searchUsersForAdmin", "select");
+
+        String normal = block(list, "<if test=\"status == 'NORMAL'\">");
+        String deactivated = block(list, "<if test=\"status == 'DEACTIVATED'\">");
+
+        // status = 1 + NULL password_hash（纯 SSO 账号被停用）既不可登录也不可创建空间，
+        // 必须落在 DEACTIVATED 筛选内；NORMAL 不能把它算进来，两者对 live 行严格互补。
+        assertTrue(normal.contains("password_hash IS NOT NULL"),
+                "NORMAL must stop treating NULL hashes as comparable, got: " + normal);
+        assertTrue(deactivated.contains("password_hash IS NULL"),
+                "DEACTIVATED must own the NULL-hash rows, got: " + deactivated);
+        assertTrue(deactivated.contains("password_hash = 'DEACTIVATED'"),
+                "DEACTIVATED must keep the sentinel rows, got: " + deactivated);
+    }
+
+    @Test
+    void availablePlatformAdminsUseTheSameNormalAccountDefinition() throws IOException {
+        String statement = statement("listAvailablePlatformAdmins", "select");
+
+        assertTrue(statement.contains("is_deleted = 0"),
+                "deleted accounts must never be contacted or notified, got: " + statement);
+        assertTrue(statement.contains("status &lt;&gt; 2"),
+                "pending-review accounts must not receive platform notifications, got: " + statement);
+        assertTrue(statement.contains("(status &lt;&gt; 1 OR (password_hash IS NOT NULL AND password_hash &lt;&gt; 'DEACTIVATED'))"),
+                "disabled accounts (status = 1 with an empty or sentinel hash) must be excluded, got: "
+                        + statement);
+        assertTrue(statement.contains("is_admin = 1"),
+                "only platform admins take review notifications, got: " + statement);
+        assertFalse(statement.contains("status = 0"),
+                "status = 0 would drop active legacy SSO admins, got: " + statement);
+        assertFalse(statement.contains("OR password_hash &lt;&gt; 'DEACTIVATED')"),
+                "the exclusion must stay NULL-safe for accounts without a password, got: " + statement);
+    }
+
     private static String whereClause(String statement) {
         int start = statement.indexOf("<where>");
         int end = statement.indexOf("</where>", start);
         assertTrue(start >= 0 && end > start, "statement has no <where> block: " + statement);
+        return statement.substring(start, end).replaceAll("\\s+", " ").trim();
+    }
+
+    private static String block(String statement, String marker) {
+        int start = statement.indexOf(marker);
+        assertTrue(start >= 0, "statement has no block " + marker + ": " + statement);
+        int end = statement.indexOf("</if>", start);
+        assertTrue(end > start, "block " + marker + " is not closed: " + statement);
         return statement.substring(start, end).replaceAll("\\s+", " ").trim();
     }
 

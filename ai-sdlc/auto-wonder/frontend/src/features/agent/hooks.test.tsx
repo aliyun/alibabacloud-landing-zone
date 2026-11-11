@@ -8,6 +8,7 @@ import { useAuthStore } from '@/shared/auth/store';
 import {
   PENDING_REVIEW_COUNT_QUERY_KEY,
   useAgentPendingReviewCount,
+  useAgentSdlcOptions,
   usePendingReviews,
 } from './hooks';
 
@@ -308,5 +309,56 @@ describe('审核角标与待审核列表的缓存一致性', () => {
     await flushAsync();
     expect(listCalls).toBe(1);
     expect(countCalls).toBe(1);
+  });
+});
+
+
+describe('数字员工流程选项', () => {
+  function sdlcRow(id: string, name: string, status: string) {
+    return {
+      id, name, description: '', workType: null, status, isDefault: 0,
+      entryStepId: null, version: 1, gmtCreate: '2026-10-29', steps: [],
+    };
+  }
+
+  it('maps every workflow with its translated status label', async () => {
+    useAuthStore.getState().clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    server.use(http.get('/api/sdlcs', () => jsonOk([
+      sdlcRow('4', '用户流程', 'ENABLED'),
+      sdlcRow('5', '草稿流程', 'DRAFT'),
+    ])));
+
+    const { result } = renderHook(() => useAgentSdlcOptions(), { wrapper: makeWrapper(makeClient()) });
+
+    await waitFor(() => expect(result.current.options).toHaveLength(2));
+    expect(result.current.options[0]).toEqual({ value: 4, name: '用户流程', status: 'ENABLED', label: '用户流程 (启用)' });
+    expect(result.current.options[1].label).toBe('草稿流程 (草稿)');
+    expect(result.current.isError).toBe(false);
+  });
+
+  it('does not request options without a current workspace', async () => {
+    useAuthStore.getState().clear();
+    let calls = 0;
+    server.use(http.get('/api/sdlcs', () => { calls += 1; return jsonOk([]); }));
+
+    const { result } = renderHook(() => useAgentSdlcOptions(), { wrapper: makeWrapper(makeClient()) });
+    await flushAsync();
+
+    expect(calls).toBe(0);
+    expect(result.current.options).toEqual([]);
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it('reports a load failure so the page can offer a retry', async () => {
+    useAuthStore.getState().clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    server.use(http.get('/api/sdlcs', () =>
+      HttpResponse.json({ success: false, code: '500', message: 'boom' }, { status: 500 })));
+
+    const { result } = renderHook(() => useAgentSdlcOptions(), { wrapper: makeWrapper(makeClient()) });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.options).toEqual([]);
   });
 });

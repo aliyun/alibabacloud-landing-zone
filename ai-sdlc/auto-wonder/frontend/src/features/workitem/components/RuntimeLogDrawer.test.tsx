@@ -8,6 +8,20 @@ vi.mock('../api', () => ({ getRuntimeLog: vi.fn() }));
 const response = { changed: true, lastSeq: 120, events: Array.from({ length: 120 }, (_, i) => ({ seq: i + 1, eventId: `e${i}`, eventType: 'mcp.result', detail: { outputSummary: `result-${i}`, output: `full-${i}` } })) };
 beforeEach(() => { vi.clearAllMocks(); });
 describe('RuntimeLogDrawer', () => {
+  it('replaces history windows and can return to the live tail without accumulating events', async () => {
+    vi.mocked(getRuntimeLog).mockResolvedValueOnce({ ...response, nextBeforeId: 100 } as never)
+      .mockResolvedValueOnce({ changed: true, lastSeq: 99, events: [{ seq: 1, eventType: 'mcp.result', detail: { outputSummary: 'older-window' } }] } as never)
+      .mockResolvedValue(response as never);
+    render(<RuntimeLogDrawer dispatchId={12} onClose={() => {}} />);
+    await screen.findByText('共 120 条');
+    fireEvent.click(screen.getByRole('button', { name: '查看更早日志' }));
+    await screen.findByText('older-window');
+    expect(screen.queryByText('result-119')).toBeNull();
+    expect(getRuntimeLog).toHaveBeenLastCalledWith(12, null, expect.any(AbortSignal), 100);
+    fireEvent.click(screen.getByRole('button', { name: '回到最新日志' }));
+    await screen.findByText('result-119');
+    expect(screen.queryByText('older-window')).toBeNull();
+  });
   it('loads beyond the recent 100 items, searches older events and refreshes with the cursor', async () => {
     vi.mocked(getRuntimeLog).mockResolvedValue(response as never);
     render(<RuntimeLogDrawer dispatchId={12} onClose={() => {}} />);
@@ -15,7 +29,7 @@ describe('RuntimeLogDrawer', () => {
     fireEvent.change(screen.getByPlaceholderText('搜索事件、工具、输入或输出'), { target: { value: 'full-0' } });
     await screen.findByText('result-0');
     fireEvent.click(screen.getByRole('button', { name: /刷新/ }));
-    await waitFor(() => expect(getRuntimeLog).toHaveBeenLastCalledWith(12, 120, expect.any(AbortSignal)));
+    await waitFor(() => expect(getRuntimeLog).toHaveBeenLastCalledWith(12, 120, expect.any(AbortSignal), undefined));
   });
   it('auto refreshes and clears its timer when closed', async () => {
     vi.mocked(getRuntimeLog).mockResolvedValue(response as never);

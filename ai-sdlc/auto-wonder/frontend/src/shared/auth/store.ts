@@ -21,6 +21,11 @@ interface AuthState {
   hasAccess: (required: WorkspaceAccessLevel) => boolean;
   isAuthenticated: () => boolean;
   clear: () => void;
+  /**
+   * 会话失效（过期/撤销）只清身份与令牌，保留空间上下文，便于重新登录后回到原页面；
+   * 空间是否仍可用由服务端判定，失效时再退回空间选择页。显式登出仍走 clear()。
+   */
+  clearSession: () => void;
 }
 
 interface PersistedAuthState {
@@ -83,6 +88,11 @@ export const useAuthStore = create<AuthState>()(
         currentWorkspace: null,
         accessLevel: null,
         readOnlyDomains: [],
+      }),
+      clearSession: () => set({
+        accessToken: null,
+        refreshToken: null,
+        user: null,
       }),
     }),
     {

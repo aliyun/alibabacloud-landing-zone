@@ -1,6 +1,6 @@
 import { i18n } from '@/shared/i18n';
 import { useTranslation } from 'react-i18next';
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type CSSProperties, type ChangeEvent, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type CSSProperties, type ChangeEvent, type KeyboardEvent } from 'react';
 import { Alert, Button, Input, Space, message } from 'antd';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { PaperClipOutlined, SendOutlined } from '@ant-design/icons';
@@ -69,6 +69,13 @@ const mentionMenuItemStyle: CSSProperties = {
 
 const activeMentionMenuItemStyle: CSSProperties = {
   background: 'rgba(var(--aw-accent-rgb),.10)',
+};
+
+const mentionGroupHeaderStyle: CSSProperties = {
+  padding: '6px 12px 2px',
+  color: 'var(--aw-muted)',
+  fontSize: 12,
+  fontWeight: 600,
 };
 
 function findActiveMentionQuery(value: string, caretIndex: number): string | null {
@@ -197,6 +204,9 @@ export function CommentInput({ workitemId, participants = [], documents = [] }: 
               <span style={mentionOptionHighlightStyle}>
                 @{item.name}
               </span>
+              {item.squadName ? (
+                <span style={{ color: 'var(--aw-muted)' }}>{t('comment.mentionSquadName', { squad: item.squadName })}</span>
+              ) : null}
               <span style={{ marginLeft: 6, color: item.isAgent ? 'var(--aw-warning)' : 'var(--aw-accent-text)' }}>{kindLabel}</span>
               {item.displayId ? <span style={{ marginLeft: 6, color: 'var(--aw-muted)' }}>{item.displayId}</span> : null}
               {item.isAgent && !item.online ? t('comment.offline') : ''}
@@ -204,9 +214,17 @@ export function CommentInput({ workitemId, participants = [], documents = [] }: 
           ),
           targetId,
           targetType,
+          squadName: item.squadName ?? null,
+          currentSquad: Boolean(item.currentSquad),
         };
       });
   }, [allMentionCandidates, mentionQuery, t]);
+
+  // 只有后端返回小队信息时才插入分组标题；旧数据与降级场景保持原来的平铺菜单。
+  const showMentionSquadGroups = useMemo(
+    () => mentionOptions.some((option) => option.currentSquad || option.squadName != null),
+    [mentionOptions],
+  );
 
   // keyup/click 常推导出与当前相同的查询；先比对 ref 直接跳过 setState，避免无意义重渲染。
   const applyMentionQuery = (nextQuery: string | null) => {
@@ -433,22 +451,36 @@ export function CommentInput({ workitemId, participants = [], documents = [] }: 
           <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
             {mentionQuery !== null && mentionOptions.length > 0 && (
               <div role="menu" style={mentionMenuStyle}>
-                {mentionOptions.map((option, index) => (
-                  <button
-                    key={`${option.targetType}:${option.targetId}`}
-                    type="button"
-                    role="menuitem"
-                    aria-current={index === activeMentionIndex ? 'true' : undefined}
-                    style={{
-                      ...mentionMenuItemStyle,
-                      ...(index === activeMentionIndex ? activeMentionMenuItemStyle : {}),
-                    }}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => insertMention(option)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                {mentionOptions.map((option, index) => {
+                  const startsGroup = showMentionSquadGroups
+                    && (index === 0 || Boolean(mentionOptions[index - 1]?.currentSquad) !== option.currentSquad);
+                  return (
+                    <Fragment key={`${option.targetType}:${option.targetId}`}>
+                      {startsGroup ? (
+                        <div role="presentation" style={mentionGroupHeaderStyle}>
+                          {option.currentSquad
+                            ? (option.squadName
+                              ? t('comment.mentionGroupCurrentSquad', { squad: option.squadName })
+                              : t('comment.mentionGroupCurrentSquadUnknown'))
+                            : t('comment.mentionGroupOthers')}
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        aria-current={index === activeMentionIndex ? 'true' : undefined}
+                        style={{
+                          ...mentionMenuItemStyle,
+                          ...(index === activeMentionIndex ? activeMentionMenuItemStyle : {}),
+                        }}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => insertMention(option)}
+                      >
+                        {option.label}
+                      </button>
+                    </Fragment>
+                  );
+                })}
               </div>
             )}
             <Input.TextArea

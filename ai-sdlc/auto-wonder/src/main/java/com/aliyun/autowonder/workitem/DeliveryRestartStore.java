@@ -43,7 +43,8 @@ public class DeliveryRestartStore {
 
     /** Reopens a closed delivery for an authorized restart and audits the reopen reason. */
     public void recordClosedReopen(long tenantId, long workitemId, long userId, String operator) {
-        jdbc.update("INSERT IGNORE INTO workitem_execution_control (tenant_id,workitem_id) VALUES (?,?)",
+        jdbc.update("INSERT INTO workitem_execution_control (tenant_id,workitem_id) VALUES (?,?) "
+                        + "ON DUPLICATE KEY UPDATE workitem_id=workitem_id",
                 tenantId, workitemId);
         int rows = jdbc.update("UPDATE workitem_execution_control SET closed=0,modifier_id=?,gmt_modified=NOW(3) "
                 + "WHERE tenant_id=? AND workitem_id=? AND closed=1", userId, tenantId, workitemId);
@@ -147,6 +148,27 @@ public class DeliveryRestartStore {
             return null;
         }
         return ((Number) rows.get(0).get("restart_round")).intValue();
+    }
+
+    public boolean mayStart(long tenantId, long workitemId, String key) {
+        Integer current = currentRound(tenantId, workitemId);
+        if (current == null || !restartIdempotencyKey(workitemId, current).equals(key)) return false;
+        return !jdbc.queryForList("SELECT 1 FROM workitem_delivery_restart WHERE tenant_id=? AND workitem_id=? "
+                + "AND restart_round=? AND status IN ('STARTING','STOPPING_OLD','STARTED')", tenantId, workitemId, current).isEmpty();
+    }
+
+    public String roundStatus(long tenantId, long workitemId, int round) {
+        return jdbc.queryForObject("SELECT status FROM workitem_delivery_restart WHERE tenant_id=? AND workitem_id=? "
+                + "AND restart_round=?", String.class, tenantId, workitemId, round);
+    }
+
+    public record RestartRequest(Long agentId, Long stepId, Date scheduledStartAt) {}
+
+    public RestartRequest request(long tenantId, long workitemId, int round) {
+        return jdbc.queryForObject("SELECT agent_id,sdlc_step_id,scheduled_start_at FROM workitem_delivery_restart "
+                        + "WHERE tenant_id=? AND workitem_id=? AND restart_round=?",
+                (rs, n) -> new RestartRequest(nullableId(rs, 1), nullableId(rs, 2), rs.getTimestamp(3)),
+                tenantId, workitemId, round);
     }
 
     /**

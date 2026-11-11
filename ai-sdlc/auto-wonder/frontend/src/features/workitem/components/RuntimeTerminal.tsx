@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatDateTime } from '@/shared/i18n/format';
 import type { RuntimeTraceEvent } from '@/shared/types/workitem';
@@ -44,13 +44,23 @@ function presentation(event: ReturnType<typeof aggregateRuntimeMessages>[number]
 }
 const TIME_OPTIONS = { dateStyle: 'medium', timeStyle: 'medium' } as const;
 
+function EventDetails({ event }: { event: ReturnType<typeof aggregateRuntimeMessages>[number] }) {
+  const { t } = useTranslation('workitem');
+  const [open, setOpen] = useState(false);
+  return <details style={{ color: '#8b949e', fontSize: 11 }} onToggle={e => setOpen(e.currentTarget.open)}>
+    <summary style={{ cursor: 'pointer' }}>{t('runtimeLog.terminalDetails')}</summary>
+    {open && <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit' }}>{JSON.stringify(event.fragments ?? event, null, 2)}</pre>}
+  </details>;
+}
+
 /** Plain text only: runtime content must never execute HTML or terminal escape commands. */
 export function RuntimeTerminal({ events, query, height = 'min(65vh, 650px)' }: { events: RuntimeTraceEvent[]; query: string; height?: string }) {
   const { t } = useTranslation('workitem');
   const viewport = useRef<HTMLDivElement>(null);
   const [followOutput, setFollowOutput] = useState(true);
-  const ordered = [...events].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-  const rows = aggregateRuntimeMessages(ordered).filter(event => !query || JSON.stringify(event).toLowerCase().includes(query.toLowerCase()));
+  // The API exposes arrival IDs as seq, including after executor failover.
+  const ordered = useMemo(() => [...events].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0)), [events]);
+  const rows = useMemo(() => aggregateRuntimeMessages(ordered).filter(event => !query || JSON.stringify(event).toLowerCase().includes(query.toLowerCase())), [ordered, query]);
   const last = ordered[ordered.length - 1];
   useEffect(() => {
     if (followOutput && viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight;
@@ -79,10 +89,7 @@ export function RuntimeTerminal({ events, query, height = 'min(65vh, 650px)' }: 
           {view.description != null && <div style={{ color: '#a5b4c4' }}>{renderValue(view.description)}</div>}
           {view.command != null && <pre style={{ margin: '4px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit', color: '#e6edf3' }}>{t('runtimeLog.terminalCommand', { command: renderValue(view.command) })}</pre>}
           {[view.message, view.input, view.output].filter(value => value != null).map((value, index) => <pre key={index} style={{ margin: '4px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit' }}>{renderValue(value)}</pre>)}
-          <details style={{ color: '#8b949e', fontSize: 11 }}>
-            <summary style={{ cursor: 'pointer' }}>{t('runtimeLog.terminalDetails')}</summary>
-            <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit' }}>{JSON.stringify(event.fragments ?? event, null, 2)}</pre>
-          </details>
+          <EventDetails event={event} />
         </div>;
       })}
     </div>

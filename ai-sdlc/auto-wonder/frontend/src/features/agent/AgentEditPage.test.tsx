@@ -1,9 +1,10 @@
-import { beforeEach, describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
+import { message } from 'antd';
 import { server } from '@/test/mocks/server';
 import { AgentEditPage } from './AgentEditPage';
 import { useAuthStore } from '@/shared/auth/store';
@@ -250,6 +251,46 @@ describe('AgentEditPage', () => {
     expect(savedBody).toMatchObject({ evolutionMode: 'MANUAL' });
   });
 
+  it('lists sdlc workflows past the first page and saves the selected binding', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: index + 1, name: `流程 ${index + 1}`, status: 'ENABLED' }));
+    let savedBody: unknown = null;
+    server.use(
+      http.get('/api/agents/1', () => ok(agentData)),
+      http.get('/api/agents/1/versions/1', () => ok(versionData)),
+      http.get('/api/sdlcs', ({ request }) => {
+        const page = Number(new URL(request.url).searchParams.get('page') ?? '1');
+        return ok(page === 1 ? firstPage : [{ id: 101, name: '第二页流程', status: 'DRAFT' }]);
+      }),
+      http.put('/api/agents/1/config', async ({ request }) => {
+        savedBody = await request.json();
+        return ok(versionData);
+      }),
+    );
+
+    renderPage();
+    await screen.findByDisplayValue('前端开发');
+
+    await userEvent.click(screen.getAllByLabelText('SDLC流程')[0]);
+    await userEvent.type(screen.getAllByLabelText('SDLC流程')[0], '第二页流程');
+    await userEvent.click(await screen.findByText('第二页流程 (草稿)'));
+    await userEvent.click(screen.getByRole('button', { name: /保存草稿/ }));
+
+    expect(savedBody).toMatchObject({ sdlcId: 101 });
+  });
+
+  it('warns when the workflow list cannot load', async () => {
+    server.use(
+      http.get('/api/agents/1', () => ok(agentData)),
+      http.get('/api/agents/1/versions/1', () => ok(versionData)),
+      http.get('/api/sdlcs', () =>
+        HttpResponse.json({ success: false, code: '500', message: 'boom' }, { status: 500 })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('SDLC流程列表加载失败，可重试；已绑定流程不会因此被清除。')).toBeInTheDocument();
+  });
+
   it('shows backend error when adding repo permission fails', async () => {
     const onlineAgent = {
       ...agentData,
@@ -387,9 +428,94 @@ describe('AgentEditPage', () => {
     await userEvent.clear(nameInput);
     await userEvent.type(nameInput, 'Beta');
     await userEvent.click(screen.getByRole('button', { name: /提交审核/ }));
+    await userEvent.click(await screen.findByRole('button', { name: '确认提交' }));
 
     await waitFor(() => expect(submitted).toBe(true));
     expect(patched).toEqual([{ name: 'Beta' }]);
+  });
+
+  it('sends the submit note with the review request', async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.put('/api/agents/1/config', () => ok(versionData)),
+      http.post('/api/agents/1/submit', async ({ request }) => {
+        bodies.push(await request.json().catch(() => null));
+        return ok({ ...agentData, status: 'PENDING_REVIEW' });
+      }),
+    );
+
+    renderPage();
+    await screen.findByText(/编辑配置/);
+    await userEvent.click(screen.getByRole('button', { name: /提交审核/ }));
+    const noteInput = await screen.findByLabelText('提交说明');
+    await userEvent.type(noteInput, '重构 SOUL 并收窄仓库权限');
+    await userEvent.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(bodies).toEqual([{ note: '重构 SOUL 并收窄仓库权限' }]));
+  });
+
+  it('omits the request body when the submit note is left empty', async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.put('/api/agents/1/config', () => ok(versionData)),
+      http.post('/api/agents/1/submit', async ({ request }) => {
+        const text = await request.text();
+        bodies.push(text ? JSON.parse(text) : null);
+        return ok({ ...agentData, status: 'PENDING_REVIEW' });
+      }),
+    );
+
+    renderPage();
+    await screen.findByText(/编辑配置/);
+    await userEvent.click(screen.getByRole('button', { name: /提交审核/ }));
+    await userEvent.type(await screen.findByLabelText('提交说明'), '   ');
+    await userEvent.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(bodies).toEqual([null]));
+  });
+
+  it('does not submit when the note dialog is cancelled', async () => {
+    let submitted = 0;
+    server.use(
+      http.put('/api/agents/1/config', () => ok(versionData)),
+      http.post('/api/agents/1/submit', () => {
+        submitted += 1;
+        return ok({ ...agentData, status: 'PENDING_REVIEW' });
+      }),
+    );
+
+    renderPage();
+    await screen.findByText(/编辑配置/);
+    await userEvent.click(screen.getByRole('button', { name: /提交审核/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /取\s*消/ }));
+
+    await waitFor(() => expect(screen.queryByLabelText('提交说明')).not.toBeInTheDocument());
+    expect(submitted).toBe(0);
+  });
+
+  it('keeps the note dialog open and surfaces the backend error when submission fails', async () => {
+    const settled = Promise.resolve(true);
+    const handle = Object.assign(() => {}, { then: settled.then.bind(settled) });
+    const errorSpy = vi.spyOn(message, 'error').mockReturnValue(handle);
+    server.use(
+      http.put('/api/agents/1/config', () => ok(versionData)),
+      http.post('/api/agents/1/submit', () => HttpResponse.json(
+        { success: false, code: '14003', message: '当前版本已被修改，请刷新后重试', traceId: 'trace-1', data: null },
+        { status: 500 },
+      )),
+    );
+
+    renderPage();
+    await screen.findByText(/编辑配置/);
+    await userEvent.click(screen.getByRole('button', { name: /提交审核/ }));
+    await userEvent.type(await screen.findByLabelText('提交说明'), '补充说明');
+    await userEvent.click(screen.getByRole('button', { name: '确认提交' }));
+
+    await waitFor(() => expect(errorSpy).toHaveBeenCalled());
+    const errors = errorSpy.mock.calls.map(([content]) => String(content));
+    expect(errors.some((text) => text.includes('当前版本已被修改'))).toBe(true);
+    expect(screen.getByLabelText('提交说明')).toBeInTheDocument();
+    errorSpy.mockRestore();
   });
 
   it('shows current official identity read-only instead of the legacy draft', async () => {
@@ -413,7 +539,7 @@ describe('AgentEditPage', () => {
 
     renderPage();
     expect(await screen.findByText(/编辑配置/)).toBeInTheDocument();
-    expect(screen.queryByText('SDLC 模版')).not.toBeInTheDocument();
+    expect(screen.queryByText('SDLC流程')).not.toBeInTheDocument();
     expect(screen.getByText('SOUL.md')).toBeInTheDocument();
     expect(screen.getByText('AGENT.md')).toBeInTheDocument();
   });
@@ -430,7 +556,7 @@ describe('AgentEditPage', () => {
 
     renderPage();
     expect(await screen.findByText(/编辑配置/)).toBeInTheDocument();
-    expect(screen.getByText('SDLC 模版')).toBeInTheDocument();
+    expect(screen.getByText('SDLC流程')).toBeInTheDocument();
   });
 
   it('locks the name and avatar inputs for platform agents', async () => {

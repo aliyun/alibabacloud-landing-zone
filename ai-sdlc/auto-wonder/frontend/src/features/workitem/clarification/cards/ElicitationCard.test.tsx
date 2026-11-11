@@ -99,6 +99,30 @@ describe('ElicitationCard（resolved 内联展示）', () => {
     expect(screen.getByTestId('elicitation-answer-_raw').textContent).toContain('nested');
   });
 
+  // 只答了部分题目就提交是真实事故：已答卡片要标出漏答题数，别让用户以为答全了。
+  it('部分作答的已答卡片标注未作答题目数', () => {
+    const partialSchema = {
+      type: 'object',
+      title: '需求澄清',
+      properties: {
+        q0: { type: 'string', title: '技术栈', oneOf: [{ const: 'nextjs', title: 'Next.js' }] },
+        q1: { type: 'string', title: '补充说明' },
+      },
+      required: ['q0'],
+    };
+    render(
+      <ElicitationCard requestId="r9" schema={partialSchema} resolved action="accept" answers={{ q0: 'nextjs' }} />,
+    );
+    expect(screen.getByTestId('elicitation-card-unanswered-r9')).toHaveTextContent('1 题未作答');
+  });
+
+  it('全部作答或跳过时不显示未答标注', () => {
+    render(
+      <ElicitationCard requestId="r8" schema={selectSchema} resolved action="accept" answers={{ q0: 'nextjs' }} />,
+    );
+    expect(screen.queryByTestId('elicitation-card-unanswered-r8')).toBeNull();
+  });
+
   it('未 resolved 时只渲染头部，不渲染任何交互控件', () => {
     render(<ElicitationCard requestId="r1" message="需要你的确认" schema={selectSchema} />);
     expect(screen.getByTestId('elicitation-card-r1')).toBeInTheDocument();

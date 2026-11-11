@@ -24,4 +24,6 @@ public class FederationLoginState implements Serializable {
     private String nonce;
     private String codeVerifier;
     private String redirectUri;
+    /** 已校验的站内回跳目标；为空表示登录后按默认导航。 */
+    private String returnPath;
 }

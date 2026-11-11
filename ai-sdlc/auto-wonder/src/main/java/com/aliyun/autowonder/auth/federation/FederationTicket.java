@@ -23,5 +23,8 @@ public class FederationTicket implements Serializable {
     private String subject;
     private String displayName;
     private String email;
+    private String feishuUserId;
+    /** 已完成站内校验的回跳目标，供完成页恢复原页面。 */
+    private String returnPath;
     private Long userId;
 }

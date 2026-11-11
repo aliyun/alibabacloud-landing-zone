@@ -24,6 +24,8 @@ import com.aliyun.autowonder.workspace.dto.SwitchWorkspaceResponse;
 import com.aliyun.autowonder.workspace.dto.TransferOwnerRequest;
 import com.aliyun.autowonder.workspace.dto.UpdateMemberRoleRequest;
 import com.aliyun.autowonder.workspace.dto.UpdateMemberIdentityTagsRequest;
+import com.aliyun.autowonder.user.WorkspaceCreationPermissionService;
+import com.aliyun.autowonder.user.dto.WorkspaceCreationRequestVO;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -42,16 +44,34 @@ public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
     private final AccessRequestService accessRequestService;
+    private final WorkspaceCreationPermissionService workspaceCreationPermissionService;
 
     public WorkspaceController(WorkspaceService workspaceService,
-                               AccessRequestService accessRequestService) {
+                               AccessRequestService accessRequestService,
+                               WorkspaceCreationPermissionService workspaceCreationPermissionService) {
         this.workspaceService = workspaceService;
         this.accessRequestService = accessRequestService;
+        this.workspaceCreationPermissionService = workspaceCreationPermissionService;
     }
 
     @PostMapping
     public Result<WorkspaceVO> create(@RequestBody CreateWorkspaceRequest req) {
         return Result.ok(workspaceService.create(req, currentUserId()));
+    }
+
+    /** 当前登录用户的空间创建能力与待处理申请状态；按账号隔离，不使用登录时缓存。 */
+    @GetMapping("/creation-requests/me")
+    public Result<WorkspaceCreationRequestVO> myCreationRequest(
+            @RequestParam(value = "includeAdministratorContacts", defaultValue = "false")
+            boolean includeAdministratorContacts) {
+        return Result.ok(workspaceCreationPermissionService.requestStatus(
+                currentUserId(), includeAdministratorContacts));
+    }
+
+    /** 申请空间创建权限：服务端重新核验资格并以当前用户为申请人；重复提交幂等。 */
+    @PostMapping("/creation-requests")
+    public Result<WorkspaceCreationRequestVO> requestCreationPermission() {
+        return Result.ok(workspaceCreationPermissionService.submitRequest(currentUserId()));
     }
 
     @GetMapping("/mine")

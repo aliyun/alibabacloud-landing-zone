@@ -9,7 +9,7 @@ import { DeliveryProgress, formatDuration, convergeStepsForTerminalStatus } from
 import type { Artifact, DeliveryProgress as DeliveryProgressModel, DeliveryStep } from '@/shared/types/workitem';
 
 beforeEach(() => {
-  server.use(http.get('/api/dispatches/:dispatchId/runtime-trace/events', ({ params }) => HttpResponse.json({ success: true, code: '0', data: { dispatchId: Number(params.dispatchId), events: [], changed: true } })));
+  server.use(http.get('/api/dispatches/:dispatchId/runtime-trace/events/window', ({ params }) => HttpResponse.json({ success: true, code: '0', data: { dispatchId: Number(params.dispatchId), events: [], changed: true } })));
   server.use(http.get('/api/dispatches/:dispatchId/runtime-trace/activities', ({ params }) => HttpResponse.json({
     success: true,
     code: '0',
@@ -109,6 +109,167 @@ describe('DeliveryProgress', () => {
     expect(screen.queryByText('old.md')).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByText('交付结果（1）')[1]);
     expect(screen.getByText('old.md')).toBeVisible();
+  });
+
+  it('shows readable size and type inline next to each artifact name', async () => {
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{
+        agentId: 41,
+        agentName: 'Agent Dev',
+        status: 'finished',
+        durationMs: 120_000,
+        steps: [{
+          stepId: 101,
+          name: '编码实现',
+          status: 'done',
+          agentName: 'Agent Dev', executorName: null,
+          error: null,
+          subSteps: null,
+          durationMs: 120_000,
+          attempts: [
+            { dispatchId: 301, agentName: 'Agent Dev', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+          ],
+        }],
+      }],
+    };
+    const artifacts: Artifact[] = [
+      { id: 1, workitemId: 100, dispatchId: 301, name: 'artifacts/output/handoff/summary.md', type: 'HANDOFF', size: 12595, gmtCreate: '' },
+      { id: 2, workitemId: 100, dispatchId: 301, name: 'artifacts/output/handoff/empty.txt', type: 'HANDOFF', size: 0, gmtCreate: '' },
+      { id: 3, workitemId: 100, dispatchId: 301, name: 'artifacts/output/handoff/bundle.bin', type: 'HANDOFF', size: 2_097_152, gmtCreate: '' },
+    ];
+
+    render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
+    fireEvent.click(within(screen.getByTestId('delivery-progress-card')).getByText(/^产物（/));
+
+    await waitFor(() => expect(screen.getByText('12.3 KB · 交接说明')).toBeVisible());
+    expect(screen.getByText('0 B · 交接说明')).toBeVisible();
+    expect(screen.getByText('2.0 MB · 交接说明')).toBeVisible();
+  });
+
+  it('shows only the type when an artifact has no size and falls back to the raw type otherwise', async () => {
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{
+        agentId: 41,
+        agentName: 'Agent Dev',
+        status: 'finished',
+        durationMs: 120_000,
+        steps: [{
+          stepId: 101,
+          name: '编码实现',
+          status: 'done',
+          agentName: 'Agent Dev', executorName: null,
+          error: null,
+          subSteps: null,
+          durationMs: 120_000,
+          attempts: [
+            { dispatchId: 301, agentName: 'Agent Dev', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+          ],
+        }],
+      }],
+    };
+    const artifacts: Artifact[] = [
+      { id: 1, workitemId: 100, dispatchId: 301, name: 'artifacts/output/handoff/no-size.md', type: 'HANDOFF', size: null, gmtCreate: '' },
+      { id: 2, workitemId: 100, dispatchId: 301, name: 'artifacts/output/other/custom.bin', type: 'CUSTOM_TYPE', size: 100, gmtCreate: '' },
+    ];
+
+    render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
+    fireEvent.click(within(screen.getByTestId('delivery-progress-card')).getByText(/^产物（/));
+
+    const nameButton = await screen.findByRole('button', { name: '打开产物 artifacts/output/handoff/no-size.md' });
+    const row = nameButton.closest('.delivery-artifact-row');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toBe('no-size.md交接说明');
+    expect(row?.textContent).not.toContain('·');
+    expect(row?.textContent).not.toMatch(/NaN|undefined/);
+
+    fireEvent.click(screen.getByText(/其他文件（1）/));
+    await waitFor(() => expect(screen.getByText('100 B · CUSTOM_TYPE')).toBeVisible());
+  });
+
+  it('opens the artifact preview when the artifact name is clicked', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('# Dev Summary\nPASS', { status: 200 })));
+    server.use(http.get('/api/artifacts/1/download', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: 'https://oss.example/dev-summary.md',
+    })));
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{
+        agentId: 41,
+        agentName: 'Agent Dev',
+        status: 'finished',
+        durationMs: 120_000,
+        steps: [{
+          stepId: 101,
+          name: '编码实现',
+          status: 'done',
+          agentName: 'Agent Dev', executorName: null,
+          error: null,
+          subSteps: null,
+          durationMs: 120_000,
+          attempts: [
+            { dispatchId: 301, agentName: 'Agent Dev', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+          ],
+        }],
+      }],
+    };
+    const artifacts: Artifact[] = [
+      { id: 1, workitemId: 100, dispatchId: 301, name: 'dev-summary.md', type: 'MARKDOWN', size: 1024, gmtCreate: '' },
+    ];
+
+    render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
+    fireEvent.click(within(screen.getByTestId('delivery-progress-card')).getByText(/^产物（/));
+    fireEvent.click(screen.getByText(/其他文件（/));
+
+    fireEvent.click(screen.getByRole('button', { name: '打开产物 dev-summary.md' }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/artifacts/1/preview');
+    expect(await screen.findByRole('heading', { name: 'Dev Summary' })).toBeInTheDocument();
+
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps preview and download actions next to a very long artifact name', async () => {
+    const longName = `artifacts/output/handoff/${'a'.repeat(160)}.md`;
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{
+        agentId: 41,
+        agentName: 'Agent Dev',
+        status: 'finished',
+        durationMs: 120_000,
+        steps: [{
+          stepId: 101,
+          name: '编码实现',
+          status: 'done',
+          agentName: 'Agent Dev', executorName: null,
+          error: null,
+          subSteps: null,
+          durationMs: 120_000,
+          attempts: [
+            { dispatchId: 301, agentName: 'Agent Dev', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+          ],
+        }],
+      }],
+    };
+    const artifacts: Artifact[] = [
+      { id: 1, workitemId: 100, dispatchId: 301, name: longName, type: 'HANDOFF', size: 2048, gmtCreate: '' },
+    ];
+
+    render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
+    fireEvent.click(within(screen.getByTestId('delivery-progress-card')).getByText(/^产物（/));
+
+    const nameButton = await screen.findByRole('button', { name: `打开产物 ${longName}` });
+    expect(nameButton).toHaveClass('delivery-artifact-name');
+    expect(nameButton).toHaveTextContent(`${'a'.repeat(160)}.md`);
+    await waitFor(() => expect(screen.getByRole('button', { name: `预览产物 ${longName}` })).toBeVisible());
+    await waitFor(() => expect(screen.getByRole('button', { name: `下载产物 ${longName}` })).toBeVisible());
+
+    const row = nameButton.closest('.delivery-artifact-row');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain('2.0 KB · 交接说明');
   });
 
   it('renders the latest workflow plan separately from live execution status', () => {

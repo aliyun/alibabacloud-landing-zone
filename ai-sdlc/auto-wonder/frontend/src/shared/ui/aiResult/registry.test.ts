@@ -7,6 +7,7 @@ describe('rendererRegistry', () => {
     expect(rendererRegistry.MEMORY_IMPORT).toBeTypeOf('function');
     expect(rendererRegistry.SDLC_GEN).toBeTypeOf('function');
     expect(rendererRegistry.AGENT_CONFIG_GEN).toBeTypeOf('function');
+    expect(rendererRegistry.PRD_DESIGN).toBeTypeOf('function');
   });
 
   it('returns undefined for unregistered scenes', () => {

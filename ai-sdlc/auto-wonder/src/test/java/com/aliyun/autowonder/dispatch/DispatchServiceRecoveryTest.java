@@ -2,8 +2,11 @@ package com.aliyun.autowonder.dispatch;
 
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDao;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
+import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +38,19 @@ class DispatchServiceRecoveryTest {
         service = spy(real);
         when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
         doReturn(false).when(service).runPending(anyLong());
+    }
+
+    @Test
+    void oldRoundCannotBeResumedEvenWhenItAlreadyHasARetryReceipt() {
+        DispatchDO old = dispatch(55L, DispatchStatus.CANCELED, 1);
+        when(dispatchDao.findById(55L)).thenReturn(old);
+        var snapshots = mock(DispatchWorkflowSnapshotStore.class);
+        when(snapshots.fenced(old)).thenReturn(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "workflowSnapshots", snapshots);
+        BizException failure = assertThrows(BizException.class, () -> service.continueDispatch(100L, 200L, 55L, 9L));
+        assertEquals("dispatch.snapshot.superseded", failure.getMessageKey());
+        verify(dispatchDao, never()).insert(any());
+        verify(service, never()).runPending(anyLong());
     }
 
     @Test
@@ -423,6 +439,87 @@ class DispatchServiceRecoveryTest {
         dispatch.setVersion(0);
         dispatch.setGmtModified(new Date());
         return dispatch;
+    }
+
+    @Test
+    void managementRejectedResumeKeepsTheSourcePausedAndWritesNoRecoveryRow() {
+        DispatchDao dao = mock(DispatchDao.class);
+        WorkitemDao workitems = mock(WorkitemDao.class);
+        DispatchService local = spy(new DispatchService(dao, mock(DispatchRuntimeEventDao.class),
+                workitems, mock(AgentDao.class), mock(AgentVersionDao.class),
+                mock(ExecutorSelector.class), mock(PackageContextAssembler.class),
+                mock(TaskPackager.class), mock(DispatchTransport.class), mock(SdlcDriver.class),
+                redisManager, mock(DispatchCheckpointService.class)));
+        doReturn(false).when(local).runPending(anyLong());
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability)
+                .requireStartable(eq(100L), eq(41L), any());
+        local.setExecutionAvailabilityService(availability);
+        DispatchDO paused = dispatch(55L, DispatchStatus.PAUSED, 2);
+        paused.setAgentId(41L);
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(100L);
+        workitem.setSdlcId(300L);
+        when(dao.findById(55L)).thenReturn(paused);
+        when(dao.listByWorkitem(100L, 200L)).thenReturn(List.of(paused));
+        when(dao.findByIdempotencyKey(100L, "continue:55")).thenReturn(null);
+        when(workitems.findById(200L)).thenReturn(workitem);
+
+        BizException failure = assertThrows(BizException.class,
+                () -> local.continueDispatch(100L, 200L, 55L, 9L));
+
+        assertEquals(ErrorCode.EXECUTION_AGENT_OFFLINE.getCode(), failure.getCode());
+        verify(dao, never()).updateStatus(eq(55L), eq(100L), eq(DispatchStatus.CANCELED),
+                any(), any(), any(), any(), any(), any(), any());
+        verify(dao, never()).insert(any());
+        verify(local, never()).runPending(anyLong());
+    }
+
+    @Test
+    void pausedResumeIsRejectedWhileOfflineAndSucceedsAfterExplicitReEnable() {
+        DispatchDao dao = mock(DispatchDao.class);
+        WorkitemDao workitems = mock(WorkitemDao.class);
+        DispatchService local = spy(new DispatchService(dao, mock(DispatchRuntimeEventDao.class),
+                workitems, mock(AgentDao.class), mock(AgentVersionDao.class),
+                mock(ExecutorSelector.class), mock(PackageContextAssembler.class),
+                mock(TaskPackager.class), mock(DispatchTransport.class), mock(SdlcDriver.class),
+                redisManager, mock(DispatchCheckpointService.class)));
+        doReturn(false).when(local).runPending(anyLong());
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability)
+                .requireStartable(100L, 41L, 300L);
+        local.setExecutionAvailabilityService(availability);
+        DispatchDO paused = dispatch(55L, DispatchStatus.PAUSED, 2);
+        paused.setAgentId(41L);
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(100L);
+        workitem.setSdlcId(300L);
+        when(dao.findById(55L)).thenReturn(paused);
+        when(dao.listByWorkitem(100L, 200L)).thenReturn(List.of(paused));
+        when(dao.findByIdempotencyKey(100L, "continue:55")).thenReturn(null);
+        when(dao.findMaxAttempt(100L, 200L, 300L)).thenReturn(2);
+        when(dao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.CANCELED), isNull(), isNull(),
+                isNull(), isNull(), eq(DispatchFailureReason.MANUAL_CONTINUE), eq(0), eq(0L)))
+                .thenReturn(1);
+        doAnswer(invocation -> {
+            DispatchDO inserted = invocation.getArgument(0);
+            inserted.setId(56L);
+            return null;
+        }).when(dao).insert(any(DispatchDO.class));
+        when(workitems.findById(200L)).thenReturn(workitem);
+
+        assertThrows(BizException.class, () -> local.continueDispatch(100L, 200L, 55L, 9L));
+
+        doNothing().when(availability).requireStartable(100L, 41L, 300L);
+        DispatchDO recovery = local.continueDispatch(100L, 200L, 55L, 9L);
+
+        assertEquals(56L, recovery.getId());
+        assertEquals("RECOVERY", recovery.getResumeMode());
+        verify(local).runPending(56L);
     }
 
     @Test

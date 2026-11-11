@@ -41,6 +41,9 @@ public class AuthFilter extends OncePerRequestFilter {
     private static final Pattern WORKSPACE_RESTORE_PATH =
             Pattern.compile("^/api/workspaces/[0-9]+/restore$");
     private static final String WORKSPACE_RECYCLE_BIN_PATH = "/api/workspaces/recycle-bin";
+    // 空间发现列表按调用者可见范围统计，与 token 绑定的当前空间无关；绑定空间已失效时
+    // 仍要能列出全部空间，否则用户无法切换或申请，只能看到 403。
+    private static final String WORKSPACE_ALL_PATH = "/api/workspaces/all";
     private static final Pattern CLI_WORKITEM_UPLOAD_PATH =
             Pattern.compile("^/api/cli/workitems/[0-9]+/requirement-documents$");
     private static final Pattern CLI_SCHEDULED_TASK_UPLOAD_PATH =
@@ -123,6 +126,12 @@ public class AuthFilter extends OncePerRequestFilter {
                         || "DEACTIVATED".equals(user.getPasswordHash()))) {
                 writeFailure(response, HttpServletResponse.SC_UNAUTHORIZED,
                         ErrorCode.DEACTIVATION_ACCOUNT_DISABLED);
+                return;
+            }
+            // 待审核账号即便持有旧令牌也不能调用任何受保护接口。
+            if (Integer.valueOf(2).equals(user.getStatus())) {
+                writeFailure(response, HttpServletResponse.SC_UNAUTHORIZED,
+                        ErrorCode.USER_REGISTRATION_PENDING_REVIEW);
                 return;
             }
             try {
@@ -232,7 +241,14 @@ public class AuthFilter extends OncePerRequestFilter {
         if (path.startsWith(PERSONAL_USER_API_PREFIX)) {
             return true;
         }
+        // 空间创建权限申请与能力查询属于平台级能力，不依赖 token 绑定的当前空间。
+        if (path.startsWith("/api/workspaces/creation-requests")) {
+            return true;
+        }
         if ("GET".equalsIgnoreCase(method) && WORKSPACE_RECYCLE_BIN_PATH.equals(path)) {
+            return true;
+        }
+        if ("GET".equalsIgnoreCase(method) && WORKSPACE_ALL_PATH.equals(path)) {
             return true;
         }
         if ("GET".equalsIgnoreCase(method) && path.startsWith(SPACE_DASHBOARD_PREFIX)) {

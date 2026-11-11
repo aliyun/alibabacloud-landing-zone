@@ -1,8 +1,10 @@
 package com.aliyun.autowonder.im.notification;
 
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.notification.NotificationLink;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import java.util.List;
 import java.util.Locale;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
@@ -25,7 +27,8 @@ public record ImNotificationTask(
         String sourceType,
         @JsonInclude(JsonInclude.Include.NON_NULL) String recipientLocale,
         @JsonInclude(JsonInclude.Include.NON_NULL) String actorNameKind,
-        @JsonInclude(JsonInclude.Include.NON_NULL) String workitemTitleKind) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) String workitemTitleKind,
+        @JsonInclude(JsonInclude.Include.NON_NULL) List<NotificationLink> relatedLinks) {
 
     public static final String TYPE_WORKITEM_ASSIGNED = "WORKITEM_ASSIGNED";
     public static final String TYPE_COMMENT_MENTION = "COMMENT_MENTION";
@@ -33,7 +36,10 @@ public record ImNotificationTask(
     public static final String TYPE_INPUT_REQUIRED = "WORKITEM_INPUT_REQUIRED";
     public static final String TYPE_WORKSPACE_ACCESS_REQUEST = "WORKSPACE_ACCESS_REQUEST";
     public static final String TYPE_WORKSPACE_ACCESS_REVIEWED = "WORKSPACE_ACCESS_REVIEWED";
+    public static final String TYPE_DUPLICATE_INTENT = "DUPLICATE_INTENT";
     public static final String SOURCE_SCHEDULED_TASK_RUN = ExecutionSourceType.SCHEDULED_TASK_RUN.name();
+    /** Marks a workspace-access task as the cancellation variant so the formatter picks its own copy. */
+    public static final String SOURCE_ACCESS_CANCELLED = "CANCELLED";
 
     public ImNotificationTask(String notificationKey,
                               long workitemEventId,
@@ -70,13 +76,19 @@ public record ImNotificationTask(
             String workitemTitle, String notificationType, String commentContentMd, String sourceType) {
         this(notificationKey, workitemEventId, tenantId, workitemId, recipientUserId, actorType, actorRef,
                 actorDisplayName, requestId, workitemTitle, notificationType, commentContentMd, sourceType,
-                null, null, null);
+                null, null, null, null);
     }
 
     public ImNotificationTask withRecipientLocale(String locale) {
         return new ImNotificationTask(notificationKey, workitemEventId, tenantId, workitemId, recipientUserId,
                 actorType, actorRef, actorDisplayName, requestId, workitemTitle, notificationType, commentContentMd,
-                sourceType, locale, actorNameKind, workitemTitleKind);
+                sourceType, locale, actorNameKind, workitemTitleKind, relatedLinks);
+    }
+
+    public ImNotificationTask withRelatedLinks(List<NotificationLink> links) {
+        return new ImNotificationTask(notificationKey, workitemEventId, tenantId, workitemId, recipientUserId,
+                actorType, actorRef, actorDisplayName, requestId, workitemTitle, notificationType, commentContentMd,
+                sourceType, recipientLocale, actorNameKind, workitemTitleKind, links);
     }
 
     @JsonIgnore
@@ -88,6 +100,7 @@ public record ImNotificationTask(
         if (notificationType == null || notificationType.isBlank()) {
             notificationType = TYPE_WORKITEM_ASSIGNED;
         }
+        relatedLinks = relatedLinks == null ? null : List.copyOf(relatedLinks);
     }
 
     @JsonIgnore

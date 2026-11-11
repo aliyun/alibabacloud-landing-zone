@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -108,6 +108,50 @@ describe('UserDetailDrawer', () => {
   });
   afterEach(async () => {
     await i18n.changeLanguage('zh-CN');
+  });
+
+  it('updates the workspace creation permission from the detail switch', async () => {
+    vi.spyOn(userAdminApi, 'getUserAdminDetail').mockResolvedValue(profile({
+      canCreateWorkspace: false,
+      workspaceCreationEditable: true,
+      workspaceCreationGlobalDefaultAllowed: false,
+    }));
+    vi.spyOn(userAdminApi, 'listUserAdminWorkspaces').mockResolvedValue([]);
+    vi.spyOn(userAdminApi, 'listUserAdminImIdentities').mockResolvedValue([]);
+    const update = vi.spyOn(userAdminApi, 'updateUserWorkspaceCreationPermission')
+      .mockResolvedValue(profile({ canCreateWorkspace: true, workspaceCreationEditable: true }));
+    renderDrawer();
+
+    const body = await drawerBody();
+    const toggle = await within(body).findByRole('switch', { name: '允许创建空间' });
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith(8, true));
+    await waitFor(() => expect(successMock).toHaveBeenCalledWith('空间创建权限已更新'));
+  });
+
+  it.each([
+    [{ isAdmin: true, workspaceCreationAdminLocked: true }, '平台管理员始终可以创建空间，无需单独设置。'],
+    [{ workspaceCreationGlobalDefaultAllowed: true }, '全局已开启「默认允许用户创建空间」，请先到平台管理 → 开关配置关闭后再单独授权。'],
+  ] as const)('explains the locked permission on focus (%j)', async (policy, hint) => {
+    vi.spyOn(userAdminApi, 'getUserAdminDetail').mockResolvedValue(profile({
+      ...policy,
+      canCreateWorkspace: true,
+      workspaceCreationEditable: false,
+    }));
+    vi.spyOn(userAdminApi, 'listUserAdminWorkspaces').mockResolvedValue([]);
+    vi.spyOn(userAdminApi, 'listUserAdminImIdentities').mockResolvedValue([]);
+    renderDrawer();
+
+    const body = await drawerBody();
+    const toggle = await within(body).findByRole('switch', { name: '允许创建空间' });
+    expect(toggle).toBeDisabled();
+    expect(screen.queryByText(hint)).not.toBeInTheDocument();
+    const trigger = toggle.parentElement!;
+    act(() => trigger.focus());
+    expect(trigger).toHaveFocus();
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(hint);
+    expect(within(body).getByText('允许创建空间')).toHaveStyle({ whiteSpace: 'nowrap' });
   });
 
   it('renders the profile, the workspace access and the IM binding of an editable user', async () => {

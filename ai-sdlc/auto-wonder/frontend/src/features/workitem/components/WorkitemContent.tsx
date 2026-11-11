@@ -5,6 +5,8 @@ import { CloseOutlined, EditOutlined, SaveOutlined } from '@ant-design/icons';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { CopyContentMenu } from '@/shared/ui/CopyContentMenu';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { useWorkitemDuplicateCheck } from '../useWorkitemDuplicateCheck';
+import { DuplicateWorkitemsModal } from './DuplicateWorkitemsModal';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -12,18 +14,26 @@ const { TextArea } = Input;
 interface WorkitemContentProps {
   title: string;
   contentMd: string | null;
+  /** 编辑场景排除自身的工单 ID；新建表单不传。 */
+  workitemId?: number | string;
   saving?: boolean;
   readOnly?: boolean;
   onSave?: (values: { title: string; contentMd: string }) => Promise<void> | void;
 }
 
-export function WorkitemContent({ title, contentMd, saving = false, readOnly = false, onSave }: WorkitemContentProps) {
+export function WorkitemContent({ title, contentMd, workitemId, saving = false, readOnly = false, onSave }: WorkitemContentProps) {
   const { t } = useTranslation('workitem');
   const safeContentMd = contentMd ?? '';
   const accessCommand = useAccessCommand();
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
   const [draftContent, setDraftContent] = useState(safeContentMd);
+  const duplicateCheck = useWorkitemDuplicateCheck({
+    title: draftTitle,
+    excludeWorkitemId: workitemId,
+    // 只在标题真的被改过时检查：进入编辑态本身不触发提醒。
+    enabled: editing && draftTitle.trim().length > 0 && draftTitle.trim() !== title.trim(),
+  });
 
   useEffect(() => {
     if (!editing) {
@@ -41,12 +51,15 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
     setDraftTitle(title);
     setDraftContent(safeContentMd);
     setEditing(false);
+    duplicateCheck.resetSubmission();
   };
 
   const handleSave = async () => {
     if (!canSave || !onSave) {
       return;
     }
+    // 保存点击立即生效：不等待预检，已弹出的提醒也不会阻断保存。
+    duplicateCheck.markSubmitted();
     accessCommand('READ_WRITE', t('detail.editCommand'), async () => {
       await onSave({ title: draftTitle.trim(), contentMd: draftContent });
       setEditing(false);
@@ -90,7 +103,10 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
           <Space size={4}>
             <CopyContentMenu contentMd={safeContentMd} />
             <Button icon={<EditOutlined />}
-              onClick={() => accessCommand('READ_WRITE', t('detail.editCommand'), () => setEditing(true))}>
+              onClick={() => accessCommand('READ_WRITE', t('detail.editCommand'), () => {
+                duplicateCheck.resetSubmission();
+                setEditing(true);
+              })}>
               {t('detail.edit')}
             </Button>
           </Space>
@@ -104,6 +120,9 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
             maxLength={200}
             showCount
             onChange={(event) => setDraftTitle(event.target.value)}
+            onBlur={duplicateCheck.titleHandlers.onBlur}
+            onCompositionStart={duplicateCheck.titleHandlers.onCompositionStart}
+            onCompositionEnd={duplicateCheck.titleHandlers.onCompositionEnd}
           />
           <TextArea
             aria-label={t('detail.bodyField')}
@@ -116,6 +135,13 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
       ) : (
         <MarkdownView content={safeContentMd} />
       )}
+      <DuplicateWorkitemsModal
+        open={duplicateCheck.modal.open}
+        matches={duplicateCheck.modal.matches}
+        truncated={duplicateCheck.modal.truncated}
+        partial={duplicateCheck.modal.partial}
+        onDismiss={duplicateCheck.dismiss}
+      />
     </div>
   );
 }

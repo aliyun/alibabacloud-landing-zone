@@ -51,4 +51,9 @@
         SELECT COUNT(*) FROM squad
         WHERE tenant_id = #{tenantId} AND name = #{name} AND is_deleted = 0
     </select>
+    <select id="findByTenantAndName" resultType="com.aliyun.autowonder.squad.SquadDO">
+        SELECT * FROM squad
+        WHERE tenant_id = #{tenantId} AND name = #{name} AND is_deleted = 0 AND status = 0
+        ORDER BY id ASC LIMIT 1
+    </select>
 </mapper>

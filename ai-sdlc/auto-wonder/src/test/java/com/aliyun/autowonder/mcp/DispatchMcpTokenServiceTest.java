@@ -52,6 +52,17 @@ class DispatchMcpTokenServiceTest {
     }
 
     @Test
+    void workflowRestartRevokesOldCapabilitiesBeforeTheAsyncStopArrives() {
+        DispatchDO d = dispatch(DispatchStatus.RUNNING);
+        String token = service.issue(d);
+        when(dispatchDao.findById(DISPATCH_ID)).thenReturn(d);
+        var snapshots = mock(com.aliyun.autowonder.dispatch.DispatchWorkflowSnapshotStore.class);
+        when(snapshots.fenced(d)).thenReturn(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "workflowSnapshots", snapshots);
+        assertThrows(BizException.class, () -> service.authenticate(token));
+    }
+
+    @Test
     void cancellationIntentRevokesPreviouslyIssuedTokenWhileStopping() {
         DispatchDO d = dispatch(DispatchStatus.RUNNING);
         String token = service.issue(d);

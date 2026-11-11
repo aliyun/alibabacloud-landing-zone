@@ -132,19 +132,42 @@ class WorkitemClarificationConversationServiceTest {
     @Test
     void getConversationSurfacesQueuedTurnAsProcessing() {
         when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
-        when(turnDao.listTurnsByConversation(1L, 77L)).thenReturn(java.util.List.of());
         AgentConversationTurnDO queued = new AgentConversationTurnDO();
         queued.setId(55L);
         queued.setTenantId(1L);
         queued.setConversationId(77L);
         queued.setDirection("IN");
         queued.setStatus("QUEUED");
-        when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(queued);
+        when(turnDao.listTurnsByConversation(1L, 77L)).thenReturn(java.util.List.of(queued));
 
         ClarificationConversationVO vo = service.getConversation(1L, 10011L, 77L);
 
         assertEquals("QUEUED", vo.getProcessingStatus());
         assertEquals(55L, vo.getProcessingTurnId());
+    }
+
+    @Test
+    void getConversationKeepsProcessingUntilReplyAppearsInTheSameHistorySnapshot() {
+        when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
+        var processing = turn(55L, "IN", "question");
+        processing.setStatus("PROCESSING");
+        var completed = turn(55L, "IN", "question");
+        var reply = turn(56L, "OUT", "answer");
+        // Completion commits after the first history read; later status queries see no active turn.
+        when(turnDao.listTurnsByConversation(1L, 77L))
+                .thenReturn(java.util.List.of(processing), java.util.List.of(completed, reply));
+
+        var duringCompletion = service.getConversation(1L, 10011L, 77L);
+        assertEquals(1, duringCompletion.getTurns().size());
+        assertEquals("PROCESSING", duringCompletion.getProcessingStatus());
+        assertEquals(55L, duringCompletion.getProcessingTurnId());
+
+        var afterCompletion = service.getConversation(1L, 10011L, 77L);
+        assertNull(afterCompletion.getProcessingStatus());
+        assertNull(afterCompletion.getProcessingTurnId());
+        assertEquals("answer", afterCompletion.getTurns().getLast().getContent());
+        verify(turnDao, never()).findProcessingInbound(anyLong(), anyLong());
+        verify(turnDao, never()).findNextQueuedInbound(anyLong(), anyLong());
     }
 
     /** S14：前端据此决定是否启用卡片交互入口，必须随 feature 变化。 */
@@ -215,6 +238,43 @@ class WorkitemClarificationConversationServiceTest {
         service.listConversations(1L, 10011L, 3L);
 
         verify(elicitationService, never()).listPending(anyLong(), anyLong());
+    }
+
+    /** 默认打开最近一次会话只需要列表形态的身份信息，正文仍由详情接口加载。 */
+    @Test
+    void getLatestConversationReturnsIdentityWithoutHistory() {
+        when(convDao.findLatestByBizRefWithoutAgent(1L, "WORKITEM_CLARIFICATION", "WORKITEM", 10011L))
+                .thenReturn(clarificationConversation(10011L));
+
+        ClarificationConversationVO vo = service.getLatestConversation(1L, 10011L);
+
+        assertEquals(77L, vo.getId());
+        assertEquals(3L, vo.getAgentId());
+        assertTrue(vo.getTurns().isEmpty());
+        assertTrue(vo.getPendingElicitations().isEmpty());
+        assertTrue(vo.getAvailableCommands().isEmpty());
+        verify(turnDao, never()).listTurnsByConversation(anyLong(), anyLong());
+        verify(elicitationService, never()).listPending(anyLong(), anyLong());
+    }
+
+    /** 该工单没有任何会话时返回 null：前端据此继续走本地记忆/选人页，而不是报错。 */
+    @Test
+    void getLatestConversationReturnsNullWhenWorkitemHasNoConversation() {
+        when(convDao.findLatestByBizRefWithoutAgent(1L, "WORKITEM_CLARIFICATION", "WORKITEM", 10011L))
+                .thenReturn(null);
+
+        assertNull(service.getLatestConversation(1L, 10011L));
+    }
+
+    /** 最近会话属于工作空间共享数据：查询必须带调用方租户，不能跨工作空间串数据。 */
+    @Test
+    void getLatestConversationScopesQueryToCallerTenant() {
+        when(convDao.findLatestByBizRefWithoutAgent(7L, "WORKITEM_CLARIFICATION", "WORKITEM", 10011L))
+                .thenReturn(null);
+
+        service.getLatestConversation(7L, 10011L);
+
+        verify(convDao).findLatestByBizRefWithoutAgent(7L, "WORKITEM_CLARIFICATION", "WORKITEM", 10011L);
     }
 
     @Test

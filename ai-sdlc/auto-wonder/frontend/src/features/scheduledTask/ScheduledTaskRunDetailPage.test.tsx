@@ -190,7 +190,7 @@ describe('ScheduledTaskRunDetailPage', () => {
         }],
       } })),
       http.get('/api/dispatches/12238/runtime-trace/activities', () => HttpResponse.json({ success: true, code: '0', data: { dispatchId: 12238, activities: [] } })),
-      http.get('/api/dispatches/12238/runtime-trace/events', () => HttpResponse.json({ success: true, code: '0', data: { dispatchId: 12238, events: [], changed: true } })),
+      http.get('/api/dispatches/12238/runtime-trace/events/window', () => HttpResponse.json({ success: true, code: '0', data: { dispatchId: 12238, events: [], changed: true } })),
       http.get('/api/dispatches/12238/live-activity', () => HttpResponse.json({ success: true, code: '0', data: {
         schemaVersion: '1', dispatchId: 12238, agentId: 10033, workitemId: null, sourceType: 'SCHEDULED_TASK_RUN',
         attempt: 1, dispatchStatus: 'FAILED', changed: true, lastSeq: 0, lastUpdatedAt: '2026-10-16T02:00:00Z',

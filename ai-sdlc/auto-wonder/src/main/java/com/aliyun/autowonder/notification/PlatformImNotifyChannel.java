@@ -35,7 +35,8 @@ public class PlatformImNotifyChannel implements NotifyChannel {
     @Override
     public boolean deliver(NotificationDO notification) {
         // These events have their own reliable IM queue; their in-app listeners must not send twice.
-        if (java.util.Set.of("WORKITEM_ASSIGNED", "COMMENT_MENTION", "WORKSPACE_ACCESS_REQUEST", "WORKSPACE_ACCESS_REVIEWED")
+        if (java.util.Set.of("WORKITEM_ASSIGNED", "COMMENT_MENTION", "WORKSPACE_ACCESS_REQUEST",
+                "WORKSPACE_ACCESS_REVIEWED")
                 .contains(notification.getType() == null ? "" : notification.getType())) return true;
         String provider = configs.selectedProvider();
         if (ImNotificationTask.TYPE_APPROVAL_REQUIRED.equals(notification.getType())
@@ -43,6 +44,15 @@ public class PlatformImNotifyChannel implements NotifyChannel {
             queue.enqueue(new ImNotificationTask("dispatch-request:" + notification.getId() + ":" + provider + ":" + notification.getRecipientId(),
                     notification.getId(), notification.getTenantId(), notification.getRefId(), notification.getRecipientId(),
                     "SYSTEM", 0, "数字员工", null, notification.getTitle(), notification.getType(), notification.getContent())
+                    .withRecipientLocale(notification.getRecipientLocale()));
+            return true;
+        }
+        if (ImNotificationTask.TYPE_DUPLICATE_INTENT.equals(notification.getType())) {
+            queue.enqueue(new ImNotificationTask(
+                    "duplicate-intent:" + notification.getId() + ":" + provider + ":" + notification.getRecipientId(),
+                    notification.getId(), notification.getTenantId(), notification.getRefId(), notification.getRecipientId(),
+                    "SYSTEM", 0, "数字员工", null, notification.getTitle(), notification.getType(), notification.getContent())
+                    .withRelatedLinks(NotificationLinkJson.decode(notification.getRelatedLinksJson()))
                     .withRecipientLocale(notification.getRecipientLocale()));
             return true;
         }

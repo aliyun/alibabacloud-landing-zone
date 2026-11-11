@@ -81,7 +81,7 @@
 
 .help-image-row-im { grid-template-columns: 1fr; max-width: 1200px; }
 
-.help-image-row-im-project { grid-template-columns: 2.1254fr .9411fr; max-width: 1100px; }
+.help-image-row-im-project { grid-template-columns: 1fr; max-width: 1100px; }
 
 .help-article img[src^="/help/assets/05-"],
 .help-article img[src^="/help/assets/10-"] {

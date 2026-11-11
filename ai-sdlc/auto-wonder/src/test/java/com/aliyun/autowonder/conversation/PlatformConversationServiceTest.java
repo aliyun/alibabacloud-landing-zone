@@ -350,8 +350,8 @@ class PlatformConversationServiceTest {
     @Test
     void getReportsTheRunningTurnSoTheUiCanRestoreStreaming() {
         stubConversation(ownedConversation());
-        when(turnDao.findProcessingInbound(TENANT_ID, CONVERSATION_ID))
-                .thenReturn(turn(TURN_ID, "IN", "在吗"));
+        when(turnDao.listTurnsByConversation(TENANT_ID, CONVERSATION_ID))
+                .thenReturn(List.of(turn(TURN_ID, "IN", "在吗")));
 
         PlatformConversationVO vo = service.get(TENANT_ID, CONVERSATION_ID, OWNER_ID);
 
@@ -363,15 +363,39 @@ class PlatformConversationServiceTest {
     @Test
     void getFallsBackToTheQueuedTurnWhenNothingIsProcessing() {
         stubConversation(ownedConversation());
-        when(turnDao.findProcessingInbound(TENANT_ID, CONVERSATION_ID)).thenReturn(null);
         AgentConversationTurnDO queued = turn(TURN_ID, "IN", "排队中");
         queued.setStatus("QUEUED");
-        when(turnDao.findNextQueuedInbound(TENANT_ID, CONVERSATION_ID)).thenReturn(queued);
+        when(turnDao.listTurnsByConversation(TENANT_ID, CONVERSATION_ID)).thenReturn(List.of(queued));
 
         PlatformConversationVO vo = service.get(TENANT_ID, CONVERSATION_ID, OWNER_ID);
 
         assertEquals(TURN_ID, vo.getProcessingTurnId());
         assertEquals("QUEUED", vo.getProcessingStatus());
+    }
+
+    @Test
+    void getKeepsProcessingUntilReplyAppearsInTheSameHistorySnapshot() {
+        stubConversation(ownedConversation());
+        var processing = turn(TURN_ID, "IN", "question");
+        var completed = turn(TURN_ID, "IN", "question");
+        completed.setStatus("SUCCESS");
+        var reply = turn(TURN_ID + 1, "OUT", "answer");
+        reply.setStatus("SUCCESS");
+        // Completion commits after the first history read; later status queries see no active turn.
+        when(turnDao.listTurnsByConversation(TENANT_ID, CONVERSATION_ID))
+                .thenReturn(List.of(processing), List.of(completed, reply));
+
+        var duringCompletion = service.get(TENANT_ID, CONVERSATION_ID, OWNER_ID);
+        assertEquals(1, duringCompletion.getTurns().size());
+        assertEquals("PROCESSING", duringCompletion.getProcessingStatus());
+        assertEquals(TURN_ID, duringCompletion.getProcessingTurnId());
+
+        var afterCompletion = service.get(TENANT_ID, CONVERSATION_ID, OWNER_ID);
+        assertNull(afterCompletion.getProcessingStatus());
+        assertNull(afterCompletion.getProcessingTurnId());
+        assertEquals("answer", afterCompletion.getTurns().getLast().getContent());
+        verify(turnDao, never()).findProcessingInbound(anyLong(), anyLong());
+        verify(turnDao, never()).findNextQueuedInbound(anyLong(), anyLong());
     }
 
     @Test

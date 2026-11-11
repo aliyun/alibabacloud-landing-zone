@@ -76,7 +76,7 @@ public class ExecutorLaunchConfigService {
         }
         int expectedVersion = req.getVersion();
         String kindToPersist = resolveRecoveryClientKind(executor.getClientKind(), req.getClientKind());
-        LaunchConfig stored = resolveUpdatedConfig(executor, req,
+        LaunchConfig stored = resolveUpdatedConfig(tenantId, executor, req,
                 kindToPersist != null ? kindToPersist : executor.getClientKind());
         int rows = kindToPersist != null
                 ? executorDao.updateLaunchConfigWithClientKind(id, tenantId, toJson(stored), kindToPersist,
@@ -98,21 +98,24 @@ public class ExecutorLaunchConfigService {
             throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_VERSION_CONFLICT);
         }
         String recoveredKind = resolveRecoveryClientKind(executor.getClientKind(), request.getClientKind());
-        return resolveUpdatedConfig(executor, request,
+        return resolveUpdatedConfig(tenantId, executor, request,
                 recoveredKind != null ? recoveredKind : executor.getClientKind());
     }
 
-    private LaunchConfig resolveUpdatedConfig(ExecutorDO executor, UpdateExecutorLaunchConfigRequest req, String clientKind) {
+    private LaunchConfig resolveUpdatedConfig(long tenantId, ExecutorDO executor,
+            UpdateExecutorLaunchConfigRequest req, String clientKind) {
         LaunchConfig previous = parse(executor.getLaunchConfig());
-        LaunchConfig stored = resolve(clientKind,
+        LaunchConfig stored = resolve(tenantId, clientKind,
                 req.getMemoryMode(), req.getModel(),
                 req.getReasoningEffort(), req.getContextWindow(), true);
         stored.maxConcurrentDispatches = resolveMaxConcurrentDispatches(req.getMaxConcurrentDispatches() != null
                 ? req.getMaxConcurrentDispatches() : previous.maxConcurrentDispatches);
         stored.modelUpgradePolicy = req.getModelUpgradePolicy() == null
-                ? previous.modelUpgradePolicy : validatePolicy(req.getModelUpgradePolicy(),
+                ? previous.modelUpgradePolicy : validatePolicy(tenantId, req.getModelUpgradePolicy(),
                         clientKind);
         stored.runtimeVersion = req.getRuntimeVersion() == null ? previous.runtimeVersion : runtimeVersion(req.getRuntimeVersion());
+        stored.runtimeVersionPinned = req.getRuntimeVersion() == null ? previous.runtimeVersionPinned
+                : stored.runtimeVersion == null ? null : true;
         stored.workspaceRoot = req.getWorkspaceRoot() == null ? previous.workspaceRoot : launchText(req.getWorkspaceRoot(), 4096);
         stored.daemonName = req.getDaemonName() == null ? previous.daemonName : launchText(req.getDaemonName(), 200);
         stored.debug = req.getDebug() == null ? previous.debug : req.getDebug();
@@ -128,7 +131,8 @@ public class ExecutorLaunchConfigService {
         }
         if (request.getModelUpgradePolicy() == null) throw invalidPolicy();
         LaunchConfig stored = parse(executor.getLaunchConfig());
-        stored.modelUpgradePolicy = validatePolicy(request.getModelUpgradePolicy(), executor.getClientKind());
+        stored.modelUpgradePolicy = validatePolicy(tenantId, request.getModelUpgradePolicy(),
+                executor.getClientKind());
         if (executorDao.updateLaunchConfig(id, tenantId, mergePolicy(executor.getLaunchConfig(), stored.modelUpgradePolicy), request.getVersion(), userId) == 0)
             throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_VERSION_CONFLICT);
         return toVo(stored, request.getVersion() + 1, ExecutorLaunchOptionsService.isQoderFamily(
@@ -178,11 +182,11 @@ public class ExecutorLaunchConfigService {
      * is command-ready the moment it exists. An omitted value takes the same default the create dialog pre-fills; an
      * explicitly passed model the catalog no longer offers is rejected rather than silently replaced.
      */
-    public LaunchConfig resolveForCreate(CreateExecutorRequest req) {
+    public LaunchConfig resolveForCreate(long tenantId, CreateExecutorRequest req) {
         boolean explicitModel = req != null && isNotBlank(req.getModel());
         // An omitted model takes the same catalog-derived default the create dialog pre-fills; an explicitly passed
         // one must still be offered, so a dead id is never persisted behind the operator's back.
-        LaunchConfig config = resolve(req == null ? null : req.getClientKind(),
+        LaunchConfig config = resolve(tenantId, req == null ? null : req.getClientKind(),
                 req == null ? null : req.getMemoryMode(),
                 explicitModel ? req.getModel() : null,
                 req == null ? null : req.getReasoningEffort(),
@@ -221,7 +225,7 @@ public class ExecutorLaunchConfigService {
                 || !isNotBlank(stored.contextWindow)) {
             throw incomplete();
         }
-        if (!modelIds(provider).contains(stored.model)) {
+        if (!modelIds(tenantId, provider).contains(stored.model)) {
             throw BizException.keyed(ErrorCode.EXECUTOR_LAUNCH_CONFIG_MODEL_INVALID, "executor.config.saved_model_unavailable",
                     new Object[]{stored.model}, "已保存的模型 " + stored.model + " 已不可用，请重新选择并保存启动配置");
         }
@@ -240,8 +244,8 @@ public class ExecutorLaunchConfigService {
      * Shared create/update validation. {@code requireKnownModel} rejects a model id the catalog does not offer; when
      * it is false the caller is asking for a default and the id is demoted to a usable one instead.
      */
-    private LaunchConfig resolve(String clientKind, String memoryMode, String model, String reasoningEffort,
-            String contextWindow, boolean requireKnownModel) {
+    private LaunchConfig resolve(long tenantId, String clientKind, String memoryMode, String model,
+            String reasoningEffort, String contextWindow, boolean requireKnownModel) {
         String provider = ExecutorLaunchOptionsService.resolveProvider(clientKind);
         LaunchConfig config = new LaunchConfig();
         config.memoryMode = options.resolveMemoryMode(memoryMode);
@@ -249,12 +253,12 @@ public class ExecutorLaunchConfigService {
             return config;
         }
         String requested = model == null ? null : model.trim();
-        if (isNotBlank(requested) && modelIds(provider).contains(requested)) {
+        if (isNotBlank(requested) && modelIds(tenantId, provider).contains(requested)) {
             config.model = requested;
         } else if (requireKnownModel || isNotBlank(requested)) {
             throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_MODEL_INVALID);
         } else {
-            config.model = ExecutorLaunchOptionsService.chooseModel(options.models(provider), requested);
+            config.model = ExecutorLaunchOptionsService.chooseModel(options.models(tenantId, provider), requested);
         }
         config.reasoningEffort = options.resolveReasoningEffort(config.model, reasoningEffort);
         config.contextWindow = options.resolveContextWindow(contextWindow);
@@ -274,8 +278,8 @@ public class ExecutorLaunchConfigService {
     }
 
 
-    private List<String> modelIds(String provider) {
-        return options.models(provider).stream().map(SelectOptionVO::getValue).toList();
+    private List<String> modelIds(long tenantId, String provider) {
+        return options.models(tenantId, provider).stream().map(SelectOptionVO::getValue).toList();
     }
 
     private static int versionOf(ExecutorDO executor) {
@@ -308,6 +312,7 @@ public class ExecutorLaunchConfigService {
         vo.setMaxConcurrentDispatches(config.maxConcurrentDispatches);
         vo.setModelUpgradePolicy(config.modelUpgradePolicy);
         vo.setRuntimeVersion(config.runtimeVersion);
+        vo.setRuntimeVersionPinned(config.runtimeVersionPinned);
         vo.setWorkspaceRoot(config.workspaceRoot);
         vo.setDaemonName(config.daemonName);
         vo.setDebug(config.debug);
@@ -342,7 +347,7 @@ public class ExecutorLaunchConfigService {
         return value;
     }
 
-    private ModelUpgradePolicy validatePolicy(ModelUpgradePolicy policy, String clientKind) {
+    private ModelUpgradePolicy validatePolicy(long tenantId, ModelUpgradePolicy policy, String clientKind) {
         if (policy.getLevels() == null) policy.setLevels(List.of());
         if (policy.isEnabled() && policy.getLevels().isEmpty()) throw invalidPolicy();
         if (policy.getLevels().size() > 20) throw invalidPolicy();
@@ -354,7 +359,8 @@ public class ExecutorLaunchConfigService {
                     || level.getModel() == null || level.getModel().isBlank()
                     || level.getModel().length() > 200 || !level.getModel().matches("[A-Za-z0-9_.:/+-]+")
                     || !models.add(level.getModel())) throw invalidPolicy();
-            if (policy.isEnabled() && ExecutorLaunchOptionsService.isQoderFamily(provider) && !modelIds(provider).contains(level.getModel()))
+            if (policy.isEnabled() && ExecutorLaunchOptionsService.isQoderFamily(provider)
+                    && !modelIds(tenantId, provider).contains(level.getModel()))
                 throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_MODEL_INVALID);
             previous = level.getEntryCount();
         }
@@ -380,6 +386,7 @@ public class ExecutorLaunchConfigService {
         public String memoryMode;
         public Integer maxConcurrentDispatches;
         public String runtimeVersion;
+        public Boolean runtimeVersionPinned;
         public String workspaceRoot;
         public String daemonName;
         public Boolean debug;

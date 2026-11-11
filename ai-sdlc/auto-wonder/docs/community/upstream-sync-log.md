@@ -33,6 +33,75 @@ candidate was proved, not assumed: `25371cb1` is an ancestor of the community ti
 
 ## History
 
+### 2026-11-10: candidate sync to `e7b4c01c2` — v1.2.0
+
+- Status: CANDIDATE; final required acceptance and releaseReadiness PENDING at the
+  documentation freeze. This dated snapshot is not a final acceptance verdict.
+- Verification recording snapshot: 2026-11-11, before the final documentation freeze.
+  The following results were executed at candidate
+  `bf91ffe0452942fea3b3029159a2ac012a28bb74`, tree
+  `96cba4ee13848f40ace3eec7b34f66e067e4d585`; they are not executions
+  of the later documentation commit.
+- Attempt3 backend: 8,875 tests, zero failures/errors, one explicit skip.
+  Original native runtime check: actual exit0/PASS. Source-equivalent real-Qoder
+  two-step supplement: all nine checks PASS. The standard accumulated final
+  check and standard lifecycle cleanup both returned0. These component results
+  do not make the entire delivery accepted.
+- Attempt3 historical-Chief compatibility: actual FAIL due to the private
+  256MiB tmpfs filling (ENOSPC); restoration and cleanup were verified. Earlier
+  failed attempts and unresolved historical causes remain archived, not replaced
+  by later successful component results. A Chief-only resource correction and
+  the next standard lifecycle are still awaiting their real acceptance at this
+  snapshot. No successful Chief compatibility result is asserted here.
+- The original merge preserved pre-sync Community E2E exactly. Later intentional
+  Community verification repairs are separate commits: scoped package repair
+  `b3cf2017de59bbe2d11e5945a8780790d83fd56f`, strict supplemental cleanup proof
+  `43daff55480c0efbf0bb296aa3bed10324d95923`, and public lifecycle-file mode
+  correction `bf91ffe0452942fea3b3029159a2ac012a28bb74`. They follow recorded
+  user authorization/autonomous framework-repair instructions; no Master E2E
+  assets or correct business changes were introduced to force tests green.
+- Independent Master-semantics/Community-boundary source reviews passed for the
+  frozen business inputs and these exact verification deltas; releaseReadiness
+  remains pending. Configuration, migration/crypto, feature-switch, frontend,
+  Skill, dependency and SLS-mode component evidence retains its actual tested
+  commit, complete input bindings, explicit skips and reuse limits externally.
+- Final acceptance must bind the clean final documentation tree: fresh native
+  runtime, successful two-step and historical-Chief supplements, genuine proof
+  export, accumulated standard check, cleanup, independent release review and
+  quality gates. Results after this snapshot are recorded in this delivery's
+  external quality evidence and MR acceptance record with exact candidate/tree,
+  report hashes, failed-attempt history and ownership/residue evidence. This
+  source snapshot does not forecast those results or claim a release PASS.
+- The final documentation commit and resulting candidate identity are recorded
+  externally to avoid embedding the commit's own hash in its content. No further
+  source rewrite is required merely to insert final counts, its own SHA or MR
+  links. Source changes after that freeze require the applicable final-tree gates.
+
+- previousVerifiedMasterSha: `663ae626269d0ca95b0ff7d1123339422983fc5e`.
+- candidateMasterSha: `e7b4c01c2cf3e06df28d75bc0a9a0bfc909f71d2`.
+- communityBeforeSha: `33cf8117324511e7a8f87e53567c64e49d0f8817`.
+- Source successfully fetched and remotely confirmed on 2026-11-10. This round
+  remains bound to the frozen source, without following later master commits.
+- Prior accepted `d83210dd3cbf4429511d558f25d88bbad84725e0` and merged Community
+  `85fafc0c759467c179ef15fa44be0338eb0a3f8a` share tree
+  `0edb5c404437da66a6a951c2c67c3195c1e82e33`; original cycle-7 quality/review
+  records remain available with their declared limitations. Earlier PENDING
+  summaries are not current acceptance evidence.
+- Upstream delta: 645 commits, 1,344 changed paths, including 385 E2E paths
+  excluded in favor of the exact pre-sync Community E2E tree.
+- Public behavior is retained; Community adaptations cover SecretCrypto,
+  external storage/deployment, optional Aone, Qoder-only creation, dependency
+  versions, documentation filtering and customer-configurable Harness examples.
+- Published migrations are immutable. New upstream SQL is mapped to V101–V113
+  with corresponding references and source-compatible additive data behavior.
+- See release_v1.2.0_20261110.md for new capabilities, account/SSO behavior,
+  configuration/runtime/deployment, DDL/DML, risks and rollback.
+- Exact candidate SHA/tree, final test/review/cleanup and any separately
+  authorized Community verification delta are recorded externally. No accepted
+  source rewrite is made just to insert links or test counts.
+- Internal MR / external compare: NOT_CREATED; no protected branch push,
+  external PR, tag or verified-baseline advancement is implied.
+
 ### 2026-10-28: candidate sync to `663ae6262` — v1.1.0
 
 - Status: CANDIDATE; acceptance/reviews PENDING.

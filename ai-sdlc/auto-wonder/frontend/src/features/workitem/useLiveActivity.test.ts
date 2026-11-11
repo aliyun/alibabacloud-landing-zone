@@ -173,8 +173,9 @@ describe('useLiveActivity', () => {
 
     await act(async () => { capturedReconnect?.(); });
 
-    // The reconnect passes the committed cursor so the server only reprojects newer rows.
-    expect(mockGetActivity).toHaveBeenLastCalledWith(10, 2, 100);
+    // The reconnect passes the committed cursor so the server only reprojects newer rows,
+    // and it is background traffic that must not roll the session.
+    expect(mockGetActivity).toHaveBeenLastCalledWith(10, 2, 100, { background: true });
     // The response repeats e1/e2; dedup by eventId keeps the list at 2 (no duplicates).
     expect(result.current.actions.length).toBe(2);
   });
@@ -208,6 +209,8 @@ describe('useLiveActivity', () => {
     await act(async () => { reconnect?.(); });
     expect(result.current.runtimeState).toBe('RECOVERING');
     expect(result.current.actions).toHaveLength(2);
+    // 自动重连的补偿拉取是后台流量，不得顺延会话。
+    expect(mockGetActivity).toHaveBeenLastCalledWith(10, 2, 100, { background: true });
   });
 
   it('polls health while enabled even without runtime events', async () => {
@@ -218,7 +221,8 @@ describe('useLiveActivity', () => {
       await act(async () => {});
       mockGetActivity.mockResolvedValue(buildResponse({ changed: false, actions: [], runtimeState: 'UNKNOWN' }));
       await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-      expect(mockGetActivity).toHaveBeenLastCalledWith(10, 2, 100);
+      // 30s 心跳是定时轮询：显式标记后台，避免闲置页面顺延会话。
+      expect(mockGetActivity).toHaveBeenLastCalledWith(10, 2, 100, { background: true });
       expect(result.current.runtimeState).toBe('UNKNOWN');
       unmount();
       await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });

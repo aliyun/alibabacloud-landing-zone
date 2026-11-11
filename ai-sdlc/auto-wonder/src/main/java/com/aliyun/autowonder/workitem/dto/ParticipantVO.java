@@ -18,6 +18,8 @@ public class ParticipantVO {
     private boolean online;
     private String status;
     private String executorStatus;
+    private String squadName;
+    private boolean currentSquad;
 
     @JsonGetter("isAgent")
     public boolean isAgent() {

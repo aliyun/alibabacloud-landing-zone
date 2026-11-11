@@ -16,6 +16,7 @@ public class ExecutorLaunchConfigVO {
     private String memoryMode;
     private Integer maxConcurrentDispatches;
     private String runtimeVersion;
+    private Boolean runtimeVersionPinned;
     private String workspaceRoot;
     private String daemonName;
     private Boolean debug;

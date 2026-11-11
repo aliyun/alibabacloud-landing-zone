@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.user.WorkspaceCreationRequestDao">
+
+    <insert id="insertPending">
+        INSERT INTO workspace_creation_request (user_id, status, pending_marker)
+        VALUES (#{userId}, 'PENDING', 1)
+    </insert>
+
+    <select id="findPendingByUser" resultType="com.aliyun.autowonder.user.WorkspaceCreationRequestDO">
+        SELECT * FROM workspace_creation_request
+        WHERE user_id = #{userId} AND pending_marker = 1
+        LIMIT 1
+    </select>
+
+    <update id="fulfillPendingByUser">
+        UPDATE workspace_creation_request
+        SET status = 'FULFILLED', pending_marker = NULL, gmt_modified = NOW(3)
+        WHERE user_id = #{userId} AND pending_marker = 1
+    </update>
+</mapper>

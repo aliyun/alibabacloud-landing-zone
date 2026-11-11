@@ -15,6 +15,7 @@ import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.WorkitemAssignedEvent;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
@@ -27,8 +28,11 @@ import com.aliyun.autowonder.im.notification.WorkitemHumanAssignedEvent;
 import com.aliyun.autowonder.sdlc.SdlcDO;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.sdlc.SdlcStepDao;
+import com.aliyun.autowonder.squad.SquadDO;
+import com.aliyun.autowonder.squad.SquadDao;
 import com.aliyun.autowonder.squad.SquadMemberDO;
 import com.aliyun.autowonder.squad.SquadMemberDao;
+import com.aliyun.autowonder.squad.SquadNameResolver;
 import com.aliyun.autowonder.statemachine.StatusNodeDO;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
 import com.aliyun.autowonder.statemachine.StatusTemplateDO;
@@ -80,6 +84,7 @@ class WorkitemServiceTest {
     GuidanceDao guidanceDao;
     AgentSdlcResolver sdlcResolver;
     SquadMemberDao squadMemberDao;
+    SquadDao squadDao;
     ExecutorDao executorDao;
     PresenceManager presenceManager;
     ExternalWorkitemLinkDao externalWorkitemLinkDao;
@@ -103,6 +108,7 @@ class WorkitemServiceTest {
         guidanceDao = mock(GuidanceDao.class);
         sdlcResolver = mock(AgentSdlcResolver.class);
         squadMemberDao = mock(SquadMemberDao.class);
+        squadDao = mock(SquadDao.class);
         executorDao = mock(ExecutorDao.class);
         presenceManager = mock(PresenceManager.class);
         externalWorkitemLinkDao = mock(ExternalWorkitemLinkDao.class);
@@ -122,10 +128,16 @@ class WorkitemServiceTest {
                 externalWorkitemLinkDao,
                 eventPublisher);
         service.bindRestartHandler(restartHandler);
+        service.setSquadNameResolver(new SquadNameResolver(squadDao, squadMemberDao));
         // SDLC-bound fixtures restart from the SDLC entry (300031 = the fixture's first step).
         SdlcStepDO entry = new SdlcStepDO();
         entry.setId(300031L);
         when(sdlcResolver.firstStep(100L, 30003L)).thenReturn(entry);
+        for (long agentId : new long[]{40013L, 40014L, 41L}) {
+            AgentDO target = new AgentDO(); target.setId(agentId); target.setTenantId(100L);
+            when(agentDao.findById(agentId)).thenReturn(target);
+            when(sdlcResolver.resolveSdlcId(100L, agentId)).thenReturn(30003L);
+        }
     }
 
     private StatusTemplateDO template(long id) {
@@ -332,6 +344,134 @@ class WorkitemServiceTest {
     }
 
     @Test
+    void assign_agent_offline_is_rejected_before_any_write() {
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        service.setExecutionAvailabilityService(availability);
+        WorkitemDO w = new WorkitemDO();
+        w.setId(500L);
+        w.setTenantId(100L);
+        w.setWorkType("BUG");
+        w.setVersion(2);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
+        w.setSdlcId(30003L);
+        when(workitemDao.findById(500L)).thenReturn(w);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability)
+                .requireStartable(eq(100L), eq(41L), eq(30003L));
+
+        BizException failure = assertThrows(BizException.class,
+                () -> service.assign(500L, "AGENT", 41L, null, null, 100L, 7L));
+
+        assertEquals(ErrorCode.EXECUTION_AGENT_OFFLINE.getCode(), failure.getCode());
+        verify(workitemDao, never()).updateAssignee(any(), any(), any(), any(), any(), any());
+        verify(eventDao, never()).insert(any());
+    }
+
+    @Test
+    void assign_agent_with_disabled_sdlc_is_rejected_before_any_write() {
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        service.setExecutionAvailabilityService(availability);
+        WorkitemDO w = new WorkitemDO();
+        w.setId(500L);
+        w.setTenantId(100L);
+        w.setWorkType("BUG");
+        w.setVersion(2);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
+        w.setSdlcId(30004L);
+        when(workitemDao.findById(500L)).thenReturn(w);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_SDLC_DISABLED, "execution.sdlc_disabled",
+                new Object[0], "disabled")).when(availability)
+                .requireStartable(eq(100L), eq(41L), eq(30003L));
+
+        BizException failure = assertThrows(BizException.class,
+                () -> service.assign(500L, "AGENT", 41L, 30003L, null, 100L, 7L));
+
+        assertEquals(ErrorCode.EXECUTION_SDLC_DISABLED.getCode(), failure.getCode());
+        verify(workitemDao, never()).updateAssignee(any(), any(), any(), any(), any(), any());
+        verify(eventDao, never()).insert(any());
+        verify(sdlcDao, never()).findById(anyLong());
+    }
+
+    @Test
+    void explicitReassignmentRestartsAtNewFlowEvenWhenOldFlowIsDisabled() {
+        service.setExecutionAvailabilityService(new ExecutionAvailabilityService(agentDao, sdlcDao));
+        WorkitemDO old = assignableWorkitem();
+        old.setAssigneeType("HUMAN");
+        old.setAssigneeRef(7L);
+        SdlcDO disabled = new SdlcDO();
+        disabled.setTenantId(100L);
+        disabled.setStatus("DISABLED");
+        when(sdlcDao.findById(30003L)).thenReturn(disabled);
+        SdlcDO enabled = new SdlcDO();
+        enabled.setTenantId(100L);
+        enabled.setStatus("ENABLED");
+        when(sdlcDao.findById(777L)).thenReturn(enabled);
+        when(sdlcResolver.firstStep(100L, 777L)).thenReturn(step(901L, 777L, 1, "entry"));
+        WorkitemDO rebound = assignableWorkitem();
+        rebound.setAssigneeType("AGENT");
+        rebound.setAssigneeRef(41L);
+        rebound.setSdlcId(777L);
+        rebound.setCurrentStepId(901L);
+        rebound.setVersion(5);
+        when(workitemDao.findById(500L)).thenReturn(old, rebound);
+        when(workitemDao.updateAssignee(500L, 100L, "AGENT", 41L, 3, 7L)).thenReturn(1);
+        when(workitemDao.updateSdlcAndStep(500L, 100L, 777L, 901L, 4, 7L)).thenReturn(1);
+
+        WorkitemVO assigned = service.assign(500L, "AGENT", 41L, 777L, null, 100L, 7L);
+
+        assertEquals(777L, assigned.getSdlcId());
+        verify(workitemDao).updateSdlcAndStep(500L, 100L, 777L, 901L, 4, 7L);
+        verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(41L), eq(901L),
+                isNull(), isNull(), eq(7L), isA(AssignmentActor.class));
+        verify(eventPublisher, never()).publishEvent(isA(WorkitemAssignedEvent.class));
+    }
+
+    @Test
+    void assign_agent_with_unbound_workitem_validates_the_resolved_flow() {
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        service.setExecutionAvailabilityService(availability);
+        WorkitemDO w = new WorkitemDO();
+        w.setId(500L);
+        w.setTenantId(100L);
+        w.setWorkType("BUG");
+        w.setVersion(2);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
+        WorkitemDO bound = new WorkitemDO();
+        bound.setId(500L);
+        bound.setTenantId(100L);
+        bound.setWorkType("BUG");
+        bound.setVersion(3);
+        bound.setSdlcId(777L);
+        bound.setCurrentStepId(901L);
+        bound.setAssigneeType("AGENT");
+        bound.setAssigneeRef(41L);
+        when(workitemDao.findById(500L)).thenReturn(w, bound, bound);
+        AgentDO agent = new AgentDO();
+        agent.setId(41L);
+        agent.setTenantId(100L);
+        when(agentDao.findById(41L)).thenReturn(agent);
+        when(sdlcResolver.resolveSdlcId(100L, 41L)).thenReturn(777L);
+        SdlcDO sdlc = new SdlcDO();
+        sdlc.setId(777L);
+        sdlc.setTenantId(100L);
+        when(sdlcDao.findById(777L)).thenReturn(sdlc);
+        SdlcStepDO firstStep = new SdlcStepDO();
+        firstStep.setId(901L);
+        when(sdlcResolver.firstStep(100L, 777L)).thenReturn(firstStep);
+        when(workitemDao.updateAssignee(eq(500L), eq(100L), eq("AGENT"), eq(41L), anyInt(), eq(7L)))
+                .thenReturn(1);
+        when(workitemDao.updateSdlcAndStep(eq(500L), eq(100L), eq(777L), eq(901L), anyInt(), eq(7L)))
+                .thenReturn(1);
+
+        service.assign(500L, "AGENT", 41L, null, null, 100L, 7L);
+
+        verify(availability).requireStartable(100L, 41L, 777L);
+    }
+
+    @Test
     void assign_agent_without_default_sdlc_falls_back_to_worktype_default() {
         WorkitemDO w = new WorkitemDO();
         w.setId(500L);
@@ -467,9 +607,9 @@ class WorkitemServiceTest {
     void list_maps_to_vos_with_page_metadata() {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
-        when(workitemDao.count(100L, "REQ", null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null)).thenReturn(101L);
-        when(workitemDao.list(100L, "REQ", null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 20, 20)).thenReturn(List.of(w));
-        PageResult<WorkitemVO> page = service.list("REQ", null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 2, 20);
+        when(workitemDao.count(100L, "REQ", null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false)).thenReturn(101L);
+        when(workitemDao.list(100L, "REQ", null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 20, 20)).thenReturn(List.of(w));
+        PageResult<WorkitemVO> page = service.list("REQ", null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 2, 20);
         assertEquals(101L, page.getTotal());
         assertEquals(2, page.getPageNum());
         assertEquals(20, page.getPageSize());
@@ -485,13 +625,13 @@ class WorkitemServiceTest {
         w.setId(1L);
         Date from = Date.from(OffsetDateTime.parse("2026-10-01T00:00:00.000+08:00").toInstant());
         Date to = Date.from(OffsetDateTime.parse("2026-10-10T00:00:00.000+08:00").toInstant());
-        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, from, to, null, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, from, to, null, null, null, false))
                 .thenReturn(1L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, from, to, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, from, to, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
-                null, "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", null, null, 1, 20);
+                null, "2026-10-01T00:00:00.000+08:00", "2026-10-10T00:00:00.000+08:00", null, null, null, false, 1, 20);
 
         assertEquals(1L, page.getTotal());
         assertEquals(1, page.getList().size());
@@ -502,13 +642,13 @@ class WorkitemServiceTest {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
         Date from = Date.from(OffsetDateTime.parse("2026-10-01T00:00:00.000Z").toInstant());
-        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, from, null, null, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, from, null, null, null, null, false))
                 .thenReturn(1L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, from, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, from, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
-                null, " 2026-10-01T00:00:00.000Z ", "   ", null, null, 1, 20);
+                null, " 2026-10-01T00:00:00.000Z ", "   ", null, null, null, false, 1, 20);
 
         assertEquals(1L, page.getTotal());
         assertEquals(1, page.getList().size());
@@ -518,13 +658,13 @@ class WorkitemServiceTest {
     void list_ignores_unparseable_created_time_bounds() {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
-        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false))
                 .thenReturn(1L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
-                null, "not-a-date", "2026-13-45T00:00:00Z", null, null, 1, 20);
+                null, "not-a-date", "2026-13-45T00:00:00Z", null, null, null, false, 1, 20);
 
         assertEquals(1L, page.getTotal());
         assertEquals(1, page.getList().size());
@@ -535,18 +675,18 @@ class WorkitemServiceTest {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
         List<Long> creatorIds = List.of(12L, 34L);
-        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, null, false))
                 .thenReturn(1L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
-                null, null, null, creatorIds, null, 1, 20);
+                null, null, null, creatorIds, null, null, false, 1, 20);
 
         assertEquals(1L, page.getTotal());
         assertEquals(1, page.getList().size());
-        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null);
-        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, 0, 20);
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, null, false);
+        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, null, false, 0, 20);
     }
 
     @Test
@@ -554,18 +694,91 @@ class WorkitemServiceTest {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
         List<Long> creatorIds = List.of();
-        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, null, false))
                 .thenReturn(1L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
-                null, null, null, creatorIds, null, 1, 20);
+                null, null, null, creatorIds, null, null, false, 1, 20);
 
         assertEquals(1L, page.getTotal());
         assertEquals(1, page.getList().size());
-        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null);
-        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, 0, 20);
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, null, false);
+        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, creatorIds, null, null, false, 0, 20);
+    }
+
+    @Test
+    void list_forwards_squad_ids_to_count_and_list() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(1L);
+        List<Long> squadIds = List.of(11L, 12L);
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, squadIds, false))
+                .thenReturn(1L);
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, squadIds, false, 0, 20))
+                .thenReturn(List.of(w));
+
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
+                null, null, null, null, null, " 11,12,11 ", false, 1, 20);
+
+        assertEquals(1L, page.getTotal());
+        assertEquals(1, page.getList().size());
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, squadIds, false);
+        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, squadIds, false, 0, 20);
+    }
+
+    @Test
+    void list_forwards_unassigned_squad_filter() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(1L);
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, true))
+                .thenReturn(1L);
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, true, 0, 20))
+                .thenReturn(List.of(w));
+
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
+                null, null, null, null, null, null, true, 1, 20);
+
+        assertEquals(1L, page.getTotal());
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, true);
+        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, true, 0, 20);
+    }
+
+    @Test
+    void list_treats_blank_squad_ids_as_no_filter() {
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false))
+                .thenReturn(0L);
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
+                .thenReturn(List.of());
+
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
+                null, null, null, null, null, " , ", false, 1, 20);
+
+        assertEquals(0L, page.getTotal());
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false);
+    }
+
+    @Test
+    void list_rejects_invalid_squad_ids() {
+        for (String raw : List.of("0", "-3", "abc", "1.5")) {
+            BizException ex = assertThrows(BizException.class, () -> service.list(null, null, null, null,
+                    null, false, null, 100L, 7L, null, null, null, null, null, null, null, raw, false, 1, 20));
+            assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+            assertEquals("workitem.list.squad_filter.invalid", ex.getMessageKey());
+        }
+        verify(workitemDao, never()).count(any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void list_rejects_unassigned_squad_combined_with_squad_ids() {
+        BizException ex = assertThrows(BizException.class, () -> service.list(null, null, null, null,
+                null, false, null, 100L, 7L, null, null, null, null, null, null, null, "11", true, 1, 20));
+
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+        assertEquals("workitem.list.squad_filter.exclusive", ex.getMessageKey());
+        verify(workitemDao, never()).count(any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -576,9 +789,9 @@ class WorkitemServiceTest {
         WorkitemDO second = new WorkitemDO();
         second.setId(2L);
         second.setTenantId(100L);
-        when(workitemDao.count(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, null, false))
                 .thenReturn(2L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(first, second));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L, 2L))).thenReturn(List.of());
         when(dispatchDao.listByWorkitemIds(eq(100L), any())).thenReturn(List.of());
@@ -589,7 +802,7 @@ class WorkitemServiceTest {
         when(commentDao.listMyLastCommentTimes(100L, List.of(1L, 2L), 7L)).thenReturn(List.of(participation));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, "COMMENTED",
-                100L, 7L, null, null, null, null, null, null, null, 1, 20);
+                100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(lastComment, page.getList().get(0).getMyLastCommentAt(),
                 "COMMENTED scope should expose the current user's latest comment time");
@@ -599,13 +812,13 @@ class WorkitemServiceTest {
 
     @Test
     void list_commented_scope_with_empty_page_skips_my_last_comment_lookup() {
-        when(workitemDao.count(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, null, false))
                 .thenReturn(0L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of());
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, "COMMENTED",
-                100L, 7L, null, null, null, null, null, null, null, 1, 20);
+                100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertTrue(page.getList().isEmpty());
         assertEquals(0L, page.getTotal());
@@ -620,9 +833,9 @@ class WorkitemServiceTest {
         WorkitemDO second = new WorkitemDO();
         second.setId(2L);
         second.setTenantId(100L);
-        when(workitemDao.count(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, null, false))
                 .thenReturn(2L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, "COMMENTED", 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(first, second));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L, 2L))).thenReturn(List.of());
         when(dispatchDao.listByWorkitemIds(eq(100L), any())).thenReturn(List.of());
@@ -639,7 +852,7 @@ class WorkitemServiceTest {
                 .thenReturn(Arrays.asList(complete, null, missingWorkitemId, missingGmtCreate));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, "COMMENTED",
-                100L, 7L, null, null, null, null, null, null, null, 1, 20);
+                100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(lastComment, page.getList().get(0).getMyLastCommentAt(),
                 "a complete participation row still backfills its workitem");
@@ -652,15 +865,15 @@ class WorkitemServiceTest {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
         w.setTenantId(100L);
-        when(workitemDao.count(100L, null, null, null, null, null, false, "WATCHED", 7L, null, null, null, null, null, null, null, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, "WATCHED", 7L, null, null, null, null, null, null, null, null, null, false))
                 .thenReturn(1L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, "WATCHED", 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, "WATCHED", 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of());
         when(dispatchDao.listByWorkitemIds(eq(100L), any())).thenReturn(List.of());
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, "WATCHED",
-                100L, 7L, null, null, null, null, null, null, null, 1, 20);
+                100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertNull(page.getList().get(0).getMyLastCommentAt(),
                 "participation time is only populated for the COMMENTED scope");
@@ -691,16 +904,16 @@ class WorkitemServiceTest {
         aone.setProvider("AONE");
         aone.setExternalUrl("https://project.aone.example.com/req/1");
 
-        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null))
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false))
                 .thenReturn(1L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of());
         when(externalWorkitemLinkDao.listByWorkitemIds(eq(100L), any())).thenReturn(List.of(jira, aone));
         when(dispatchDao.listByWorkitemIds(eq(100L), any())).thenReturn(List.of());
 
         WorkitemVO vo = service.list(null, null, null, null, null, false, null,
-                100L, 7L, null, null, null, null, null, null, null, 1, 20).getList().get(0);
+                100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20).getList().get(0);
 
         assertEquals("EXTERNAL", vo.getSourceType());
         assertEquals("AONE", vo.getSourceProvider());
@@ -721,9 +934,9 @@ class WorkitemServiceTest {
         DispatchDO latest = new DispatchDO();
         latest.setWorkitemId(1L);
         latest.setStatus(DispatchStatus.PENDING);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
-        var page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        var page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
         assertEquals("PENDING", page.getList().get(0).getExecutionStatus());
         assertEquals("开发中", page.getList().get(0).getStatusName());
         assertEquals(30L, page.getList().get(0).getStatusNodeId());
@@ -744,12 +957,12 @@ class WorkitemServiceTest {
         DispatchDO succeeded = new DispatchDO();
         succeeded.setWorkitemId(1L);
         succeeded.setStatus(DispatchStatus.SUCCEEDED);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(developing));
         when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(succeeded));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(succeeded));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(1, page.getList().size());
         assertTrue(page.getList().get(0).getPendingDecision());
@@ -763,7 +976,7 @@ class WorkitemServiceTest {
         StatusNodeDO node = new StatusNodeDO(); node.setId(20L); node.setCategory("IN_PROGRESS");
         DispatchDO running = new DispatchDO(); running.setWorkitemId(1L); running.setStatus(DispatchStatus.RUNNING);
         when(workitemDao.findById(1L)).thenReturn(w);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.findById(20L)).thenReturn(node);
         when(nodeDao.listByIds(any())).thenReturn(List.of(node));
         when(dispatchDao.listByWorkitem(100L,1L)).thenReturn(List.of(running));
@@ -771,7 +984,7 @@ class WorkitemServiceTest {
         when(dispatchDao.listLatestByWorkitemIds(100L,List.of(1L))).thenReturn(List.of(running));
         for (boolean pending : List.of(true, false)) {
             when(workitemDao.listPendingHumanRequestWorkitemIds(100L,List.of(1L))).thenReturn(pending ? List.of(1L) : List.of());
-            var page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+            var page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
             assertEquals(pending ? "PENDING_DECISION" : "IN_PROGRESS", page.getList().getFirst().getStatusCategory());
             assertEquals(pending, page.getList().getFirst().getPendingDecision());
             assertEquals("AGENT", page.getList().getFirst().getAssigneeType());
@@ -796,11 +1009,11 @@ class WorkitemServiceTest {
         DispatchDO failed = new DispatchDO();
         failed.setWorkitemId(1L);
         failed.setStatus(DispatchStatus.FAILED);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(init));
         when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(failed));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertTrue(page.getList().get(0).getPendingDecision());
         assertEquals("PENDING_DECISION", page.getList().get(0).getStatusCategory());
@@ -821,12 +1034,12 @@ class WorkitemServiceTest {
         DispatchDO running = new DispatchDO();
         running.setWorkitemId(1L);
         running.setStatus(DispatchStatus.RUNNING);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(init));
         when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertTrue(page.getList().get(0).getPendingDecision());
         assertEquals("PENDING_DECISION", page.getList().get(0).getStatusCategory());
@@ -848,12 +1061,12 @@ class WorkitemServiceTest {
         DispatchDO latest = new DispatchDO();
         latest.setWorkitemId(1L);
         latest.setStatus(DispatchStatus.SUCCEEDED);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(released));
         when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(1, page.getList().size());
         assertEquals("已发布", page.getList().get(0).getStatusName());
@@ -878,11 +1091,11 @@ class WorkitemServiceTest {
         DispatchDO latest = new DispatchDO();
         latest.setWorkitemId(1L);
         latest.setStatus(DispatchStatus.SUCCEEDED);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(fixed));
         when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals("Fixed", page.getList().get(0).getStatusName());
         assertTrue(page.getList().get(0).getPendingDecision());
@@ -913,7 +1126,7 @@ class WorkitemServiceTest {
         DispatchDO succeededForAgent = new DispatchDO();
         succeededForAgent.setWorkitemId(2L);
         succeededForAgent.setStatus(DispatchStatus.SUCCEEDED);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(queuedHuman, agent));
         when(nodeDao.listByIds(any())).thenReturn(List.of(init));
         when(dispatchDao.listByWorkitemIds(100L, List.of(1L, 2L)))
@@ -921,7 +1134,7 @@ class WorkitemServiceTest {
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L, 2L)))
                 .thenReturn(List.of(queued, succeededForAgent));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         // 派发仅在排队中：未成功启动过 → 待处理。
         assertFalse(page.getList().get(0).getPendingDecision());
@@ -941,11 +1154,11 @@ class WorkitemServiceTest {
         canceled.setId(30L);
         canceled.setName("已取消");
         canceled.setCategory("CANCELED");
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(canceled));
         when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of());
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals("CANCELED", page.getList().get(0).getStatusCategory());
         assertFalse(page.getList().get(0).getPendingDecision());
@@ -966,87 +1179,87 @@ class WorkitemServiceTest {
         DispatchDO running = new DispatchDO();
         running.setWorkitemId(1L);
         running.setStatus(DispatchStatus.RUNNING);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(init));
         when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals("IN_PROGRESS", page.getList().get(0).getStatusCategory());
     }
 
     @Test
     void list_passes_filters_and_pending_decision_to_dao() {
-        when(workitemDao.list(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null, null, null, null, null, null, null, 0, 100))
+        when(workitemDao.list(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 100))
                 .thenReturn(java.util.List.of());
 
-        service.list("REQ", null, null, "AGENT", 42L, true, null, 100L, 7L, null, null, null, null, null, null, null, 1, 100);
+        service.list("REQ", null, null, "AGENT", 42L, true, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 100);
 
-        verify(workitemDao).count(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null, null, null, null, null, null, null);
-        verify(workitemDao).list(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null, null, null, null, null, null, null, 0, 100);
+        verify(workitemDao).count(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null, null, null, null, null, null, null, null, false);
+        verify(workitemDao).list(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 100);
     }
 
     @Test
     void list_clamps_page_size_to_two_hundred() {
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 1000);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 1000);
 
-        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null);
-        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 200);
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false);
+        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 200);
     }
 
     @Test
     void list_passes_normalized_status_category_to_dao() {
-        service.list(null, null, "in_progress", null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        service.list(null, null, "in_progress", null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
-        verify(workitemDao).count(100L, null, null, "IN_PROGRESS", null, null, false, null, 7L, null, null, null, null, null, null, null, null);
-        verify(workitemDao).list(100L, null, null, "IN_PROGRESS", null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20);
+        verify(workitemDao).count(100L, null, null, "IN_PROGRESS", null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false);
+        verify(workitemDao).list(100L, null, null, "IN_PROGRESS", null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20);
     }
 
     @Test
     void list_passes_canceled_status_category_to_dao_for_explicit_filter() {
         // 已取消默认隐藏，仅在显式筛选时传递给 DAO。
-        service.list(null, null, "canceled", null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        service.list(null, null, "canceled", null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
-        verify(workitemDao).count(100L, null, null, "CANCELED", null, null, false, null, 7L, null, null, null, null, null, null, null, null);
-        verify(workitemDao).list(100L, null, null, "CANCELED", null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20);
+        verify(workitemDao).count(100L, null, null, "CANCELED", null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false);
+        verify(workitemDao).list(100L, null, null, "CANCELED", null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20);
     }
 
     @Test
     void list_ignores_unknown_status_category() {
-        service.list(null, null, "WHATEVER", null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        service.list(null, null, "WHATEVER", null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
-        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null);
-        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20);
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false);
+        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20);
     }
 
     @Test
     void list_passes_scheduled_start_filter_to_count_and_list() {
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, "ALL", null, null, null, null, 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, "ALL", null, null, null, null, null, false, 1, 20);
 
         verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null,
-                WorkitemScheduledPhase.ALL, null, null, null, null);
+                WorkitemScheduledPhase.ALL, null, null, null, null, null, false);
         verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null,
-                WorkitemScheduledPhase.ALL, null, null, null, null, 0, 20);
+                WorkitemScheduledPhase.ALL, null, null, null, null, null, false, 0, 20);
     }
 
     @Test
     void list_normalizes_lowercase_scheduled_start_filter() {
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, " pending ", null, null, null, null, 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, " pending ", null, null, null, null, null, false, 1, 20);
 
         verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null, null,
-                WorkitemScheduledPhase.PENDING, null, null, null, null);
+                WorkitemScheduledPhase.PENDING, null, null, null, null, null, false);
         verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, null,
-                WorkitemScheduledPhase.PENDING, null, null, null, null, 0, 20);
+                WorkitemScheduledPhase.PENDING, null, null, null, null, null, false, 0, 20);
     }
 
     @Test
     void list_ignores_unknown_scheduled_start_filter() {
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, "WHATEVER", null, null, null, null, 1, 20);
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, "   ", null, null, null, null, 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, "WHATEVER", null, null, null, null, null, false, 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, "   ", null, null, null, null, null, false, 1, 20);
 
-        verify(workitemDao, times(2)).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null);
-        verify(workitemDao, times(2)).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20);
+        verify(workitemDao, times(2)).count(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false);
+        verify(workitemDao, times(2)).list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20);
     }
 
     @Test
@@ -1056,18 +1269,18 @@ class WorkitemServiceTest {
                 + "{\"op\":\"in\",\"tags\":[\"紧急\"]},"
                 + "{\"op\":\"NOT\",\"tags\":[\"历史\"]}]";
         when(workitemDao.list(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
+                any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), anyInt(), anyInt())).thenReturn(List.of());
 
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, raw, 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, raw, null, false, 1, 20);
 
         ArgumentCaptor<List<WorkitemTagCondition>> countCaptor = ArgumentCaptor.forClass(List.class);
         verify(workitemDao).count(eq(100L), isNull(), isNull(), isNull(), isNull(), isNull(), eq(false),
                 isNull(), eq(7L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
-                countCaptor.capture());
+                countCaptor.capture(), isNull(), eq(false));
         ArgumentCaptor<List<WorkitemTagCondition>> listCaptor = ArgumentCaptor.forClass(List.class);
         verify(workitemDao).list(eq(100L), isNull(), isNull(), isNull(), isNull(), isNull(), eq(false),
                 isNull(), eq(7L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
-                listCaptor.capture(), eq(0), eq(20));
+                listCaptor.capture(), isNull(), eq(false), eq(0), eq(20));
 
         for (List<WorkitemTagCondition> conditions : List.of(countCaptor.getValue(), listCaptor.getValue())) {
             assertEquals(4, conditions.size());
@@ -1085,16 +1298,16 @@ class WorkitemServiceTest {
     @Test
     void list_treats_missing_blank_or_empty_tag_conditions_as_no_filter() {
         when(workitemDao.list(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(List.of());
+                any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), anyInt(), anyInt())).thenReturn(List.of());
 
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, "", 1, 20);
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, "   ", 1, 20);
-        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, "[]", 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, "", null, false, 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, "   ", null, false, 1, 20);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, "[]", null, false, 1, 20);
 
         verify(workitemDao, times(4)).list(eq(100L), isNull(), isNull(), isNull(), isNull(), isNull(), eq(false),
                 isNull(), eq(7L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
-                eq(0), eq(20));
+                isNull(), eq(false), eq(0), eq(20));
     }
 
     @Test
@@ -1128,7 +1341,7 @@ class WorkitemServiceTest {
     private KeyedIllegalArgumentException assertTagConditionsRejected(String raw) {
         return assertThrows(KeyedIllegalArgumentException.class,
                 () -> service.list(null, null, null, null, null, false, null, 100L, 7L, null, null,
-                        null, null, null, null, raw, 1, 20));
+                        null, null, null, null, raw, null, false, 1, 20));
     }
 
     @Test
@@ -1137,14 +1350,14 @@ class WorkitemServiceTest {
         w.setId(1L);
         w.setTenantId(100L);
         w.setScheduledStartAt(new Date(System.currentTimeMillis() + 3_600_000L));
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
         DispatchDO running = new DispatchDO();
         running.setWorkitemId(1L);
         running.setStatus(DispatchStatus.RUNNING);
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(WorkitemScheduledPhase.PENDING, page.getList().get(0).getScheduledPhase());
     }
@@ -1155,14 +1368,14 @@ class WorkitemServiceTest {
         w.setId(1L);
         w.setTenantId(100L);
         w.setScheduledStartTriggeredAt(new Date(System.currentTimeMillis() - 60_000L));
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
         DispatchDO running = new DispatchDO();
         running.setWorkitemId(1L);
         running.setStatus(DispatchStatus.RUNNING);
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(WorkitemScheduledPhase.RUNNING, page.getList().get(0).getScheduledPhase());
     }
@@ -1173,14 +1386,14 @@ class WorkitemServiceTest {
         w.setId(1L);
         w.setTenantId(100L);
         w.setScheduledStartTriggeredAt(new Date(System.currentTimeMillis() - 60_000L));
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
         DispatchDO succeeded = new DispatchDO();
         succeeded.setWorkitemId(1L);
         succeeded.setStatus(DispatchStatus.SUCCEEDED);
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(succeeded));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(WorkitemScheduledPhase.READY, page.getList().get(0).getScheduledPhase());
     }
@@ -1196,14 +1409,14 @@ class WorkitemServiceTest {
         released.setCategory("DONE");
         released.setName("已发布");
         when(nodeDao.listByIds(any())).thenReturn(List.of(released));
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
         DispatchDO running = new DispatchDO();
         running.setWorkitemId(1L);
         running.setStatus(DispatchStatus.RUNNING);
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(WorkitemScheduledPhase.DONE, page.getList().get(0).getScheduledPhase());
     }
@@ -1213,14 +1426,14 @@ class WorkitemServiceTest {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
         w.setTenantId(100L);
-        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
         DispatchDO running = new DispatchDO();
         running.setWorkitemId(1L);
         running.setStatus(DispatchStatus.RUNNING);
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertNull(page.getList().get(0).getScheduledPhase());
     }
@@ -2712,6 +2925,82 @@ class WorkitemServiceTest {
                 candidates.stream().map(ParticipantVO::getName).toList());
     }
 
+    @Test
+    void mention_candidates_put_current_delivery_squad_first_and_label_squad_names() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setCreatorId(9L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(42L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(302L, 202L, 42L, DispatchStatus.RUNNING, 200_000L, 240_000L, null)));
+
+        when(squadMemberDao.listByAgent(42L)).thenReturn(List.of(squadMember(501L, 900L, 42L)));
+        when(squadMemberDao.listBySquad(900L)).thenReturn(List.of(
+                squadMember(502L, 900L, 42L),
+                squadMember(503L, 900L, 43L)));
+        // 42 同时属于更早创建的小队 850，标注必须优先当前交付小队 900。
+        when(squadMemberDao.listByAgentIds(eq(7L), any())).thenReturn(List.of(
+                squadMember(504L, 850L, 42L),
+                squadMember(501L, 900L, 42L),
+                squadMember(503L, 900L, 43L),
+                squadMember(505L, 901L, 44L)));
+        when(squadDao.listByIds(any())).thenReturn(List.of(
+                squad(850L, "旧小队"), squad(900L, "交付一队"), squad(901L, "其他小队")));
+
+        UserDO creator = new UserDO();
+        creator.setId(9L);
+        creator.setNickname("张三");
+        creator.setUsername("zhangsan");
+        when(userDao.findByIdIncludingDeleted(9L)).thenReturn(creator);
+
+        AgentDO agentCr = agent(42L, "Agent CR");
+        agentCr.setOnlineVersionId(401L);
+        AgentDO agentTesting = agent(43L, "Agent Testing");
+        agentTesting.setOnlineVersionId(403L);
+        AgentDO otherSquad = agent(44L, "其他小队员工");
+        otherSquad.setOnlineVersionId(404L);
+        AgentDO noSquad = agent(45L, "无小队员工");
+        noSquad.setOnlineVersionId(405L);
+        when(agentDao.listByTenant(7L)).thenReturn(List.of(agentCr, agentTesting, otherSquad, noSquad));
+        when(agentDao.findById(42L)).thenReturn(agent(42L, "Agent CR"));
+        when(agentDao.findById(43L)).thenReturn(agent(43L, "Agent Testing"));
+        when(agentDao.findById(44L)).thenReturn(agent(44L, "其他小队员工"));
+        when(agentDao.findById(45L)).thenReturn(agent(45L, "无小队员工"));
+
+        List<ParticipantVO> candidates = service.getMentionCandidates(100L, 7L);
+
+        assertEquals(List.of(42L, 43L, 9L, 44L, 45L),
+                candidates.stream().map(ParticipantVO::getUserId).toList());
+        assertEquals("交付一队", candidates.get(0).getSquadName());
+        assertTrue(candidates.get(0).isCurrentSquad());
+        assertEquals("交付一队", candidates.get(1).getSquadName());
+        assertTrue(candidates.get(1).isCurrentSquad());
+        assertNull(candidates.get(2).getSquadName());
+        assertFalse(candidates.get(2).isCurrentSquad());
+        assertEquals("其他小队", candidates.get(3).getSquadName());
+        assertFalse(candidates.get(3).isCurrentSquad());
+        assertNull(candidates.get(4).getSquadName());
+
+        List<ParticipantVO> limited = service.getMentionCandidates(100L, 7L, null, 2);
+        assertEquals(List.of(42L, 43L), limited.stream().map(ParticipantVO::getUserId).toList());
+
+        List<ParticipantVO> participants = service.getParticipants(100L, 7L);
+        assertEquals(3, participants.size());
+        assertEquals("交付一队", participants.get(1).getSquadName());
+        assertTrue(participants.get(1).isCurrentSquad());
+    }
+
+    private SquadDO squad(long id, String name) {
+        SquadDO squad = new SquadDO();
+        squad.setId(id);
+        squad.setTenantId(7L);
+        squad.setName(name);
+        return squad;
+    }
+
     private SdlcStepDO step(long id, long sdlcId, int order, String name) {
         SdlcStepDO step = new SdlcStepDO();
         step.setId(id);
@@ -2981,8 +3270,8 @@ class WorkitemServiceTest {
         w2.setVersion(0);
         w2.setGmtCreate(new Date());
 
-        when(workitemDao.count(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, null, null, null, null, null, null)).thenReturn(2L);
-        when(workitemDao.list(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.count(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, null, null, null, null, null, null, null, false)).thenReturn(2L);
+        when(workitemDao.list(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w1, w2));
 
         DispatchDO d1 = new DispatchDO();
@@ -3013,7 +3302,7 @@ class WorkitemServiceTest {
         when(dispatchDao.listByWorkitemIds(eq(tenantId), any())).thenReturn(List.of());
 
         PageResult<WorkitemVO> result = service.list("BUG", null, null, null, null, false, null,
-                tenantId, 10L, null, null, null, null, null, null, null, 1, 20);
+                tenantId, 10L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         assertEquals(2, result.getList().size());
 
@@ -3063,8 +3352,8 @@ class WorkitemServiceTest {
         w.setGmtCreate(new Date());
         w.setGmtModified(new Date());
 
-        when(workitemDao.count(tenantId, "REQ", null, null, null, null, false, null, 50L, null, null, null, null, null, null, null, null)).thenReturn(1L);
-        when(workitemDao.list(tenantId, "REQ", null, null, null, null, false, null, 50L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.count(tenantId, "REQ", null, null, null, null, false, null, 50L, null, null, null, null, null, null, null, null, null, false)).thenReturn(1L);
+        when(workitemDao.list(tenantId, "REQ", null, null, null, null, false, null, 50L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
         when(dispatchDao.listLatestByWorkitemIds(tenantId, List.of(10L))).thenReturn(List.of());
 
@@ -3090,7 +3379,7 @@ class WorkitemServiceTest {
         when(dispatchDao.listByWorkitemIds(eq(tenantId), any())).thenReturn(List.of());
 
         PageResult<WorkitemVO> result = service.list("REQ", null, null, null, null, false, null,
-                tenantId, 50L, null, null, null, null, null, null, null, 1, 20);
+                tenantId, 50L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         WorkitemVO vo = result.getList().get(0);
         assertEquals(10L, vo.getId());
@@ -3128,8 +3417,8 @@ class WorkitemServiceTest {
         w.setVersion(1);
         w.setGmtCreate(new Date());
 
-        when(workitemDao.count(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, null, null, null, null, null, null)).thenReturn(1L);
-        when(workitemDao.list(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, null, null, null, null, null, null, 0, 20))
+        when(workitemDao.count(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, null, null, null, null, null, null, null, false)).thenReturn(1L);
+        when(workitemDao.list(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, null, null, null, null, null, null, null, false, 0, 20))
                 .thenReturn(List.of(w));
 
         DispatchDO latestSucceeded = new DispatchDO();
@@ -3155,7 +3444,7 @@ class WorkitemServiceTest {
         when(externalWorkitemLinkDao.listByWorkitemIds(eq(tenantId), any())).thenReturn(List.of());
 
         PageResult<WorkitemVO> result = service.list("BUG", null, null, null, null, false, null,
-                tenantId, 10L, null, null, null, null, null, null, null, 1, 20);
+                tenantId, 10L, null, null, null, null, null, null, null, null, false, 1, 20);
 
         WorkitemVO vo = result.getList().get(0);
         assertFalse(vo.getDeletable(), "Workitem with an older RUNNING dispatch must not be deletable");
@@ -3219,6 +3508,26 @@ class WorkitemServiceTest {
         verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(40013L), eq(300031L), isNull(),
                 eq(past), eq(7L), isA(AssignmentActor.class));
         assertNull(vo.getScheduledStartAt());
+    }
+
+    @Test
+    void explicitReassignmentWithoutAFlowUsesTheAgentsCurrentDefault() {
+        WorkitemDO old = assignableWorkitem(); old.setAssigneeType("AGENT"); old.setAssigneeRef(40013L);
+        WorkitemDO next = assignableWorkitem(); next.setAssigneeType("AGENT"); next.setAssigneeRef(40013L);
+        next.setSdlcId(900L); next.setCurrentStepId(901L); next.setVersion(4);
+        when(workitemDao.findById(500L)).thenReturn(old, next);
+        when(sdlcResolver.resolveSdlcId(100L, 40013L)).thenReturn(900L);
+        SdlcDO flow = new SdlcDO(); flow.setId(900L); flow.setTenantId(100L);
+        when(sdlcDao.findById(900L)).thenReturn(flow);
+        SdlcStepDO entry = new SdlcStepDO(); entry.setId(901L); entry.setTenantId(100L);
+        when(sdlcResolver.firstStep(100L, 900L)).thenReturn(entry);
+        when(workitemDao.updateSdlcAndStep(500L, 100L, 900L, 901L, 3, 7L)).thenReturn(1);
+
+        service.assign(500L, "AGENT", 40013L, null, null, null, 100L, 7L);
+
+        verify(workitemDao).updateSdlcAndStep(500L, 100L, 900L, 901L, 3, 7L);
+        verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(40013L), eq(901L), isNull(),
+                isNull(), eq(7L), isA(AssignmentActor.class));
     }
 
     @Test
@@ -3956,8 +4265,8 @@ class WorkitemServiceTest {
     @Test
     void listDeleteReasonsUseSourceAndAnyActiveDispatchInBothLocales() {
         WorkitemDO w = new WorkitemDO(); w.setId(1L); w.setTenantId(100L); w.setTitle("raw <b>title</b>");
-        when(workitemDao.count(100L,"REQ",null,null,null,null,false,null,7L,null,null,null,null, null, null, null, null)).thenReturn(1L);
-        when(workitemDao.list(100L,"REQ",null,null,null,null,false,null,7L,null,null,null,null, null, null, null, null, 0,20)).thenReturn(List.of(w));
+        when(workitemDao.count(100L,"REQ",null,null,null,null,false,null,7L,null,null,null,null, null, null, null, null, null, false)).thenReturn(1L);
+        when(workitemDao.list(100L,"REQ",null,null,null,null,false,null,7L,null,null,null,null, null, null, null, null, null, false, 0,20)).thenReturn(List.of(w));
         DispatchDO latest = new DispatchDO(); latest.setWorkitemId(1L); latest.setStatus(DispatchStatus.SUCCEEDED);
         DispatchDO older = new DispatchDO(); older.setWorkitemId(1L); older.setStatus(DispatchStatus.RUNNING);
         when(dispatchDao.listLatestByWorkitemIds(100L,List.of(1L))).thenReturn(List.of(latest));
@@ -3967,12 +4276,12 @@ class WorkitemServiceTest {
             for (var locale : List.of(java.util.Locale.US,java.util.Locale.SIMPLIFIED_CHINESE)) {
                 org.springframework.context.i18n.LocaleContextHolder.setLocale(locale);
                 when(externalWorkitemLinkDao.listByWorkitemIds(100L,List.of(1L))).thenReturn(List.of());
-                var nativeRow = service.list("REQ",null,null,null,null,false,null,100L,7L,null,null,null, null, null, null, null, 1,20).getList().get(0);
+                var nativeRow = service.list("REQ",null,null,null,null,false,null,100L,7L,null,null,null, null, null, null, null, null, false, 1,20).getList().get(0);
                 assertFalse(nativeRow.getDeletable()); assertEquals("SUCCEEDED",nativeRow.getExecutionStatus());
                 assertEquals(com.aliyun.autowonder.common.i18n.SystemMessages.render(ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessageKey(),new Object[0],ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessage()),nativeRow.getDeletableReason());
                 var link = new ExternalWorkitemLinkDO(); link.setWorkitemId(1L);
                 when(externalWorkitemLinkDao.listByWorkitemIds(100L,List.of(1L))).thenReturn(List.of(link));
-                var externalRow = service.list("REQ",null,null,null,null,false,null,100L,7L,null,null,null, null, null, null, null, 1,20).getList().get(0);
+                var externalRow = service.list("REQ",null,null,null,null,false,null,100L,7L,null,null,null, null, null, null, null, null, false, 1,20).getList().get(0);
                 assertEquals("EXTERNAL", externalRow.getSourceType()); assertFalse(externalRow.getDeletable());
                 assertEquals(com.aliyun.autowonder.common.i18n.SystemMessages.render(ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessageKey(),new Object[0],ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessage()),externalRow.getDeletableReason());
             }

@@ -53,16 +53,49 @@ class AgentVersionDaoMappingTest {
                 "updateConfig must not clear identity_json when the caller does not change the evolution mode");
     }
 
+    @Test
+    void insertWritesTheSubmitNoteColumn() throws Exception {
+        String body = body("insert");
+
+        assertTrue(body.contains("submit_note"), "the insert must list submit_note");
+        assertTrue(body.contains("#{submitNote}"), "the insert must bind #{submitNote}");
+    }
+
+    @Test
+    void updateSubmitNoteKeepsTenantIsolationAndOptimisticLock() throws Exception {
+        String body = updateBody("updateSubmitNote");
+
+        assertTrue(body.contains("submit_note = #{submitNote}"), "the note must be written");
+        assertTrue(body.contains("tenant_id = #{tenantId}"), "updateSubmitNote must stay tenant-scoped");
+        assertTrue(body.contains("version = #{version}"), "updateSubmitNote must keep the optimistic-lock predicate");
+    }
+
+    @Test
+    void updateStatusDoesNotTouchTheSubmitNote() throws Exception {
+        String body = updateBody("updateStatus");
+
+        assertTrue(!body.contains("submit_note"),
+                "approve/reject must not clear the note the submitter wrote");
+    }
+
     private String updateBody(String id) throws Exception {
+        return body("update", id);
+    }
+
+    private String body(String tag) throws Exception {
+        return body(tag, null);
+    }
+
+    private String body(String tag, String id) throws Exception {
         try (InputStream in = getClass().getClassLoader().getResourceAsStream("mapping/AgentVersionDao.xml")) {
             assertNotNull(in);
             String xml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            String startTag = "<update id=\"" + id + "\"";
+            String startTag = id == null ? "<" + tag + " " : "<" + tag + " id=\"" + id + "\"";
             int start = xml.indexOf(startTag);
-            assertTrue(start >= 0, "Missing update " + id);
+            assertTrue(start >= 0, "Missing " + tag + (id == null ? "" : " " + id));
             int bodyStart = xml.indexOf('>', start) + 1;
-            int bodyEnd = xml.indexOf("</update>", bodyStart);
-            assertTrue(bodyStart > 0 && bodyEnd > bodyStart, "Malformed update " + id);
+            int bodyEnd = xml.indexOf("</" + tag + ">", bodyStart);
+            assertTrue(bodyStart > 0 && bodyEnd > bodyStart, "Malformed " + tag + (id == null ? "" : " " + id));
             return xml.substring(bodyStart, bodyEnd);
         }
     }

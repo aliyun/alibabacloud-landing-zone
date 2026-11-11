@@ -35,6 +35,18 @@ export function isFieldAnswered(field: ElicitationField, values: AnswerValues, o
 }
 
 /**
+ * 尚未作答的题目。提交前用它确认用户是否真的要按现有答案提交，历史卡片也用它
+ * 标注「N 题未作答」。json 控件把内容展开成任意键，字段名本身不出现，不能算未答。
+ */
+export function unansweredFields(
+  fields: ElicitationField[],
+  values: AnswerValues,
+  other: OtherText,
+): ElicitationField[] {
+  return fields.filter((field) => field.control !== 'json' && !isFieldAnswered(field, values, other));
+}
+
+/**
  * 把作答编码回 schema 已声明的原字段：单选替换、多选追加自定义值、文本逐字。
  * 绝不产生 q0_note 等未声明顶层字段——实测 Qoder 会过滤掉。
  */

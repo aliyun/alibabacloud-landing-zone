@@ -51,6 +51,10 @@ public class AiSessionService {
         if (adapter == null) {
             throw new BizException(ErrorCode.AI_SCENE_NOT_SUPPORTED);
         }
+        if (AiConstants.Scene.PRD_DESIGN.equals(req.getScene())) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "prd.executor.required", new Object[]{},
+                    "PRD generation requires a digital employee client executor");
+        }
         aiUsageService.checkQuota(tenantId);
         markRepoScanStartedIfNeeded(req, tenantId, userId);
 

@@ -124,7 +124,7 @@ describe('AgentListPage', () => {
 
     await userEvent.hover(screen.getByRole('button', { name: '配置说明' }));
     expect(await screen.findByText('点击任一数字员工卡片进入详情与配置。')).toBeInTheDocument();
-    expect(screen.getByText('可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC 模板及技能/能力配置。')).toBeInTheDocument();
+    expect(screen.getByText('可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC流程及技能/能力配置。')).toBeInTheDocument();
 
     const detailLink = screen.getByRole('link', { name: '查看 Alpha 的详情与配置' });
     expect(detailLink).toHaveAttribute('href', '/agents/1');

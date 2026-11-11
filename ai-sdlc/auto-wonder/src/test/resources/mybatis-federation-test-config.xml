@@ -20,5 +20,6 @@
         <mapper resource="mapping/FederationIdpDao.xml"/>
         <mapper resource="mapping/FederationConnectionDao.xml"/>
         <mapper resource="mapping/FederatedIdentityDao.xml"/>
+        <mapper resource="mapping/PlatformAuthConfigDao.xml"/>
     </mappers>
 </configuration>

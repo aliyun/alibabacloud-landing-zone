@@ -17,6 +17,10 @@ import { refreshCurrentMembership } from '@/shared/auth/refreshCurrentMembership
 vi.mock('@/shared/ui/NotificationBell', () => ({
   NotificationBell: () => <div data-testid="notification-bell">bell</div>,
 }));
+// 提醒宿主自带实时订阅与计时，布局用例不关心它；它有自己的组件测试。
+vi.mock('@/features/notification/NotificationReminderHost', () => ({
+  NotificationReminderHost: () => null,
+}));
 vi.mock('@/shared/auth/refreshCurrentMembership', () => ({
   refreshCurrentMembership: vi.fn(),
 }));
@@ -57,6 +61,7 @@ describe('AppLayout', () => {
     expect(screen.getByRole('heading', { name: '帮助正文' })).toBeInTheDocument();
     expect(await screen.findByRole('link', { name: /返回工单列表/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '帮助中心' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '打开 Chief' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /登\s*录/ })).toBeInTheDocument();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /菜单/ })).not.toBeInTheDocument();
@@ -416,5 +421,23 @@ describe('AppLayout', () => {
     expect(screen.queryByTitle(longEmail)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '用户菜单' })).toHaveStyle({ width: '36px', height: '36px', borderRadius: '50%' });
     expect(screen.queryByTitle('状态模版')).not.toBeInTheDocument();
+  });
+
+  it('offers the Chief entry left of the help center only when signed in with a workspace', async () => {
+    useAuthStore.getState().setUser({ id: 1, username: 'alice', nickname: '爱丽丝', email: 'alice@example.com' });
+    useAuthStore.getState().setCurrentWorkspace({ id: 7, name: '星云工坊', description: '' }, 'READ_ONLY');
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/workitems']}>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route path="/workitems" element={<div>工单页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const entry = await screen.findByRole('button', { name: '打开 Chief' });
+    const help = screen.getByRole('link', { name: '帮助中心' });
+    expect(entry.compareDocumentPosition(help) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

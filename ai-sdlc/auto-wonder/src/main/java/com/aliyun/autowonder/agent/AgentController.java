@@ -16,6 +16,7 @@ import com.aliyun.autowonder.agent.dto.RepoPermRequest;
 import com.aliyun.autowonder.agent.dto.ReviewRequest;
 import com.aliyun.autowonder.agent.dto.RollbackRequest;
 import com.aliyun.autowonder.agent.dto.SkillRequest;
+import com.aliyun.autowonder.agent.dto.SubmitReviewRequest;
 import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
 import com.aliyun.autowonder.agent.dto.UpdateAgentRequest;
 import com.aliyun.autowonder.squad.SquadService;
@@ -94,8 +95,10 @@ public class AgentController {
 
     @PostMapping("/{id}/submit")
     @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "提交智能体审核", actionKey = "access.action.submit_an_agent_for_review")
-    public Result<AgentVO> submit(@PathVariable("id") Long id) {
-        return Result.ok(agentService.submit(id, currentWorkspaceId(), currentUserId()));
+    public Result<AgentVO> submit(@PathVariable("id") Long id,
+                                  @RequestBody(required = false) SubmitReviewRequest req) {
+        return Result.ok(agentService.submit(id, currentWorkspaceId(), currentUserId(),
+                req == null ? null : req.getNote()));
     }
 
     @PostMapping("/{id}/approve")

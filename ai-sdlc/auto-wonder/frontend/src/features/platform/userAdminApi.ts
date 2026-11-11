@@ -1,9 +1,12 @@
 import { apiClient } from '@/shared/api/client';
 
-export type UserAdminStatus = 'NORMAL' | 'DELETED' | 'DEACTIVATED';
+export type UserAdminStatus = 'NORMAL' | 'PENDING_REVIEW' | 'DELETED' | 'DEACTIVATED';
 export type UserAdminStatusFilter = UserAdminStatus | 'ALL';
 export type UserAdminTypeFilter = 'ALL' | 'USER' | 'ADMIN';
+export type UserAdminPermissionFilter = 'ALL' | 'ALLOWED' | 'BLOCKED';
 export type WorkspaceAccessLevel = 'READ_ONLY' | 'READ_WRITE' | 'ADMIN';
+export type RegistrationReviewDecision = 'APPROVE' | 'REJECT';
+export const REJECT_DECISION: RegistrationReviewDecision = 'REJECT';
 
 export interface UserAdminUser {
   id: number;
@@ -20,6 +23,10 @@ export interface UserAdminUser {
   deletedByName: string | null;
   editable: boolean | null;
   restorable: boolean | null;
+  canCreateWorkspace?: boolean | null;
+  workspaceCreationEditable?: boolean | null;
+  workspaceCreationGlobalDefaultAllowed?: boolean | null;
+  workspaceCreationAdminLocked?: boolean | null;
 }
 
 export interface UserAdminList {
@@ -50,6 +57,7 @@ export interface UserAdminListParams {
   keyword: string;
   status: UserAdminStatusFilter;
   type: UserAdminTypeFilter;
+  permission: UserAdminPermissionFilter;
   page: number;
   size: number;
 }
@@ -69,7 +77,7 @@ export const USER_ADMIN_QUERY_KEY_ROOT = ['platform-users'] as const;
 export const USER_ADMIN_LIST_QUERY_KEY = ['platform-users', 'list'] as const;
 
 export function userAdminListQueryKey(params: UserAdminListParams) {
-  return [...USER_ADMIN_LIST_QUERY_KEY, params.keyword, params.status, params.type, params.page, params.size] as const;
+  return [...USER_ADMIN_LIST_QUERY_KEY, params.keyword, params.status, params.type, params.permission, params.page, params.size] as const;
 }
 
 export function userAdminDetailQueryKey(userId: number) {
@@ -93,10 +101,32 @@ export async function getUserAdminList(params: UserAdminListParams): Promise<Use
       ...(keyword ? { keyword } : {}),
       ...(params.status !== 'ALL' ? { status: params.status } : {}),
       ...(params.type !== 'ALL' ? { type: params.type } : {}),
+      ...(params.permission !== 'ALL' ? { canCreateWorkspace: params.permission === 'ALLOWED' } : {}),
       page: params.page,
       size: params.size,
     },
   });
+  return resp.data;
+}
+
+/** 注册审核：通过转正常状态，拒绝复用逻辑删除。 */
+export async function reviewUserRegistration(
+  userId: number,
+  decision: RegistrationReviewDecision,
+): Promise<UserAdminUser> {
+  const resp = await apiClient.post<UserAdminUser>(`${USER_ADMIN_PATH}/${userId}/registration-review`, { decision });
+  return resp.data;
+}
+
+/** 平台级个人空间创建授权；全局开启时服务端拒绝。 */
+export async function updateUserWorkspaceCreationPermission(
+  userId: number,
+  allowed: boolean,
+): Promise<UserAdminUser> {
+  const resp = await apiClient.put<UserAdminUser>(
+    `${USER_ADMIN_PATH}/${userId}/workspace-creation-permission`,
+    { allowed },
+  );
   return resp.data;
 }
 

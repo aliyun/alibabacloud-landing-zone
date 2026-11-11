@@ -73,6 +73,7 @@ class DeliveryRestartContextTest {
                 .thenReturn(List.of(Map.of("1", 1)));
         when(restarts.waitingRestarts(100L, 500L)).thenReturn(List.of(
                 new DeliveryRestartStore.WaitingRestart(100L, 500L, 1, 300L, 400L, 7L)));
+        when(restarts.mayStart(100L, 500L, "restart:1:500")).thenReturn(true);
         DispatchDO next = new DispatchDO();
         next.setId(102L);
         when(dispatchService.enqueueRestartAssignment(100L, 500L, 300L, 400L, "restart:1:500", 7L))

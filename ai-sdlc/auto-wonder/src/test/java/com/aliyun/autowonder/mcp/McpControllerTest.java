@@ -95,6 +95,26 @@ class McpControllerTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncNotStarted());
     }
 
+    /** 依赖故障导致鉴权不可用时，SSE 握手不能继续用 401 诱导客户端重新登录。 */
+    @Test
+    void streamableHttpGetDependencyFailureReturnsServerErrorWithoutAuthChallenge() throws Exception {
+        McpAccessTokenService tokens = mock(McpAccessTokenService.class);
+        when(tokens.authenticate(null, "awconversation_token"))
+                .thenThrow(dependencyFailure());
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new McpController(tokens, mock(McpToolService.class), mock(McpSseService.class))).build();
+        mvc.perform(get("/api/mcp").queryParam("token", "awconversation_token")
+                        .header("Accept-Language", "en-US").accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isInternalServerError())
+                .andExpect(header().doesNotExist("WWW-Authenticate"))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("10000")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "Clarification conversation credential check is temporarily unavailable. Try again later")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString(
+                        "injected transient database failure"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncNotStarted());
+    }
+
     @Test
     void streamableHttpGetRejectsForeignOrigin() throws Exception {
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new McpController(
@@ -170,6 +190,34 @@ class McpControllerTest {
         assertTrue(json.has("error"));
         assertEquals("流程非草稿状态,无法编辑结构", json.path("error").path("message").asText());
         assertTrue(!json.has("result"));
+    }
+
+    /**
+     * 凭据校验依赖故障按 JSON-RPC 内部错误返回，文案安全且明确不是登录失效；鉴权失败不执行任何业务工具。
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"zh-CN", "en-US"})
+    void credentialDependencyFailureIsAnInternalRpcErrorWithoutToolSideEffects(String language) {
+        McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
+        McpToolService toolService = mock(McpToolService.class);
+        when(tokenService.authenticate(null, "awconversation_token"))
+                .thenThrow(dependencyFailure());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try {
+            McpRpcResponse response = new McpController(tokenService, toolService, mock(McpSseService.class))
+                    .rpc(null, "awconversation_token", Map.of("id", 7, "method", "tools/call",
+                            "params", Map.of("name", "autowonder.create_workitem", "arguments", Map.of())));
+
+            assertEquals(-32603, response.getError().getCode());
+            assertEquals(language.equals("en-US")
+                            ? "Clarification conversation credential check is temporarily unavailable. Try again later"
+                            : "澄清会话凭据校验暂时不可用，请稍后重试",
+                    response.getError().getMessage());
+            assertEquals(7, response.getId());
+            org.mockito.Mockito.verifyNoInteractions(toolService);
+        } finally {
+            org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();
+        }
     }
 
     @Test
@@ -334,6 +382,14 @@ class McpControllerTest {
         Map<String, Object> result = (Map<String, Object>) rpc.getResult();
         assertEquals(List.of(visible), result.get("tools"));
         verify(toolService, times(2)).listTools(principal);
+    }
+
+    /** 与 ConversationMcpTokenService 对依赖故障的产出保持一致，避免测试自行发明分类。 */
+    private static BizException dependencyFailure() {
+        return BizException.keyed(ErrorCode.SYSTEM_ERROR,
+                ConversationMcpTokenService.CREDENTIAL_CHECK_UNAVAILABLE_KEY, null,
+                "conversation MCP credential check failed",
+                new org.springframework.dao.TransientDataAccessResourceException("injected transient database failure"));
     }
 
     private McpAccessTokenService.Principal principal(

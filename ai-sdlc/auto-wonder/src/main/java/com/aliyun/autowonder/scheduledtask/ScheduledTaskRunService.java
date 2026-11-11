@@ -28,6 +28,12 @@ public class ScheduledTaskRunService {
         this.notificationService = notificationService; this.metrics = metrics;
     }
 
+    /** Effective SDLC recorded on the immutable Run ledger, or {@code null} for a no-flow Run. */
+    public Long sdlcId(long workspaceId, long runId) {
+        ScheduledTaskRunDO run = runDao.findById(workspaceId, runId);
+        return run == null ? null : run.getSdlcId();
+    }
+
     public void completeFromDispatch(DispatchDO dispatch, boolean success, String summary, String error) {
         if (dispatch == null || dispatch.executionSourceType() != ExecutionSourceType.SCHEDULED_TASK_RUN
                 || dispatch.getTenantId() == null || dispatch.getWorkitemId() == null) return;

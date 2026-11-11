@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.frontendproject.FrontendProjectProfileDao">
+
+    <!-- INSERT IGNORE keeps re-probing idempotent: the same repo+commit+appRoot+detector
+         version is by definition the same snapshot, so a repeat run must not duplicate it. -->
+    <insert id="insertIgnore" parameterType="com.aliyun.autowonder.frontendproject.FrontendProjectProfileDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO frontend_project_profile
+            (workspace_id, repo_id, probe_id, branch, commit_sha, app_root, app_root_hash,
+             package_name, detector_version, profile_json, evidence_json, looks_like_library,
+             version, creator_id)
+        VALUES
+            (#{workspaceId}, #{repoId}, #{probeId}, #{branch}, #{commitSha}, #{appRoot}, #{appRootHash},
+             #{packageName}, #{detectorVersion}, #{profileJson}, #{evidenceJson}, #{looksLikeLibrary},
+             0, #{creatorId})
+    </insert>
+
+    <select id="findById" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProfileDO">
+        SELECT * FROM frontend_project_profile
+        WHERE id = #{id} AND workspace_id = #{workspaceId}
+    </select>
+
+    <select id="findByCacheKey" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProfileDO">
+        SELECT * FROM frontend_project_profile
+        WHERE workspace_id = #{workspaceId}
+          AND repo_id = #{repoId}
+          AND commit_sha = #{commitSha}
+          AND app_root_hash = #{appRootHash}
+          AND detector_version = #{detectorVersion}
+        LIMIT 1
+    </select>
+
+    <select id="listByRepo" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProfileDO">
+        SELECT * FROM frontend_project_profile
+        WHERE workspace_id = #{workspaceId} AND repo_id = #{repoId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listByProbe" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProfileDO">
+        SELECT * FROM frontend_project_profile
+        WHERE workspace_id = #{workspaceId} AND probe_id = #{probeId}
+        ORDER BY app_root ASC
+    </select>
+
+    <select id="listByCommit" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProfileDO">
+        SELECT * FROM frontend_project_profile
+        WHERE workspace_id = #{workspaceId}
+          AND repo_id = #{repoId}
+          AND commit_sha = #{commitSha}
+          AND detector_version = #{detectorVersion}
+        ORDER BY app_root ASC
+    </select>
+
+    <delete id="deleteByRepo">
+        DELETE FROM frontend_project_profile
+        WHERE workspace_id = #{workspaceId} AND repo_id = #{repoId}
+    </delete>
+
+</mapper>

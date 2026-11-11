@@ -2,22 +2,27 @@ import { i18n } from '@/shared/i18n';
 import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
-import { Alert, Button, Card, Form, Input, Typography, message, Spin, Tabs } from 'antd';
+import { Alert, Button, Card, Form, Input, Modal, Typography, message, Spin, Tabs } from 'antd';
 import {
   BgColorsOutlined,
   DeleteOutlined,
   EditOutlined,
+  LoadingOutlined,
   PlusOutlined,
   RestOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/shared/api/client';
-import { PageHeader } from '@/shared/ui/PageHeader';
+import { WorkspacePageHeader } from '@/app/WorkspacePageHeader';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useAuthStore } from '@/shared/auth/store';
 import type { WorkspaceInfo } from '@/shared/types/common';
-import { ApiError } from '@/shared/types/common';
+import { ApiError, ErrorCodes } from '@/shared/types/common';
+import { isAuthEntryPath, sanitizeReturnPath } from '@/shared/auth/returnPath';
+import type { AdministratorContact } from '@/shared/types/administrator';
+import { readAdministratorContacts } from '@/shared/types/administrator';
+import { AdministratorContactList } from '@/shared/ui/AdministratorContactList';
 import { myWorkspacesQueryKey } from './api';
 import { AllWorkspacesTab } from './AllWorkspacesTab';
 import { useSwitchWorkspace } from './useSwitchWorkspace';
@@ -33,11 +38,11 @@ const { TextArea } = Input;
 const ACCENT_COLOR = 'var(--aw-accent-text)';
 const BORDER_COLOR = 'var(--aw-border)';
 const WORKSPACE_CARD_SHADOW = '0 0 0 1px var(--aw-accent-text)';
-/** Deep links may only return to the channel integration page this feature owns. */
-const ALLOWED_RETURN_TO = '/integrations?tab=channels';
 
+/** 只恢复站内安全路径；外部地址、协议相对地址与认证入口一律丢弃并回退默认首页。 */
 function safeReturnTo(value: string | null): string | null {
-  return value === ALLOWED_RETURN_TO ? value : null;
+  const safe = sanitizeReturnPath(value);
+  return safe && !isAuthEntryPath(safe) ? safe : null;
 }
 
 export function WorkspaceSelectPage() {
@@ -59,6 +64,22 @@ export function WorkspaceSelectPage() {
   const user = useAuthStore((s) => s.user);
   const [form] = Form.useForm();
   useLocalizedValidation(form, showCreateForm);
+  const [deniedContacts, setDeniedContacts] = useState<AdministratorContact[] | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  // 能力查询按当前账号隔离；点击创建卡时重新校验，不使用登录时缓存做最终判断。
+  const permissionQuery = useQuery({
+    queryKey: ['workspace-creation-permission', user?.id ?? null],
+    queryFn: async () => {
+      const resp = await apiClient.get<{
+        canCreate: boolean;
+        pending: boolean;
+        administratorContacts: AdministratorContact[] | null;
+      }>('/api/workspaces/creation-requests/me');
+      return resp.data;
+    },
+    enabled: user != null,
+    retry: false,
+  });
   const { data: workspaces, isLoading, refetch } = useQuery({
     queryKey: myWorkspacesQueryKey(user?.id ?? null),
     queryFn: async () => {
@@ -111,13 +132,95 @@ export function WorkspaceSelectPage() {
       await refetch();
       await handleSwitch(resp.data);
     } catch (e) {
-      if (e instanceof ApiError) {
+      // 页面打开后撤权或直接调用接口：服务端拒绝并返回管理员联系方式，展示同款受限弹窗。
+      if (e instanceof ApiError && e.code === ErrorCodes.WORKSPACE_CREATION_PERMISSION_DENIED) {
+        setShowCreateForm(false);
+        setDeniedContacts(readAdministratorContacts(e.data));
+        await permissionQuery.refetch();
+      } else if (e instanceof ApiError) {
         message.error(e.message);
+      } else {
+        message.error(t('workspace.createFailed'));
       }
     } finally {
       setCreating(false);
     }
   };
+
+  const handleCreateCard = async () => {
+    const { data } = await permissionQuery.refetch();
+    if (data?.canCreate) {
+      setShowCreateForm(true);
+      return;
+    }
+    // 联系人只在这次显式拒绝探测中下发，普通能力查询不暴露管理员联系方式。
+    try {
+      const resp = await apiClient.get<{ administratorContacts: AdministratorContact[] | null }>(
+        '/api/workspaces/creation-requests/me',
+        { params: { includeAdministratorContacts: true } },
+      );
+      setDeniedContacts(resp.data.administratorContacts ?? []);
+    } catch {
+      setDeniedContacts([]);
+    }
+  };
+
+  const handleRequestPermission = async () => {
+    if (requesting || permissionQuery.data?.pending) return;
+    setRequesting(true);
+    try {
+      await apiClient.post('/api/workspaces/creation-requests');
+      message.success(t('workspace.requestSent'));
+      await permissionQuery.refetch();
+    } catch (e) {
+      message.error(e instanceof ApiError ? e.message : t('workspace.requestFailed'));
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  const requestPermissionLabel = permissionQuery.data?.pending
+    ? t('workspace.requested')
+    : t('workspace.requestPermission');
+  const requestPermissionProps = {
+    onClick: handleRequestPermission,
+    loading: requesting,
+    disabled: permissionQuery.data?.pending,
+  };
+  const createWorkspaceCard = !showCreateForm && (
+    <div style={createCardStyle}>
+      <button
+        type="button"
+        data-testid="workspace-create-card"
+        style={{
+          ...cardEnterStyle,
+          gridArea: '1 / 1',
+          display: 'grid',
+          placeContent: 'center',
+          justifyItems: 'center',
+          textAlign: 'center',
+        }}
+        onClick={handleCreateCard}
+      >
+        <span style={plusMarkStyle}><PlusOutlined /></span>
+        <span style={{ ...orgNameStyle, marginBottom: 0 }}>{t('workspace.create')}</span>
+      </button>
+      {permissionQuery.data?.canCreate === false && (
+        <button
+          type="button"
+          className="aw-apply-access-button"
+          style={{ gridArea: '1 / 1', placeSelf: 'end', marginTop: 0 }}
+          data-testid="workspace-request-permission"
+          onClick={handleRequestPermission}
+          disabled={requesting || permissionQuery.data.pending}
+          aria-busy={requesting}
+        >
+          {requesting && <LoadingOutlined aria-hidden="true" style={{ marginInlineEnd: 6 }} />}
+          {requestPermissionLabel}
+        </button>
+      )}
+    </div>
+  );
 
   // F6: the access token stays bound to a workspace that AuthFilter now rejects on every
   // workspace-scoped call, so the binding is dropped at the moment of deletion rather than
@@ -142,7 +245,7 @@ export function WorkspaceSelectPage() {
 
   return (
     <div style={pageShellStyle}>
-      <PageHeader brandTo="/workspaces" />
+      <WorkspacePageHeader />
       <div style={{ padding: 24 }}>
         <div style={headerStyle}>
           <Title level={2} style={{ margin: 0, color: 'var(--aw-text)', letterSpacing: 0 }}>{t('workspace.select')}</Title>
@@ -218,7 +321,7 @@ export function WorkspaceSelectPage() {
                               data-testid={`workspace-card-${workspace.id}`}
                               style={cardEnterStyle}
                               aria-label={t('workspace.enterName', { name: workspace.name })}
-                              onClick={() => handleSwitch(workspace)}
+                              onClick={() => handleSwitch(workspace, returnTo ?? '/')}
                             >
                               <span style={orgMarkStyle}>{getOrgInitial(workspace.name)}</span>
                               <EllipsisText tooltip={workspace.name} style={orgNameStyle}>{workspace.name}</EllipsisText>
@@ -257,31 +360,14 @@ export function WorkspaceSelectPage() {
                         );
                       })}
 
-                      {!showCreateForm && (
-                        <button
-                          type="button"
-                          data-testid="workspace-create-card"
-                          style={createCardStyle}
-                          onClick={() => setShowCreateForm(true)}
-                        >
-                          <span style={plusMarkStyle}><PlusOutlined /></span>
-                          <span style={orgNameStyle}>{t('workspace.create')}</span>
-                          <span style={{ ...orgDescStyle, textAlign: 'center' }}>{t('workspace.initialize')}</span>
-                        </button>
-                      )}
+                      {createWorkspaceCard}
                     </div>
                   ) : (
                     <div data-testid="workspace-select-grid" style={orgGridStyle}>
                       <div style={emptyStateStyle}>
                         <Text type="secondary">{t('workspace.emptyMine')}</Text>
                       </div>
-                      {!showCreateForm && (
-                        <button type="button" data-testid="workspace-create-card" style={createCardStyle} onClick={() => setShowCreateForm(true)}>
-                          <span style={plusMarkStyle}><PlusOutlined /></span>
-                          <span style={orgNameStyle}>{t('workspace.create')}</span>
-                          <span style={{ ...orgDescStyle, textAlign: 'center' }}>{t('workspace.initialize')}</span>
-                        </button>
-                      )}
+                      {createWorkspaceCard}
                     </div>
                   )}
 
@@ -319,7 +405,7 @@ export function WorkspaceSelectPage() {
             {
               key: 'all',
               label: t('workspace.all'),
-              children: <AllWorkspacesTab />,
+              children: <AllWorkspacesTab switchDestination={returnTo ?? '/'} />,
             },
             ...(canSeeDashboard ? [{
               key: 'dashboard',
@@ -336,6 +422,24 @@ export function WorkspaceSelectPage() {
           onDeleted={handleDeleted}
           onClose={() => setDeleteTarget(null)}
         />
+
+        <Modal
+          open={deniedContacts !== null}
+          title={t('workspace.createDeniedTitle')}
+          closable={false}
+          maskClosable={false}
+          footer={[
+            <Button key="close" onClick={() => setDeniedContacts(null)}>{t('login.pendingOk')}</Button>,
+            <Button key="request" type="primary" {...requestPermissionProps}>{requestPermissionLabel}</Button>,
+          ]}
+        >
+          <p>{t('workspace.createDenied')}</p>
+          <AdministratorContactList
+            contacts={deniedContacts ?? []}
+            title={t('contacts.title')}
+            emptyText={t('contacts.empty')}
+          />
+        </Modal>
       </div>
     </div>
   );
@@ -420,10 +524,9 @@ const createCardStyle: CSSProperties = {
   borderStyle: 'dashed',
   borderColor: 'var(--aw-border)',
   background: 'var(--aw-raised)',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
+  display: 'grid',
+  minHeight: 188,
+  cursor: 'default',
   textAlign: 'center',
 };
 

@@ -83,10 +83,10 @@ function useListHandler(
 
 function LocationProbe() {
   const location = useLocation();
-  return <span data-testid="location-path">{location.pathname}</span>;
+  return <span data-testid="location-path">{`${location.pathname}${location.search}`}</span>;
 }
 
-function renderTab() {
+function renderTab(switchDestination?: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -95,7 +95,7 @@ function renderTab() {
     ...render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={['/workspaces']}>
-          <AllWorkspacesTab />
+          <AllWorkspacesTab switchDestination={switchDestination} />
           <LocationProbe />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -225,6 +225,37 @@ describe('AllWorkspacesTab', () => {
     expect(await screen.findByText('平台上还没有任何工作空间')).toBeInTheDocument();
   });
 
+  it('shows a retryable failure instead of the empty state when the list request fails', async () => {
+    let attempts = 0;
+    server.use(
+      http.get('/api/workspaces/all', () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return HttpResponse.json({
+            success: false,
+            code: '10002',
+            message: '服务暂时不可用',
+            data: null,
+            traceId: null,
+          }, { status: 500 });
+        }
+        return HttpResponse.json(pageEnvelope([memberWorkspace]));
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+
+    expect(await screen.findByTestId('all-workspaces-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('all-workspaces-empty')).not.toBeInTheDocument();
+    expect(screen.getByText('工作空间列表加载失败，请稍后重试')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('all-workspaces-retry'));
+
+    expect(await screen.findByTestId('all-workspace-card-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('all-workspaces-error')).not.toBeInTheDocument();
+  });
+
   it('shows the no-match wording when a keyword filters everything out', async () => {
     const user = userEvent.setup();
     useListHandler(({ keyword }) => pageEnvelope(keyword ? [] : [notMemberWorkspace]));
@@ -341,6 +372,28 @@ describe('AllWorkspacesTab', () => {
     });
     await waitFor(() => {
       expect(screen.getByTestId('location-path')).toHaveTextContent('/');
+    });
+  });
+
+  it('navigates to the caller-provided destination after switching', async () => {
+    const user = userEvent.setup();
+    useListHandler(() => pageEnvelope([memberWorkspace]));
+    server.use(
+      http.post('/api/workspaces/1/switch', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: { accessToken: 'switched-token', accessLevel: 'ADMIN' },
+      })),
+    );
+
+    renderTab('/workitems/42?tab=discussion');
+
+    await user.click(await screen.findByTestId('all-workspace-enter-1'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/workitems/42?tab=discussion');
     });
   });
 

@@ -49,11 +49,37 @@ class UserAdminControllerTest {
     void theListIsGatedAndForwardsTheRawFilters() {
         AutoWonderContext.get().setUserId(ADMIN_ID);
 
-        controller.list("ali", "deleted", "admin", 2, 50);
+        controller.list("ali", "deleted", "admin", null, 2, 50);
 
         InOrder order = inOrder(systemAdminService, userAdminService);
         order.verify(systemAdminService).requireSystemAdmin(ADMIN_ID, ADMIN_ACTION, ADMIN_DENIED_KEY);
-        order.verify(userAdminService).page("ali", "deleted", "admin", 2, 50);
+        order.verify(userAdminService).page("ali", "deleted", "admin", null, 2, 50);
+    }
+
+    @Test
+    void registrationReviewIsGatedAndForwardsTheDecision() {
+        AutoWonderContext.get().setUserId(ADMIN_ID);
+        com.aliyun.autowonder.user.dto.RegistrationReviewRequest request =
+                new com.aliyun.autowonder.user.dto.RegistrationReviewRequest();
+        request.setDecision("APPROVE");
+
+        controller.reviewRegistration(TARGET_ID, request);
+
+        verify(systemAdminService).requireSystemAdmin(ADMIN_ID, ADMIN_ACTION, ADMIN_DENIED_KEY);
+        verify(userAdminService).reviewRegistration(TARGET_ID, "APPROVE", ADMIN_ID);
+    }
+
+    @Test
+    void workspaceCreationPermissionIsGatedAndForwardsTheFlag() {
+        AutoWonderContext.get().setUserId(ADMIN_ID);
+        com.aliyun.autowonder.user.dto.WorkspaceCreationPermissionRequest request =
+                new com.aliyun.autowonder.user.dto.WorkspaceCreationPermissionRequest();
+        request.setAllowed(true);
+
+        controller.updateWorkspaceCreationPermission(TARGET_ID, request);
+
+        verify(systemAdminService).requireSystemAdmin(ADMIN_ID, ADMIN_ACTION, ADMIN_DENIED_KEY);
+        verify(userAdminService).updateWorkspaceCreationPermission(TARGET_ID, true, ADMIN_ID);
     }
 
     @Test
@@ -153,7 +179,7 @@ class UserAdminControllerTest {
         org.mockito.Mockito.doThrow(new BizException(ErrorCode.NO_PERMISSION))
                 .when(systemAdminService).requireSystemAdmin(anyLong(), anyString(), anyString());
 
-        assertThrows(BizException.class, () -> controller.list(null, null, null, 1, 20));
+        assertThrows(BizException.class, () -> controller.list(null, null, null, null, 1, 20));
         assertThrows(BizException.class, () -> controller.detail(TARGET_ID));
         assertThrows(BizException.class, () -> controller.delete(TARGET_ID, null));
         assertThrows(BizException.class, () -> controller.restore(TARGET_ID));

@@ -37,7 +37,8 @@ public class NotificationController {
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        long tenantId = currentWorkspaceId();
+        // 平台级通知不依赖空间：管理员未选空间或切换空间后仍能看到本人通知。
+        Long tenantId = currentWorkspaceId();
         long userId = currentUserId();
         int p = Math.max(page, 1);
         int sz = Math.min(Math.max(size, 1), 100);
@@ -48,6 +49,20 @@ public class NotificationController {
         }
         long total = notificationDao.countByRecipient(tenantId, userId, status);
         return Result.ok(new NotificationPageVO(items, total));
+    }
+
+    /** 分页外的通知也能按 ID 打开详情；归属由 SQL 约束，读不到就按既有 NOT_FOUND 边界返回。 */
+    @GetMapping("/{id}")
+    public Result<NotificationVO> detail(@PathVariable("id") Long id) {
+        Long tenantId = currentWorkspaceId();
+        long userId = currentUserId();
+        NotificationDO record = id == null || id <= 0
+                ? null
+                : notificationDao.findByIdAndRecipient(id, tenantId, userId);
+        if (record == null) {
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "error.notification_not_found", null, "通知不存在");
+        }
+        return Result.ok(toVO(record));
     }
 
     @GetMapping("/unread-count")
@@ -76,7 +91,11 @@ public class NotificationController {
     @GetMapping("/prefs")
     public Result<List<NotifyPrefVO>> listPrefs() {
         List<NotifyPrefVO> result = new ArrayList<>();
-        for (NotifyPrefDO p : prefDao.listByUser(currentWorkspaceId(), currentUserId())) {
+        Long tenantId = currentWorkspaceId();
+        if (tenantId == null) {
+            return Result.ok(result);
+        }
+        for (NotifyPrefDO p : prefDao.listByUser(tenantId, currentUserId())) {
             NotifyPrefVO vo = new NotifyPrefVO();
             vo.setType(p.getType());
             vo.setInApp(p.getInApp() != null && p.getInApp() == 1);
@@ -89,10 +108,10 @@ public class NotificationController {
 
     @PutMapping("/prefs")
     public Result<Void> updatePrefs(@RequestBody UpdatePrefRequest req) {
-        if (req.getItems() == null || req.getItems().isEmpty()) {
+        Long tenantId = currentWorkspaceId();
+        if (tenantId == null || req.getItems() == null || req.getItems().isEmpty()) {
             return Result.ok(null);
         }
-        long tenantId = currentWorkspaceId();
         long userId = currentUserId();
         for (UpdatePrefRequest.PrefItem item : req.getItems()) {
             if (item.isDingtalk()) imConfigs.requireSelected("DINGTALK");
@@ -127,6 +146,7 @@ public class NotificationController {
         vo.setRefId(n.getRefId());
         vo.setStatus(n.getStatus());
         vo.setGmtCreate(n.getGmtCreate());
+        vo.setRelatedLinks(NotificationLinkJson.decode(n.getRelatedLinksJson()));
         return vo;
     }
 
@@ -136,9 +156,8 @@ public class NotificationController {
         return uid;
     }
 
-    private long currentWorkspaceId() {
-        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
-        if (workspaceId == null) { throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER); }
-        return workspaceId;
+    /** 当前空间可为空：平台级通知的列表、详情、已读和删除都不要求用户已加入空间。 */
+    private Long currentWorkspaceId() {
+        return AutoWonderContext.get().getCurrentWorkspaceId();
     }
 }

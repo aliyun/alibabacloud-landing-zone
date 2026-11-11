@@ -7,6 +7,9 @@ import java.util.List;
 
 @Mapper
 public interface DispatchRuntimeEventDao {
+    List<DispatchRuntimeEventDO> listWindow(@Param("tenantId") long tenantId,
+            @Param("dispatchId") long dispatchId, @Param("beforeId") Long beforeId,
+            @Param("limit") int limit);
     void insert(DispatchRuntimeEventDO event);
 
     List<DispatchRuntimeEventDO> listByWorkitem(@Param("tenantId") Long tenantId,

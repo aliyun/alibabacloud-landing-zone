@@ -3,6 +3,7 @@ import { message } from 'antd';
 import { i18n } from '@/shared/i18n';
 import { keepPreviousData, useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
+import { isTerminalInteractionExecution } from './interactionExecution';
 import type { WorkitemQuery, WorkitemStatusCategory, RecycledWorkitemQuery } from './api';
 import type { DeliveryProgress, Workitem } from '@/shared/types/workitem';
 
@@ -262,15 +263,22 @@ export function useSyncExternalWorkitem() {
   });
 }
 
-export function useUnifiedTimeline(workitemId: number | string) {
-  return useQuery({
-    queryKey: ['workitem', workitemId, 'unified-timeline'],
-    queryFn: () => api.getUnifiedTimeline(workitemId),
+export function useUnifiedTimeline(workitemId: number | string, page = 0) {
+  const query = useQuery({
+    queryKey: ['workitem', workitemId, 'unified-timeline', page],
+    queryFn: () => api.getUnifiedTimeline(workitemId, page),
+    gcTime: 0,
     enabled: !!workitemId,
-    refetchInterval: (query) => query.state.data?.some((item) =>
-      item.interactions?.some((interaction) => interaction.status === 'QUEUED' || interaction.status === 'DELIVERED'))
+    // Fast polling also covers an in-flight cancel and an unconfirmed executor stop, so the card
+    // converges without a manual refresh even after the guidance projection is already CANCELED.
+    refetchInterval: (query) => page > 0 ? false : query.state.data?.items.some((item) =>
+      item.interactions?.some((interaction) => interaction.status === 'QUEUED' || interaction.status === 'DELIVERED'
+        || interaction.stopPending === true
+        || (interaction.cancelRequested === true
+          && !isTerminalInteractionExecution(interaction.executionStatus))))
       ? 2000 : 30000,
   });
+  return { ...query, data: query.data?.items, hasMore: query.data?.hasMore ?? false };
 }
 
 export function useParticipants(workitemId: number | string) {
@@ -367,7 +375,7 @@ export function usePauseDispatch(workitemId: number | string) {
   });
 }
 
-export type ExecutionActionKind = 'pause' | 'end' | 'forceEnd' | 'resume';
+export type ExecutionActionKind = 'pause' | 'end' | 'forceEnd' | 'resume' | 'restartLatest';
 
 export function useExecutionControl(workitemId: number | string) {
   const queryClient = useQueryClient();
@@ -375,10 +383,13 @@ export function useExecutionControl(workitemId: number | string) {
     mutationFn: async ({ dispatchId, action }: { dispatchId: number; action: ExecutionActionKind }) => {
       if (action === 'pause') return api.pauseDispatch(workitemId, dispatchId);
       if (action === 'resume') return api.continueDispatch(workitemId, dispatchId);
+      if (action === 'restartLatest') return api.restartLatestWorkflow(workitemId, dispatchId);
       return api.cancelDispatch(workitemId, dispatchId, action === 'forceEnd');
     },
     onSuccess: (_data, variables) => {
-      message.success(i18n.t(`workitem:messages.execution${variables.action === 'end' ? 'EndRequested' : variables.action === 'forceEnd' ? 'ForceEndRequested' : variables.action === 'pause' ? 'PauseRequested' : 'ResumeRequested'}`));
+      const successMessage = variables.action === 'restartLatest' ? i18n.t('workitem:messages.executionRestartLatestRequested')
+        : i18n.t(`workitem:messages.execution${variables.action === 'end' ? 'EndRequested' : variables.action === 'forceEnd' ? 'ForceEndRequested' : variables.action === 'pause' ? 'PauseRequested' : 'ResumeRequested'}`);
+      message.success(successMessage);
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'delivery-progress'] });
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'unified-timeline'] });
       queryClient.invalidateQueries({ queryKey: ['workitem-recovery', workitemId] });
@@ -386,6 +397,7 @@ export function useExecutionControl(workitemId: number | string) {
     onError: (error: Error) => {
       message.error(error.message || i18n.t('workitem:messages.executionFailed'));
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'delivery-progress'] });
+      queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'unified-timeline'] });
       queryClient.invalidateQueries({ queryKey: ['workitem-recovery', workitemId] });
     },
   });

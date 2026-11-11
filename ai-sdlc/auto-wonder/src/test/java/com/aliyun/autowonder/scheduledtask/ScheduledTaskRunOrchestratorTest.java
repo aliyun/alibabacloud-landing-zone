@@ -2,9 +2,12 @@ package com.aliyun.autowonder.scheduledtask;
 
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchService;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.dispatch.HandoffResult;
 import com.aliyun.autowonder.artifact.ArtifactDao;
 import com.aliyun.autowonder.storage.ObjectStorage;
 import org.junit.jupiter.api.Test;
@@ -46,7 +49,7 @@ class ScheduledTaskRunOrchestratorTest {
 
         org.mockito.InOrder order = inOrder(dispatch);
         order.verify(dispatch).pinScheduledAgentVersion(701L, 1L, 402L);
-        order.verify(dispatch).runPending(701L);
+        order.verify(dispatch).runPendingAfterCommit(701L);
         verify(runDao, never()).updateTerminalResult(anyLong(), anyLong(), any(), any(), any(), contains("30005"), anyInt(), anyLong());
     }
 
@@ -135,19 +138,106 @@ class ScheduledTaskRunOrchestratorTest {
     }
 
     @Test
-    void handoffResolvesOfflineTargetOnlyFromFrozenLedger() {
+    void handoffRejectsOfflineTargetResolvedFromFrozenLedger() {
         ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class); DispatchService dispatch = mock(DispatchService.class);
         ScheduledTaskRunDO run = queuedRun(null); JSONObject snapshot=JSON.parseObject(run.getExecutionSnapshotJson());
         snapshot.getJSONArray("agentContexts").add(JSON.parseObject("{\"agentId\":30,\"agentVersionId\":402,\"identity\":{\"name\":\"Offline B\",\"roleCode\":\"qa\"},\"repos\":[],\"repoMap\":{},\"skills\":[],\"memory\":{},\"roster\":{},\"sdlc\":{\"id\":52,\"currentStepId\":91}}"));
         run.setSdlcId(51L); run.setStatus("WAITING_EXECUTOR"); run.setVersion(1); run.setExecutionSnapshotJson(snapshot.toJSONString());
         DispatchDO source=new DispatchDO(); source.setId(700L); source.setTenantId(1L); source.setWorkitemId(77L); source.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name()); source.setAgentId(20L); source.setStatus("SUCCEEDED"); source.setAttempt(1);
-        DispatchDO downstream=new DispatchDO(); downstream.setId(701L);
-        when(runDao.findById(1L,77L)).thenReturn(run); when(runDao.updateCurrentAssignment(1L,77L,52L,30L,91L,1,0L)).thenReturn(1);
-        when(dispatch.enqueueScheduledHandoff(1L,77L,91L,30L,700L,2,0L)).thenReturn(downstream);
+        when(runDao.findById(1L,77L)).thenReturn(run);
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability).requireStartable(1L, 30L, 52L);
+        ScheduledTaskRunOrchestrator service = orchestrator(runDao, dispatch);
+        service.setExecutionAvailabilityService(availability);
 
-        orchestrator(runDao,dispatch).handoff(source,"qa");
+        HandoffResult result = service.handoff(source,"qa");
 
-        verify(dispatch).pinScheduledAgentVersion(701L,1L,402L);
+        assertEquals(HandoffResult.Status.REJECTED, result.status());
+        assertEquals("AGENT_OFFLINE", result.reasonCode());
+        verify(runDao, never()).updateCurrentAssignment(anyLong(), anyLong(), any(), anyLong(), any(), anyInt(), anyLong());
+        verify(dispatch, never()).pinScheduledAgentVersion(anyLong(), anyLong(), anyLong());
+        verify(dispatch, never()).enqueueScheduledHandoff(anyLong(), anyLong(), any(), anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void handoffReplayOfADeliveredDownstreamDoesNotScheduleAgain() {
+        ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class);
+        DispatchService dispatch = mock(DispatchService.class);
+        ScheduledTaskRunDO run = queuedRun(null);
+        run.setSdlcId(51L);
+        run.setStatus("WAITING_EXECUTOR");
+        run.setVersion(1);
+        DispatchDO source = new DispatchDO();
+        source.setId(700L);
+        source.setTenantId(1L);
+        source.setWorkitemId(77L);
+        source.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        source.setAgentId(20L);
+        source.setStatus("SUCCEEDED");
+        source.setAttempt(1);
+        DispatchDO existing = new DispatchDO();
+        existing.setId(701L);
+        existing.setAgentId(30L);
+        existing.setStatus("DISPATCHED");
+        when(runDao.findById(1L, 77L)).thenReturn(run);
+        when(dispatch.findHandoffBySource(1L, 700L)).thenReturn(existing);
+
+        HandoffResult result = orchestrator(runDao, dispatch).handoff(source, 30L);
+
+        assertEquals(HandoffResult.Status.AGENT_DISPATCHED, result.status());
+        assertEquals(701L, result.downstreamDispatchId());
+        verify(dispatch, never()).runPendingAfterCommit(anyLong());
+    }
+
+    @Test
+    void runStartRejectsOfflineAgentAndFailsTheRun() {
+        ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class);
+        DispatchService dispatch = mock(DispatchService.class);
+        ScheduledTaskRunDO run = queuedRun(null);
+        when(runDao.findById(1L, 77L)).thenReturn(run);
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability).requireStartable(1L, 20L, null);
+        ScheduledTaskRunOrchestrator service = orchestrator(runDao, dispatch);
+        service.setExecutionAvailabilityService(availability);
+
+        service.start(1L, 77L, 9L);
+
+        verify(runDao).updateTerminalResult(eq(1L), eq(77L), eq("QUEUED"), eq("FAILED"), isNull(),
+                contains("41001"), eq(0), eq(9L));
+        verifyNoInteractions(dispatch);
+    }
+
+    @Test
+    void resumePausedRejectsOfflineAgentBeforeAnyStartWrite() {
+        ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class);
+        DispatchService dispatch = mock(DispatchService.class);
+        ScheduledTaskRunDO run = queuedRun(null);
+        run.setCurrentAgentId(30L);
+        run.setSdlcId(52L);
+        JSONObject snapshot = JSON.parseObject(run.getExecutionSnapshotJson());
+        snapshot.getJSONArray("agentContexts").add(JSON.parseObject("{\"agentId\":30,\"agentVersionId\":402,\"identity\":{\"name\":\"B\"},\"repos\":[],\"repoMap\":{},\"skills\":[],\"memory\":{},\"roster\":{},\"sdlc\":{\"id\":52,\"currentStepId\":91}}"));
+        run.setExecutionSnapshotJson(snapshot.toJSONString());
+        DispatchDO paused = new DispatchDO();
+        paused.setId(700L);
+        paused.setStatus("PAUSED");
+        paused.setAgentId(30L);
+        paused.setSdlcStepId(91L);
+        paused.setAttempt(1);
+        when(runDao.findById(1L, 77L)).thenReturn(run);
+        when(dispatch.listBySource(1L, ExecutionSourceType.SCHEDULED_TASK_RUN, 77L)).thenReturn(List.of(paused));
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability).requireStartable(1L, 30L, 52L);
+        ScheduledTaskRunOrchestrator service = orchestrator(runDao, dispatch);
+        service.setExecutionAvailabilityService(availability);
+
+        org.junit.jupiter.api.Assertions.assertThrows(BizException.class,
+                () -> service.resumePaused(1L, 77L, 9L));
+
+        verify(runDao, never()).initializeExecution(anyLong(), anyLong(), any(), any(), anyLong(), any(), anyInt(), anyLong());
+        verify(dispatch, never()).enqueueScheduledResume(anyLong(), anyLong(), any(), anyLong(), anyInt(), anyLong(), anyBoolean(), anyLong());
     }
 
     @Test

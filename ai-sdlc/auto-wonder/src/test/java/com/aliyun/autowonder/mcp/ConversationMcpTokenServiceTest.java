@@ -8,6 +8,7 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.conversation.AgentConversationDO;
 import com.aliyun.autowonder.conversation.AgentConversationDao;
 import com.aliyun.autowonder.conversation.PlatformConversationChannel;
+import com.aliyun.autowonder.conversation.PlatformIntelligenceChannelSink;
 import com.aliyun.autowonder.squad.workflow.SquadWorkflowChannelSink;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.springframework.core.env.Environment;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.io.IOException;
 import java.util.Base64;
@@ -29,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -162,6 +165,18 @@ class ConversationMcpTokenServiceTest {
     }
 
     @Test
+    void backgroundPlatformInternalTokensAreReadOnlyEvenWithoutAnOwner() {
+        AgentConversationDO row = conversation(PlatformIntelligenceChannelSink.CHANNEL, null);
+        stub(row);
+
+        McpAccessTokenService.Principal principal = tokens.authenticate(tokens.issue(row, OWNER_ID));
+
+        // 后台一次性检测只判断文本：令牌封顶只读，且不因缺少 Owner 而失效。
+        assertEquals(WorkspaceAccessLevel.READ_ONLY, principal.accessLevel());
+        assertEquals(OWNER_ID, principal.userId());
+    }
+
+    @Test
     void legacyChannelsKeepTheReadWriteCeilingTheyHadBefore() {
         var turns = mock(com.aliyun.autowonder.conversation.AgentConversationTurnDao.class);
         var legacy = new com.aliyun.autowonder.conversation.AgentConversationTurnDO();
@@ -284,6 +299,29 @@ class ConversationMcpTokenServiceTest {
         row.setStatus("CLOSED");
         stub(row);
         assertUnauthorized(() -> tokens.authenticate(token));
+    }
+
+    /**
+     * 非轮次（会话）令牌分支：读取会话的依赖异常属于服务端故障，不能伪装成凭据失效；
+     * 依赖恢复后同一枚 token 仍然可用。
+     */
+    @Test
+    void conversationReadFailureIsADependencyErrorNotACredentialRejection() {
+        AgentConversationDO row = platformConversation(OWNER_ID);
+        String token = tokens.issue(row, OWNER_ID);
+        when(conversationDao.findById(TENANT_ID, CONVERSATION_ID))
+                .thenThrow(new DataAccessResourceFailureException("injected database failure"));
+
+        BizException failure = assertThrows(BizException.class, () -> tokens.authenticate(token));
+        assertEquals(ErrorCode.SYSTEM_ERROR.getCode(), failure.getCode());
+        assertNotEquals(ErrorCode.UNAUTHORIZED.getCode(), failure.getCode());
+        assertFalse(failure.getMessage().contains("injected database failure"));
+        assertFalse(failure.getMessage().contains(ErrorCode.UNAUTHORIZED.getMessage()));
+        assertFalse(failure.getMessage().contains(token));
+
+        // 用 doReturn 恢复 throwing stub，避免 when 再次触发异常。
+        doReturn(row).when(conversationDao).findById(TENANT_ID, CONVERSATION_ID);
+        assertEquals(OWNER_ID, tokens.authenticate(token).userId());
     }
 
     @Test

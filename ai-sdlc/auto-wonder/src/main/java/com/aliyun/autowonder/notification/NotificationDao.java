@@ -14,6 +14,10 @@ public interface NotificationDao {
                                           @Param("offset") int offset,
                                           @Param("limit") int limit);
 
+    NotificationDO findByIdAndRecipient(@Param("id") Long id,
+                                        @Param("tenantId") Long tenantId,
+                                        @Param("recipientId") Long recipientId);
+
     int countUnread(@Param("tenantId") Long tenantId,
                     @Param("recipientId") Long recipientId);
 

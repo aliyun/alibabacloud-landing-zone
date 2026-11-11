@@ -123,6 +123,8 @@
     "templates": "Workflows",
     "gallery": "Template gallery",
     "empty": "No SDLC workflows",
+    "expandGroup": "Expand group",
+    "collapseGroup": "Collapse group",
     "groupCount_other": "{{count}} workflows",
     "total_other": "{{count}} workflows total",
     "groupCount_one": "{{count}} workflow",

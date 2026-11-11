@@ -11,6 +11,10 @@ public interface EnvironmentVariableDao {
 
     List<EnvironmentVariableDO> listActive(@Param("tenantId") Long tenantId);
 
+    /** Mount counters for one variable, using the same boundary as listActiveReferences. */
+    List<EnvironmentVariableDO> countMounts(@Param("tenantId") Long tenantId,
+                                            @Param("id") Long id);
+
     EnvironmentVariableDO findActiveById(@Param("tenantId") Long tenantId,
                                           @Param("id") Long id);
 

@@ -1432,6 +1432,29 @@ describe('SkillListPage categories', () => {
 describe('SkillListPage package upload', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
+  it('shows Hook setup guidance and documentation links without replacing entered fields on a language switch', async () => {
+    server.use(...packageHandlers());
+    renderPage();
+    await userEvent.click(screen.getByRole('button', { name: /新增能力/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByText('Runtime Hook 怎么配置？')).not.toBeInTheDocument();
+    await pickSelectOption(dialog.querySelector('.ant-select-selector') as HTMLElement, 'Runtime Hook');
+    expect(within(dialog).getByText('Runtime Hook 怎么配置？')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: '查看两个完整模板和配置步骤' })).toHaveAttribute('href', '/help?chapter=runtime-hooks');
+    const officialDocs = within(dialog).getByRole('link', { name: 'Qoder CLI Hooks 官方文档' });
+    expect(officialDocs).toHaveAttribute('href', 'https://docs.qoder.com/cli/hooks');
+    expect(officialDocs).toHaveAttribute('target', '_blank');
+    expect(officialDocs).toHaveAttribute('rel', 'noopener noreferrer');
+    await userEvent.type(within(dialog).getByLabelText('名称'), 'my-runtime-hook');
+    try {
+      await act(() => i18n.changeLanguage('en-US'));
+      expect(within(dialog).getByText('How do I configure a Runtime Hook?')).toBeInTheDocument();
+      expect(within(dialog).getByLabelText('Name')).toHaveValue('my-runtime-hook');
+    } finally {
+      await act(() => i18n.changeLanguage('zh-CN'));
+    }
+  });
+
   it.each([
     ['ZIP', false], ['文件夹', false], ['ZIP', true], ['文件夹', true],
   ] as const)('supports %s for package upload (editing=%s)', async (source, editing) => {

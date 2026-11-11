@@ -439,3 +439,38 @@ it('switches loading and empty messages to the current language for all three pa
   await act(async () => { await i18n.changeLanguage('en-US'); });
   expect(screen.getByText('No Squads')).toBeInTheDocument();
 });
+
+it('keeps the today-created drill-down open and switches its copy in place', async () => {
+  stubDashboard();
+  server.use(http.get('/api/dashboard/created/today', () => ok([
+    { workitemId: 21, title: '新建工单甲' },
+    { workitemId: 22, title: null },
+  ])));
+  const user = userEvent.setup();
+  routed(<RealtimeDashboard />);
+  await screen.findByRole('region', { name: '工单概况' });
+
+  const card = (await screen.findByText('今日新建')).closest('.insight-kpi') as HTMLElement;
+  expect(card).toHaveAttribute('role', 'button');
+  expect(within(card).getByText('今日创建工单（不含已取消）')).toBeInTheDocument();
+
+  await user.click(card);
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByText('今日新建')).toBeInTheDocument();
+  expect(await within(dialog).findByText('#21 新建工单甲')).toBeInTheDocument();
+  expect(within(dialog).getByText('#22')).toBeInTheDocument();
+
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+
+  expect(screen.getByRole('dialog')).toBe(dialog);
+  expect(within(dialog).getByText('Created today')).toBeInTheDocument();
+  expect(within(dialog).getByText('#21 新建工单甲')).toBeInTheDocument();
+  const cardEn = within(screen.getByRole('region', { name: 'Work item overview' }))
+    .getByText('Created today').closest('.insight-kpi') as HTMLElement;
+  expect(cardEn).toHaveAttribute('role', 'button');
+  expect(within(cardEn).getByText('Created today, excluding canceled')).toBeInTheDocument();
+
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  expect(screen.getByRole('dialog')).toBe(dialog);
+  expect(within(dialog).getByText('#22')).toBeInTheDocument();
+});

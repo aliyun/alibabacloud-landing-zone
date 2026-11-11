@@ -4,13 +4,13 @@ import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { type FocusEvent, useRef, type KeyboardEvent, useState } from 'react';
-import { Alert, AutoComplete, Button, Card, Form, Input, Space, Typography, message } from 'antd';
+import { Alert, AutoComplete, Button, Card, Form, Input, Select, Space, Typography, message } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { AiSessionPanel } from '@/shared/ui/AiSessionPanel';
 import type { AgentConfigGenResult } from '@/shared/types/ai';
-import { useCreateAgent } from './hooks';
+import { useAgentSdlcOptions, useCreateAgent } from './hooks';
 import type { CreateAgentRequest } from './api';
 import { getAgentRoleCodeOptions, getAgentRoleNameOptions, getRoleCodeByName, getRoleNameByCode } from './constants';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -31,6 +31,7 @@ export function AgentCreatePage() {
   const [naturalSessionKey] = useState(0);
   const businessBackgroundRef = useRef<TextAreaRef>(null);
   const createAgent = useCreateAgent();
+  const sdlcOptions = useAgentSdlcOptions();
   const accessCommand = useAccessCommand();
 
   const syncRoleNameToCode = (value: string) => {
@@ -50,7 +51,8 @@ export function AgentCreatePage() {
   const handleSubmit = (values: CreateAgentRequest) => {
     accessCommand('READ_WRITE', t('actions.create'), async () => {
       try {
-        const agent = await createAgent.mutateAsync(values);
+        // Clearing the picker must reach the server as an explicit "no binding".
+        const agent = await createAgent.mutateAsync({ ...values, sdlcId: values.sdlcId ?? null });
         message.success(i18n.t('create.success', { ns: 'agent' }));
         navigate(`/agents/${agent.id}`);
       } catch {
@@ -180,6 +182,30 @@ export function AgentCreatePage() {
                   onKeyDown={handleRoleCodeKeyDown}
                 />
               </Form.Item>
+              <Form.Item label={t('fields.sdlc')} name="sdlcId">
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder={t('placeholders.sdlc')}
+                  loading={sdlcOptions.isLoading}
+                  options={sdlcOptions.options}
+                  aria-label={t('fields.sdlc')}
+                />
+              </Form.Item>
+              {sdlcOptions.isError && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message={t('create.sdlcLoadFailed')}
+                  action={
+                    <Button size="small" onClick={() => { void sdlcOptions.refetch(); }}>
+                      {t('actions.retry')}
+                    </Button>
+                  }
+                />
+              )}
               <Form.Item label="SOUL.md" name="businessBackground">
                 <TextArea
                   ref={businessBackgroundRef}

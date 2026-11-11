@@ -16,6 +16,8 @@ import com.aliyun.autowonder.taskpackage.PackageContext;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
 import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.aliyun.autowonder.workitem.WorkitemDO;
+import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.websocket.WsDispatchTransport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -1549,6 +1551,363 @@ class DispatchServiceRunPendingTest {
 
         verify(recovery).transition(eq(d), eq(DispatchStatus.FAILED), isNull(), isNull(), isNull(),
                 isNull(), startsWith("SELECTION_INTERNAL_ERROR:"));
+    }
+
+    private void stubPackagingHappyPath(DispatchDO d) {
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        when(executorSelector.select(400L)).thenReturn(9L);
+        when(assembler.assemble(eq(d), any(AgentVersionDO.class))).thenReturn(new PackageContext());
+        when(taskPackager.build(any())).thenReturn(
+                new TaskPackageResult("oss://b/500.zip", "md5", 10L, "http://dl", "deadbeef"));
+    }
+
+    @Test
+    void runPendingRejectsOfflineAgentBeforePackaging() {
+        DispatchDO d = pending();
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_AGENT_OFFLINE, "execution.agent_offline",
+                new Object[0], "offline")).when(availability)
+                .requireStartable(eq(TENANT), eq(400L), any());
+        service.setExecutionAvailabilityService(availability);
+
+        assertFalse(service.runPending(500L));
+
+        verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                isNull(), isNull(), isNull(), isNull(), startsWith("AGENT_OFFLINE:"), eq(0), eq(0L));
+        verifyNoInteractions(assembler, taskPackager, transport);
+        verify(sdlcDriver).onFail(TENANT, 200L, 300L);
+    }
+
+    @Test
+    void runPendingScheduledDispatchUsesRunLedgerSdlcForAvailabilityCheck() {
+        DispatchDO d = scheduledPending(500L, 410L);
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao runDao =
+                mock(com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao.class);
+        com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO run =
+                new com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO();
+        run.setId(200L);
+        run.setWorkspaceId(TENANT);
+        run.setSdlcId(300L);
+        when(runDao.findById(TENANT, 200L)).thenReturn(run);
+        service.setScheduledTaskRunService(
+                new com.aliyun.autowonder.scheduledtask.ScheduledTaskRunService(runDao));
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_SDLC_DISABLED, "execution.sdlc_disabled",
+                new Object[0], "disabled")).when(availability)
+                .requireStartable(eq(TENANT), eq(400L), eq(300L));
+        service.setExecutionAvailabilityService(availability);
+
+        assertFalse(service.runPending(500L));
+
+        verify(runDao, atLeastOnce()).findById(TENANT, 200L);
+        verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                isNull(), isNull(), isNull(), isNull(), startsWith("SDLC_DISABLED:"), eq(0), eq(0L));
+        verifyNoInteractions(assembler, taskPackager, transport);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"CANONICAL_INTERACTION", "SIDE_INTERACTION", "COMMENT_INTERACTION"})
+    void interactionChecksItsOwnStepFlowAtBothGates(String mode) {
+        DispatchDO d = pending();
+        d.setResumeMode(mode);
+        WorkitemDO old = new WorkitemDO();
+        old.setTenantId(TENANT);
+        old.setSdlcId(15L);
+        when(workitemDao.findById(200L)).thenReturn(old);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setSdlcId(56L);
+        when(assembler.workitemStep(d)).thenReturn(step);
+        stubPackagingHappyPath(d);
+        when(executorSelector.selectForInteraction(eq(400L), any())).thenReturn(9L);
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        service.setExecutionAvailabilityService(availability);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(eq(d), eq(56L), eq(9L), anyString()))
+                .thenReturn(DispatchAdmissionService.Result.admitted());
+        service.setDispatchAdmissionService(admission);
+
+        assertTrue(service.runPending(500L));
+
+        verify(availability).requireStartable(TENANT, 400L, 56L);
+        verify(transport).dispatch(eq(d), any());
+    }
+
+    @Test
+    void runPendingManagementRejectionAtAdmissionFailsWithoutSending() {
+        DispatchDO d = pending();
+        stubPackagingHappyPath(d);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(any(), any(), anyLong(), any()))
+                .thenReturn(DispatchAdmissionService.Result.rejected(DispatchFailureReason.SDLC_DISABLED));
+        service.setDispatchAdmissionService(admission);
+
+        assertFalse(service.runPending(500L));
+
+        verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                isNull(), isNull(), isNull(), isNull(), startsWith("SDLC_DISABLED:"), anyInt(), anyLong());
+        verify(transport, never()).dispatch(any(), any());
+        verify(sdlcDriver, never()).onDeliveryStart(anyLong(), anyLong());
+    }
+
+    @Test
+    void admissionRejectedRecoveryRowRestoresThePausedSource() {
+        DispatchDO d = pending();
+        // continueDispatchDb writes exactly these values for a paused resume.
+        d.setResumeMode("RECOVERY");
+        d.setResumeFromDispatchId(400L);
+        stubPackagingHappyPath(d);
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        when(recovery.fenced(any())).thenReturn(false);
+        when(recovery.ready(any())).thenReturn(true);
+        when(recovery.transition(any(), anyString(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(recovery.restorePausedAfterRejectedAdmission(d)).thenReturn(true);
+        service.setRecoveryService(recovery);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(any(), any(), anyLong(), any()))
+                .thenReturn(DispatchAdmissionService.Result.rejected(DispatchFailureReason.AGENT_OFFLINE));
+        service.setDispatchAdmissionService(admission);
+
+        assertFalse(service.runPending(500L));
+
+        verify(recovery).restorePausedAfterRejectedAdmission(d);
+        verify(sdlcDriver, never()).onFail(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void admissionRejectedRecoveryRowFallsBackWhenNoPausedSourceCanBeRestored() {
+        DispatchDO d = pending();
+        d.setResumeMode("RECOVERY");
+        d.setResumeFromDispatchId(400L);
+        stubPackagingHappyPath(d);
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        when(recovery.fenced(any())).thenReturn(false);
+        when(recovery.ready(any())).thenReturn(true);
+        when(recovery.transition(any(), anyString(), any(), any(), any(), any(), any())).thenReturn(1);
+        service.setRecoveryService(recovery);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(any(), any(), anyLong(), any()))
+                .thenReturn(DispatchAdmissionService.Result.rejected(DispatchFailureReason.AGENT_OFFLINE));
+        service.setDispatchAdmissionService(admission);
+
+        assertFalse(service.runPending(500L));
+
+        verify(recovery).restorePausedAfterRejectedAdmission(d);
+        verify(sdlcDriver).onFail(TENANT, 200L, 300L);
+    }
+
+    @Test
+    void sendFailureAfterAdmissionPersistsFailedWithTheSyncedVersion() {
+        DispatchDO d = pending();
+        stubPackagingHappyPath(d);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(any(), any(), anyLong(), any())).thenAnswer(invocation -> {
+            d.setStatus(DispatchStatus.DISPATCHED);
+            d.setVersion(d.getVersion() + 1);
+            return DispatchAdmissionService.Result.admitted();
+        });
+        service.setDispatchAdmissionService(admission);
+        doThrow(new EnvironmentSnapshotResolutionException("bad env"))
+                .when(transport).dispatch(eq(d), any());
+
+        assertFalse(service.runPending(500L));
+
+        // PACKAGING bumped version to 1, admission to 2; the send-failure CAS must still match.
+        verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                isNull(), isNull(), isNull(), isNull(),
+                startsWith("ENVIRONMENT_SNAPSHOT_INVALID:"), eq(2), eq(0L));
+    }
+
+    @Test
+    void runPendingAfterCommitRunsOnlyAfterTheOuterTransactionCommits() throws Exception {
+        DispatchService spyService = spy(service);
+        java.util.concurrent.CountDownLatch ran = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(invocation -> {
+            ran.countDown();
+            return true;
+        }).when(spyService).runPending(500L);
+        org.springframework.transaction.support.TransactionTemplate outer = h2Transaction();
+
+        outer.executeWithoutResult(status -> spyService.runPendingAfterCommit(500L));
+
+        assertTrue(ran.await(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void runPendingAfterCommitSwallowsDeliveryFailureAfterCommit() throws Exception {
+        DispatchService spyService = spy(service);
+        java.util.concurrent.CountDownLatch attempted = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(invocation -> {
+            attempted.countDown();
+            throw new IllegalStateException("send failed");
+        }).when(spyService).runPending(500L);
+
+        h2Transaction().executeWithoutResult(status -> spyService.runPendingAfterCommit(500L));
+
+        assertTrue(attempted.await(5, TimeUnit.SECONDS));
+        verify(spyService).runPending(500L);
+    }
+
+    @Test
+    void runPendingAfterCommitSendsNothingWhenTheOuterTransactionRollsBack() throws Exception {
+        DispatchService spyService = spy(service);
+        java.util.concurrent.CountDownLatch ran = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(invocation -> {
+            ran.countDown();
+            return true;
+        }).when(spyService).runPending(500L);
+        org.springframework.transaction.support.TransactionTemplate outer = h2Transaction();
+
+        assertThrows(RuntimeException.class, () -> outer.executeWithoutResult(status -> {
+            spyService.runPendingAfterCommit(500L);
+            throw new RuntimeException("rollback");
+        }));
+
+        assertFalse(ran.await(500, TimeUnit.MILLISECONDS));
+        verify(spyService, never()).runPending(500L);
+    }
+
+    private static org.springframework.transaction.support.TransactionTemplate h2Transaction() {
+        org.springframework.jdbc.datasource.DriverManagerDataSource dataSource =
+                new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                        "jdbc:h2:mem:dispatch-commit-" + System.nanoTime() + ";DB_CLOSE_DELAY=-1", "sa", "");
+        return new org.springframework.transaction.support.TransactionTemplate(
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource));
+    }
+
+    @Test
+    void runPendingAfterCommitRunsInlineWithoutATransaction() {
+        DispatchService spyService = spy(service);
+        doAnswer(invocation -> true).when(spyService).runPending(500L);
+
+        spyService.runPendingAfterCommit(500L);
+
+        verify(spyService).runPending(500L);
+    }
+
+    @Test
+    void runPendingToleratesMissingWorkitemDaoWhenResolvingFlow() {
+        DispatchService withoutWorkitemDao = new DispatchService(dispatchDao,
+                mock(DispatchRuntimeEventDao.class), null, agentDao, agentVersionDao,
+                executorSelector, assembler, taskPackager, transport, sdlcDriver,
+                redisManager, checkpointService, null, executorRegistry);
+        when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
+        DispatchDO d = pending();
+        stubPackagingHappyPath(d);
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        withoutWorkitemDao.setExecutionAvailabilityService(availability);
+
+        assertTrue(withoutWorkitemDao.runPending(500L));
+
+        verify(availability).requireStartable(eq(TENANT), eq(400L), isNull());
+        verify(transport).dispatch(eq(d), any(TaskPackageResult.class));
+    }
+
+    @Test
+    void unknownAvailabilityRejectionDoesNotFailOrDriveTheDispatch() {
+        DispatchDO d = pending();
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(new BizException(ErrorCode.WORKITEM_NOT_FOUND)).when(availability)
+                .requireStartable(eq(TENANT), eq(400L), any());
+        service.setExecutionAvailabilityService(availability);
+
+        assertFalse(service.runPending(500L));
+
+        verify(dispatchDao, never()).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+        verify(sdlcDriver, never()).onFail(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void interactionDispatchRejectedAtAdmissionIsNotDrivenToFail() {
+        DispatchDO d = pending();
+        d.setResumeMode("CANONICAL_INTERACTION");
+        stubPackagingHappyPath(d);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(any(), any(), anyLong(), any()))
+                .thenReturn(DispatchAdmissionService.Result.rejected(DispatchFailureReason.AGENT_OFFLINE));
+        service.setDispatchAdmissionService(admission);
+
+        assertFalse(service.runPending(500L));
+
+        verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                isNull(), isNull(), isNull(), isNull(), startsWith("AGENT_OFFLINE:"), anyInt(), anyLong());
+        verify(sdlcDriver, never()).onFail(anyLong(), anyLong(), anyLong());
+        verify(transport, never()).dispatch(any(), any());
+    }
+
+    @Test
+    void resumeRejectionWithoutRecoveryServiceFallsBackToFailDrive() {
+        DispatchDO d = pending();
+        d.setResumeMode("RECOVERY");
+        d.setResumeFromDispatchId(400L);
+        stubPackagingHappyPath(d);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(any(), any(), anyLong(), any()))
+                .thenReturn(DispatchAdmissionService.Result.rejected(DispatchFailureReason.SDLC_DISABLED));
+        service.setDispatchAdmissionService(admission);
+
+        assertFalse(service.runPending(500L));
+
+        verify(sdlcDriver).onFail(TENANT, 200L, 300L);
+    }
+
+    @Test
+    void runPendingAdmissionLostRaceDoesNotSendOrFail() {
+        DispatchDO d = pending();
+        stubPackagingHappyPath(d);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(any(), any(), anyLong(), any()))
+                .thenReturn(DispatchAdmissionService.Result.lost());
+        service.setDispatchAdmissionService(admission);
+
+        assertTrue(service.runPending(500L));
+
+        verify(transport, never()).dispatch(any(), any());
+        verify(dispatchDao, never()).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void runPendingAdmittedByFinalAdmissionSends() {
+        DispatchDO d = pending();
+        stubPackagingHappyPath(d);
+        DispatchAdmissionService admission = mock(DispatchAdmissionService.class);
+        when(admission.admit(any(), any(), anyLong(), any()))
+                .thenReturn(DispatchAdmissionService.Result.admitted());
+        service.setDispatchAdmissionService(admission);
+
+        assertTrue(service.runPending(500L));
+
+        verify(admission).admit(eq(d), any(), eq(9L), eq("oss://b/500.zip"));
+        verify(transport).dispatch(eq(d), any(TaskPackageResult.class));
+    }
+
+    @Test
+    void retryDoesNotAllocateAnAttemptWhenManagementStateForbidsIt() {
+        DispatchDO failed = pending();
+        failed.setStatus(DispatchStatus.FAILED);
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_SDLC_DISABLED, "execution.sdlc_disabled",
+                new Object[0], "disabled")).when(availability)
+                .requireStartable(eq(TENANT), eq(400L), any());
+        service.setExecutionAvailabilityService(availability);
+
+        service.retry(failed, 3);
+
+        verify(dispatchDao, never()).insert(any());
+        verify(dispatchDao, never()).findByIdempotencyKey(anyLong(), anyString());
+        verify(transport, never()).dispatch(any(), any());
     }
 
     @Test

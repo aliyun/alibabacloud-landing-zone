@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type DragEvent as ReactDragEvent } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type ClipboardEvent as ReactClipboardEvent, type DragEvent as ReactDragEvent } from 'react';
 import { Button, Card, List, message, Popconfirm, Space, Spin, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, DownloadOutlined, EyeOutlined, FileImageOutlined, FileMarkdownOutlined, UploadOutlined } from '@ant-design/icons';
 import type { Artifact } from '@/shared/types/workitem';
@@ -25,6 +25,8 @@ interface RequirementDocumentsCardProps {
   workitemId: number | string;
   documents: Artifact[];
   loading?: boolean;
+  children?: ReactNode;
+  hasGeneratedContext?: boolean;
 }
 
 function displayName(name: string): string {
@@ -43,7 +45,7 @@ function formatBytes(size: number | null): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function RequirementDocumentsCard({ workitemId, documents, loading }: RequirementDocumentsCardProps) {
+export function RequirementDocumentsCard({ workitemId, documents, loading, children, hasGeneratedContext }: RequirementDocumentsCardProps) {
   const { t } = useTranslation('workitem');
   const inputRef = useRef<HTMLInputElement>(null);
   const [previewArtifact, setPreviewArtifact] = useState<Artifact | null>(null);
@@ -164,6 +166,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
       )}
       style={{ marginTop: 14 }}
     >
+      {children}
       <div
         data-testid="requirement-document-dropzone"
         data-drag-active={dragActive ? 'true' : 'false'}
@@ -189,7 +192,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
         {loading ? (
           <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
         ) : documents.length === 0 ? (
-          <Text type="secondary">{t('documents.empty')}</Text>
+          hasGeneratedContext ? null : <Text type="secondary">{t('documents.empty')}</Text>
         ) : (
           <List
             dataSource={documents}

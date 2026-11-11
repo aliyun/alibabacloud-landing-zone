@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.auth.federation;
 
 import com.aliyun.autowonder.auth.federation.dto.SsoBindRequest;
+import com.aliyun.autowonder.auth.federation.dto.SsoLoginConfigVO;
 import com.aliyun.autowonder.auth.federation.dto.SsoProviderVO;
 import com.aliyun.autowonder.auth.federation.dto.SsoTicketRequest;
 import com.aliyun.autowonder.common.error.BizException;
@@ -37,13 +38,16 @@ public class FederationAuthController {
     private final FederationRegistryService registryService;
     private final FederationLoginService loginService;
     private final FederatedIdentityService identityService;
+    private final PlatformAuthConfigService authConfigService;
 
     public FederationAuthController(FederationRegistryService registryService,
                                     FederationLoginService loginService,
-                                    FederatedIdentityService identityService) {
+                                    FederatedIdentityService identityService,
+                                    PlatformAuthConfigService authConfigService) {
         this.registryService = registryService;
         this.loginService = loginService;
         this.identityService = identityService;
+        this.authConfigService = authConfigService;
     }
 
     @GetMapping("/providers")
@@ -51,10 +55,20 @@ public class FederationAuthController {
         return Result.ok(registryService.listLoginProviders());
     }
 
+    /** 登录页公开配置：只给注册开关与默认连接 ID，供自动发起和注册入口控制。 */
+    @GetMapping("/config")
+    public Result<SsoLoginConfigVO> loginConfig() {
+        SsoLoginConfigVO config = new SsoLoginConfigVO();
+        config.setRegistrationEnabled(authConfigService.registrationEnabled());
+        config.setDefaultProviderId(authConfigService.defaultProviderId());
+        return Result.ok(config);
+    }
+
     @GetMapping("/{providerId}/start")
-    public ResponseEntity<Void> start(@PathVariable("providerId") Long providerId) {
+    public ResponseEntity<Void> start(@PathVariable("providerId") Long providerId,
+                                      @RequestParam(value = "next", required = false) String next) {
         try {
-            return seeOther(loginService.startLogin(providerId));
+            return seeOther(loginService.startLogin(providerId, next));
         } catch (BizException e) {
             return failedToCompletePage(e, "start providerId=" + providerId);
         } catch (RuntimeException e) {

@@ -144,11 +144,19 @@ export function HelpCenterPage() {
       })
       .then((data) => {
         if (data.length === 0) throw new Error('Empty help corpus');
+        const faqIndex = data.findIndex(item => item.id === 'faq');
+        const { title, markdown, sections } = t('runtimeHooks', { returnObjects: true });
+        data.splice(faqIndex < 0 ? data.length : faqIndex, 0, {
+          id: 'runtime-hooks',
+          title,
+          markdown,
+          sections: Object.entries(sections).map(([key, title]) => ({ id: `runtime-hooks-${key}`, title })),
+        });
         if (!controller.signal.aborted) setChapters(data);
       })
       .catch(() => { if (!controller.signal.aborted) setLoadFailed(true); });
     return () => controller.abort();
-  }, [locale, retry]);
+  }, [locale, retry, t]);
 
   useEffect(() => {
     const container = article.current;

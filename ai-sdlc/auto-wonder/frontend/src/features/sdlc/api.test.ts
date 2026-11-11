@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { server } from '@/test/mocks/server';
-import { updateStep, type UpdateStepParams } from './api';
+import { listAllSdlcTemplates, listAllSdlcTemplatesFlat, updateStep, type UpdateStepParams } from './api';
 
 const stepBody = {
   id: '10', sdlcId: '1', stepOrder: 1, name: '需求分析', kind: 'analysis',
@@ -64,5 +64,129 @@ describe('updateStep', () => {
     await updateStep(1, 10, { handlerRoleRef: '', timeoutSeconds: null });
 
     expect(capturedBody).toEqual({ handlerRoleRef: '', timeoutSeconds: null });
+  });
+});
+
+function listRow(id: string, name = `sdlc-${id}`) {
+  return {
+    id, name, description: '', workType: null, status: 'ENABLED', isDefault: 0,
+    entryStepId: null, version: 1, gmtCreate: '2026-10-28', steps: [],
+  };
+}
+
+describe('listAllSdlcTemplates', () => {
+  it('walks every page and deduplicates rows that shift across page boundaries', async () => {
+    const requested: number[] = [];
+    server.use(http.get('/api/sdlcs/page', ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      const page = Number(params.get('page'));
+      requested.push(page);
+      const list = page === 1 ? [listRow('1'), listRow('2')] : [listRow('2'), listRow('3')];
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { list, total: 3, pageNum: page, pageSize: 100 },
+      });
+    }));
+
+    const result = await listAllSdlcTemplates({ squadIds: [7] });
+
+    expect(requested).toEqual([1, 2]);
+    expect(result.total).toBe(3);
+    expect(result.items.map((item) => String(item.id))).toEqual(['1', '2', '3']);
+  });
+
+  it('stops when a page adds no new row even if the reported total is higher', async () => {
+    let calls = 0;
+    server.use(http.get('/api/sdlcs/page', () => {
+      calls += 1;
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { list: [listRow('1'), listRow('2')], total: 5, pageNum: 1, pageSize: 100 },
+      });
+    }));
+
+    const result = await listAllSdlcTemplates();
+
+    expect(calls).toBe(2);
+    expect(result.items).toHaveLength(2);
+  });
+
+  it('requests a single page when it already covers the total', async () => {
+    let calls = 0;
+    server.use(http.get('/api/sdlcs/page', () => {
+      calls += 1;
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { list: [listRow('1')], total: 1, pageNum: 1, pageSize: 100 },
+      });
+    }));
+
+    const result = await listAllSdlcTemplates();
+
+    expect(calls).toBe(1);
+    expect(result.total).toBe(1);
+  });
+});
+
+
+describe('listAllSdlcTemplatesFlat', () => {
+  it('returns the plain list shape in a single request when the page is not full', async () => {
+    let calls = 0;
+    server.use(http.get('/api/sdlcs', () => {
+      calls += 1;
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [listRow('1'), listRow('2')] });
+    }));
+
+    const items = await listAllSdlcTemplatesFlat();
+
+    expect(calls).toBe(1);
+    expect(items.map((item) => String(item.id))).toEqual(['1', '2']);
+  });
+
+  it('accepts a wrapped list payload from the plain endpoint', async () => {
+    let calls = 0;
+    server.use(http.get('/api/sdlcs', () => {
+      calls += 1;
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { list: [listRow('9')], total: 1 },
+      });
+    }));
+
+    const items = await listAllSdlcTemplatesFlat();
+
+    expect(calls).toBe(1);
+    expect(items.map((item) => String(item.id))).toEqual(['9']);
+  });
+
+  it('walks further pages so a workflow past the first 100 stays selectable', async () => {
+    const requested: number[] = [];
+    const firstPage = Array.from({ length: 100 }, (_, index) => listRow(String(index + 1)));
+    server.use(http.get('/api/sdlcs', ({ request }) => {
+      const page = Number(new URL(request.url).searchParams.get('page'));
+      requested.push(page);
+      const list = page === 1 ? firstPage : [listRow('101')];
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list, total: 101 } });
+    }));
+
+    const items = await listAllSdlcTemplatesFlat();
+
+    expect(requested).toEqual([1, 2]);
+    expect(items).toHaveLength(101);
+    expect(String(items.at(-1)?.id)).toBe('101');
+  });
+
+  it('stops when a full page repeats rows instead of looping forever', async () => {
+    let calls = 0;
+    const repeated = Array.from({ length: 100 }, (_, index) => listRow(String(index + 1)));
+    server.use(http.get('/api/sdlcs', () => {
+      calls += 1;
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: repeated });
+    }));
+
+    const items = await listAllSdlcTemplatesFlat();
+
+    expect(calls).toBe(2);
+    expect(items).toHaveLength(100);
   });
 });

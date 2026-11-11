@@ -26,6 +26,8 @@
         <jedis.version>3.10.0</jedis.version>
         <node.version>v22.22.2</node.version>
         <npm.version>10.9.7</npm.version>
+        <!-- Reserve production bundling headroom above the CI worker's implicit 2 GiB heap. -->
+        <frontend.node.heap.mb>3072</frontend.node.heap.mb>
         <!-- Download cache survives clean; override with -Dfrontend.npm.cache=/absolute/path. -->
         <frontend.npm.cache>${user.home}/.cache/auto-wonder/npm</frontend.npm.cache>
         <skipFrontend>false</skipFrontend>
@@ -514,6 +516,9 @@
                                 </goals>
                                 <configuration>
                                     <arguments>run build</arguments>
+                                    <environmentVariables>
+                                        <NODE_OPTIONS>--max-old-space-size=${frontend.node.heap.mb}</NODE_OPTIONS>
+                                    </environmentVariables>
                                 </configuration>
                             </execution>
                         </executions>

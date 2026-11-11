@@ -59,6 +59,6 @@ export function AppearanceSwitch() {
     setMode(normalizeAppearance(key));
     message.info({ key: 'appearance-scope', content: t('appearance.scope') });
   }, items: options.map(({ key, title, icon }) => ({ key, icon, label: <span className="appearance-option">{title}{mode === key && <CheckOutlined aria-hidden="true" />}</span> })) }}>
-    <Button className="appearance-switch" aria-label={t('appearance.switch')} title={t('appearance.current', { mode: options.find(item => item.key === mode)?.title })} icon={mode === 'system' ? <DesktopOutlined aria-hidden="true" /> : resolved === 'dark' ? <MoonOutlined aria-hidden="true" /> : <SunOutlined aria-hidden="true" />} />
+    <Button type="text" className="appearance-switch" aria-label={t('appearance.switch')} title={t('appearance.current', { mode: options.find(item => item.key === mode)?.title })} icon={mode === 'system' ? <DesktopOutlined aria-hidden="true" /> : resolved === 'dark' ? <MoonOutlined aria-hidden="true" /> : <SunOutlined aria-hidden="true" />} />
   </Dropdown>;
 }

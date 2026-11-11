@@ -7,6 +7,8 @@ import com.aliyun.autowonder.json.JSONObject;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -31,6 +33,7 @@ import java.util.Set;
  */
 @Component
 public class OidcFederationAdapter implements FederationProtocolAdapter {
+    private static final Logger log = LoggerFactory.getLogger(OidcFederationAdapter.class);
     private static final Set<String> ALLOWED_ALGORITHMS = Set.of("RS256", "RS384", "RS512");
     private static final String DEFAULT_SCOPES = "openid profile email";
     private static final int RANDOM_BYTES = 32;
@@ -103,7 +106,8 @@ public class OidcFederationAdapter implements FederationProtocolAdapter {
                 issuer,
                 subject,
                 stringClaim(claims, connection.getNameClaim(), "name"),
-                stringClaim(claims, connection.getEmailClaim(), "email", "preferred_username"));
+                stringClaim(claims, connection.getEmailClaim(), "email", "preferred_username"),
+                optionalStringClaim(connection, claims, connection.getFeishuUserIdClaim()));
     }
 
     private String exchangeCode(FederationConnectionDO connection, String code,
@@ -305,6 +309,28 @@ public class OidcFederationAdapter implements FederationProtocolAdapter {
                 return value;
             }
         }
+        return null;
+    }
+
+    /**
+     * 可选属性声明（如飞书工号）：IdP 可能返回数组等非字符串类型。只有合法非空字符串参与后续同步，
+     * 其余情况跳过并记录不含属性原值的诊断，不能因此中断一次其余校验都已通过的登录。
+     */
+    private String optionalStringClaim(FederationConnectionDO connection, Claims claims, String configured) {
+        if (configured == null || configured.isBlank()) {
+            return null;
+        }
+        String name = configured.trim();
+        Object raw = claims.get(name);
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof String value) {
+            String trimmed = value.trim();
+            return trimmed.isEmpty() ? null : trimmed;
+        }
+        log.warn("sso oidc optional claim ignored provider={} claim={} type={}",
+                connection.getId(), name, raw.getClass().getSimpleName());
         return null;
     }
 

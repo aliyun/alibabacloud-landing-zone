@@ -200,6 +200,68 @@ class AgentVersionLifecycleTest {
     }
 
     @Test
+    void submit_writes_the_note_after_the_transition_using_the_next_lock_version() {
+        AgentDO agent = agentWithDraft(10L, 20L);
+        AgentVersionDO draft = draftVersion(20L, 10L);
+        when(agentDao.findById(10L)).thenReturn(agent);
+        when(versionDao.findById(20L)).thenReturn(draft);
+        when(versionDao.updateStatus(eq(20L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), isNull(), isNull(), eq(0), eq(7L))).thenReturn(1);
+        when(versionDao.updateSubmitNote(eq(20L), eq(100L), eq("重构 SOUL"), eq(1), eq(7L)))
+                .thenReturn(1);
+        when(agentDao.updateStatus(eq(10L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), eq(20L), eq(1), eq(0), eq(7L))).thenReturn(1);
+        AgentDO updated = agentWithDraft(10L, 20L);
+        updated.setStatus("PENDING_REVIEW");
+        when(agentDao.findById(10L)).thenReturn(agent, updated);
+
+        service.submit(10L, 100L, 7L, "重构 SOUL");
+
+        org.mockito.InOrder order = inOrder(versionDao);
+        order.verify(versionDao).updateStatus(eq(20L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), isNull(), isNull(), eq(0), eq(7L));
+        order.verify(versionDao).updateSubmitNote(20L, 100L, "重构 SOUL", 1, 7L);
+    }
+
+    @Test
+    void approve_does_not_clear_the_submitted_note() {
+        AgentDO agent = new AgentDO();
+        agent.setId(10L);
+        agent.setTenantId(100L);
+        agent.setName("TestBot");
+        agent.setStatus("PENDING_REVIEW");
+        agent.setEditingVersionId(20L);
+        agent.setLatestVersionNo(1);
+        agent.setVersion(0);
+        AgentVersionDO pending = new AgentVersionDO();
+        pending.setId(20L);
+        pending.setTenantId(100L);
+        pending.setAgentId(10L);
+        pending.setVersionNo(1);
+        pending.setStatus("PENDING_REVIEW");
+        pending.setRoleName("coder");
+        pending.setSubmitNote("说明");
+        pending.setVersion(0);
+        when(agentDao.findById(10L)).thenReturn(agent);
+        when(versionDao.findById(20L)).thenReturn(pending);
+        when(versionDao.updateStatus(eq(20L), eq(100L), eq("APPROVED"),
+                eq(7L), eq("lgtm"), anyString(), eq(0), eq(7L))).thenReturn(1);
+        when(agentDao.updateStatus(eq(10L), eq(100L), eq("ONLINE"),
+                eq(20L), isNull(), eq(1), eq(0), eq(7L))).thenReturn(1);
+        AgentDO onlineAgent = new AgentDO();
+        onlineAgent.setId(10L);
+        onlineAgent.setName("TestBot");
+        onlineAgent.setStatus("ONLINE");
+        onlineAgent.setOnlineVersionId(20L);
+        onlineAgent.setLatestVersionNo(1);
+        when(agentDao.findById(10L)).thenReturn(agent, onlineAgent);
+
+        service.approve(10L, 100L, 7L, "lgtm");
+
+        verify(versionDao, never()).updateSubmitNote(anyLong(), anyLong(), any(), anyInt(), anyLong());
+    }
+
+    @Test
     void approve_sets_online_and_generates_identity() {
         AgentDO agent = new AgentDO();
         agent.setId(10L);

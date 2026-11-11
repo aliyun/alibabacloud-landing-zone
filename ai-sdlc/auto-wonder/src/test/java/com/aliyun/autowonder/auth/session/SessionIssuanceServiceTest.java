@@ -35,7 +35,7 @@ class SessionIssuanceServiceTest {
         jwtService = mock(JwtService.class);
         sessionService = mock(SessionService.class);
         jwtProperties = mock(JwtProperties.class);
-        when(jwtProperties.getRefreshTtlSeconds()).thenReturn(604800L);
+        when(jwtProperties.getRefreshTtlSeconds()).thenReturn(31536000L);
         when(jwtService.signAccess(any())).thenReturn("access-1");
         service = new SessionIssuanceService(jwtService, sessionService, jwtProperties);
     }
@@ -60,7 +60,7 @@ class SessionIssuanceServiceTest {
         assertNull(payload.getValue().getCurrentWorkspaceId());
         assertNotNull(payload.getValue().getJti());
 
-        verify(sessionService).storeRefresh(response.getRefreshToken(), 10000L, 604800);
+        verify(sessionService).storeRefresh(response.getRefreshToken(), 10000L, 31536000);
     }
 
     @Test
@@ -83,6 +83,30 @@ class SessionIssuanceServiceTest {
         LoginResponse response = service.issue(user);
 
         assertFalse(response.getUser().getIsAdmin());
+    }
+
+    @Test
+    void pendingReviewAccountNeverReceivesASession() {
+        UserDO user = user();
+        user.setStatus(2);
+
+        var error = org.junit.jupiter.api.Assertions.assertThrows(
+                com.aliyun.autowonder.common.error.BizException.class, () -> service.issue(user));
+
+        assertEquals("37012", error.getCode());
+        org.mockito.Mockito.verifyNoInteractions(jwtService, sessionService);
+    }
+
+    @Test
+    void logicallyDeletedAccountNeverReceivesASession() {
+        UserDO user = user();
+        user.setIsDeleted(1);
+
+        var error = org.junit.jupiter.api.Assertions.assertThrows(
+                com.aliyun.autowonder.common.error.BizException.class, () -> service.issue(user));
+
+        assertEquals("29007", error.getCode());
+        org.mockito.Mockito.verifyNoInteractions(jwtService, sessionService);
     }
 
     private static UserDO user() {

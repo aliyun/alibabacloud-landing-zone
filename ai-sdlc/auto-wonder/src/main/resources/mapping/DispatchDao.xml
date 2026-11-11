@@ -2,6 +2,11 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aliyun.autowonder.dispatch.DispatchDao">
+    <update id="activateInteractionRework">
+        UPDATE dispatch SET status='PENDING',sdlc_step_id=#{sdlcStepId},agent_version_id=#{agentVersionId},
+            resume_from_dispatch_id=#{resumeFromDispatchId},version=version+1,gmt_modified=NOW(3)
+        WHERE tenant_id=#{tenantId} AND id=#{id} AND version=#{version} AND status='WAITING_FOR_PAUSE' AND is_deleted=0
+    </update>
 
     <resultMap id="dispatchMap" type="com.aliyun.autowonder.dispatch.DispatchDO">
         <id column="id" property="id"/>

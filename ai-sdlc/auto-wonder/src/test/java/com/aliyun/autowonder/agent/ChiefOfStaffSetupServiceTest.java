@@ -45,6 +45,38 @@ class ChiefOfStaffSetupServiceTest {
         assertFalse(service.inspect(1L).ready());
     }
 
+    @Test void fillsDefaultsFromTheTargetWorkspaceCatalogOnly() {
+        var agents=mock(AgentDao.class);var bindings=mock(AgentSkillDao.class);var skills=mock(SkillDao.class);
+        var executors=mock(ExecutorDao.class);var executorService=mock(ExecutorService.class);
+        var workspaces=mock(WorkspaceDao.class);var configs=mock(ExecutorLaunchConfigService.class);
+        var options=mock(ExecutorLaunchOptionsService.class);var agent=new AgentDO();agent.setId(10L);agent.setOnlineVersionId(11L);
+        when(agents.findPlatformAgent(1L)).thenReturn(agent);
+        when(workspaces.findByIdForUpdate(1L)).thenReturn(new com.aliyun.autowonder.workspace.WorkspaceDO());
+        when(bindings.listByVersion(11L)).thenReturn(List.of());
+        var executor=new ExecutorDO();executor.setId(20L);executor.setTenantId(1L);executor.setClientKind("QODER_CLI");
+        when(executors.listByAgent(1L,10L)).thenReturn(List.of(executor));
+        var incomplete=new ExecutorLaunchConfigVO();incomplete.setVersion(4);
+        when(configs.readStoredConfig(20L,1L)).thenReturn(incomplete);
+        var defaults=new ExecutorLaunchOptionsVO();
+        defaults.setDefaultMemoryMode("platform");defaults.setDefaultCreateModel("auto");
+        defaults.setDefaultReasoningEffort("medium");defaults.setDefaultContextWindow("260000");
+        when(options.launchOptions(1L,"QODER_CLI")).thenReturn(defaults);
+        var service=new ChiefOfStaffSetupService(agents,bindings,skills,new PlatformSkillCatalog(),
+                mock(PlatformAgentSeeder.class),executors,executorService,mock(ConversationRuntimePresence.class),
+                workspaces,configs,options,mock(AgentEnvironmentVariableRefDao.class));
+
+        service.complete(1L,3L,new CreateExecutorRequest());
+
+        // Defaults come from the workspace being set up, never from another workspace's catalog.
+        verify(options).launchOptions(1L,"QODER_CLI");
+        var request=org.mockito.ArgumentCaptor.forClass(UpdateExecutorLaunchConfigRequest.class);
+        verify(configs).updateConfig(eq(20L),eq(1L),request.capture(),eq(3L));
+        assertEquals("auto",request.getValue().getModel());
+        assertEquals("platform",request.getValue().getMemoryMode());
+        assertEquals("medium",request.getValue().getReasoningEffort());
+        assertEquals("260000",request.getValue().getContextWindow());
+    }
+
     @Test void completeConfigurationIsIdempotentAndNeverUsesAIOrChangesCustomSettings() {
         var agents=mock(AgentDao.class);var bindings=mock(AgentSkillDao.class);var skills=mock(SkillDao.class);
         var seeder=mock(PlatformAgentSeeder.class);

@@ -8,6 +8,7 @@ import com.aliyun.autowonder.dashboard.dto.PipelineHealthVO;
 import com.aliyun.autowonder.dashboard.dto.RealtimeDashboardVO;
 import com.aliyun.autowonder.dashboard.dto.RunningTaskVO;
 import com.aliyun.autowonder.dashboard.dto.RunningWorkitemVO;
+import com.aliyun.autowonder.dashboard.dto.TodayCreatedWorkitemVO;
 import com.aliyun.autowonder.insights.InsightsDao;
 import com.aliyun.autowonder.insights.dto.InsightMetricsVO;
 import com.aliyun.autowonder.insights.participation.CompletionFactQuery;
@@ -190,6 +191,21 @@ class DashboardServiceTest {
         List<RunningTaskVO> result = service.getAgentRunning(1L, 5L);
         assertEquals(1, result.size());
         assertEquals(100L, result.get(0).getDispatchId());
+    }
+
+    @Test
+    void getTodayCreatedWorkitemsDelegatesToTheSharedScopeQuery() {
+        TodayCreatedWorkitemVO row = new TodayCreatedWorkitemVO();
+        row.setWorkitemId(31L);
+        row.setTitle("今日新建工单");
+        when(dao.listTodayCreatedWorkitems(1L)).thenReturn(List.of(row));
+
+        List<TodayCreatedWorkitemVO> result = service.getTodayCreatedWorkitems(1L);
+
+        assertEquals(1, result.size());
+        assertEquals(31L, result.get(0).getWorkitemId());
+        assertEquals("今日新建工单", result.get(0).getTitle());
+        verify(dao).listTodayCreatedWorkitems(1L);
     }
 
     @Test

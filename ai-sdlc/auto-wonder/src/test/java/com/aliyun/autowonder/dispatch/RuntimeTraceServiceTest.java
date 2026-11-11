@@ -18,6 +18,29 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class RuntimeTraceServiceTest {
+    @Test
+    void logWindowIsBoundedAndUsesArrivalIdsAcrossExecutorRestarts() {
+        DispatchDao dispatchDao = mock(DispatchDao.class);
+        DispatchRuntimeEventDao eventDao = mock(DispatchRuntimeEventDao.class);
+        when(dispatchDao.findById(44L)).thenReturn(dispatch(44L, 1L));
+        List<DispatchRuntimeEventDO> rows = new java.util.ArrayList<>();
+        for (long id = 301; id >= 101; id--) {
+            DispatchRuntimeEventDO row = event(1, "agent.message", "2026-07-30T10:00:00Z", "{\"contentSummary\":\"raw\"}");
+            row.setId(id);
+            rows.add(row);
+        }
+        when(eventDao.listWindow(1L, 44L, null, 201)).thenReturn(rows);
+        RuntimeTraceService service = new RuntimeTraceService(dispatchDao, eventDao);
+        RuntimeTraceVO window = service.getLogWindow(1L, 44L, null, null);
+        assertEquals(200, window.getEvents().size());
+        assertEquals(301L, window.getLastSeq());
+        assertEquals(102L, window.getNextBeforeId());
+        assertEquals("raw", window.getEvents().get(0).getDetail().get("contentSummary"));
+        assertFalse(service.getLogWindow(1L, 44L, 301L, null).isChanged());
+        org.mockito.Mockito.verify(eventDao, org.mockito.Mockito.never()).listByDispatchInArrivalOrder(1L, 44L);
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.getLogWindow(2L, 44L, null, null));
+    }
 
     @Test
     void projectsStoredEventsWithoutAnotherTraceTable() {

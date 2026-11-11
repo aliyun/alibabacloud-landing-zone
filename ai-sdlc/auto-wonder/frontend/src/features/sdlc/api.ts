@@ -57,6 +57,54 @@ export async function listSdlcTemplatesPage(
   return resp.data;
 }
 
+export const SDLC_FULL_PAGE_SIZE = 100;
+
+/**
+ * The grouped view needs every workflow before it can group by squad: a single page splits one
+ * squad across pages. `/api/sdlcs/page` caps size at 100 server-side, so walk the pages until the
+ * reported total is covered.
+ */
+export async function listAllSdlcTemplates(params: {
+  workType?: string;
+  status?: string;
+  squadIds?: number[];
+} = {}): Promise<{ items: SdlcTemplate[]; total: number }> {
+  const first = await listSdlcTemplatesPage({ ...params, page: 1, size: SDLC_FULL_PAGE_SIZE });
+  const byId = new Map<string, SdlcTemplate>();
+  for (const row of first.list) byId.set(String(row.id), row);
+  let pageNum = 2;
+  while (byId.size < first.total) {
+    const next = await listSdlcTemplatesPage({ ...params, page: pageNum, size: SDLC_FULL_PAGE_SIZE });
+    const sizeBefore = byId.size;
+    for (const row of next.list) byId.set(String(row.id), row);
+    // Stops as soon as a page adds nothing new, so an overstated total cannot loop forever.
+    if (byId.size === sizeBefore) break;
+    pageNum += 1;
+  }
+  return { items: Array.from(byId.values()), total: first.total };
+}
+
+/**
+ * Selectable workflow options for agent create/edit. Walks the plain list endpoint because that is
+ * the contract already used by the agent forms; the server caps a page at 100, so a workflow past
+ * the first page would otherwise be impossible to bind.
+ */
+export async function listAllSdlcTemplatesFlat(): Promise<SdlcTemplate[]> {
+  const byId = new Map<string, SdlcTemplate>();
+  let page = 1;
+  for (;;) {
+    const raw = await listSdlcTemplates({ page, size: SDLC_FULL_PAGE_SIZE });
+    // Older responses wrap the array in `list`; accept both shapes so a tolerant mock keeps working.
+    const batch: SdlcTemplate[] = Array.isArray(raw) ? raw : ((raw as unknown as { list?: SdlcTemplate[] }).list ?? []);
+    const sizeBefore = byId.size;
+    for (const row of batch) byId.set(String(row.id), row);
+    if (batch.length < SDLC_FULL_PAGE_SIZE || byId.size === sizeBefore) {
+      return Array.from(byId.values());
+    }
+    page += 1;
+  }
+}
+
 export async function getSdlcTemplate(id: SdlcId): Promise<SdlcTemplate> {
   const resp = await apiClient.get<SdlcTemplate>(`/api/sdlcs/${id}`);
   return resp.data;

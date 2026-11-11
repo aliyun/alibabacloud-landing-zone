@@ -8,6 +8,9 @@ import com.aliyun.autowonder.dispatch.DispatchPauseService;
 import com.aliyun.autowonder.dispatch.DispatchRecoveryService;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
+import com.aliyun.autowonder.dispatch.ExecutionAvailabilityService;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
@@ -29,8 +32,8 @@ import static org.mockito.Mockito.*;
 class InteractionWorkflowServiceTest {
 
     @Test
-    void queuedReworkKeepsValidBoundFlowAfterAgentDefaultChanges() {
-        for (String scenario : List.of("valid bound step", "missing bound step", "unbound agent")) {
+    void queuedReworkResolvesTheCurrentFlowAtActivationInsteadOfRestoringTheOldBinding() {
+        for (String scenario : List.of("latest entry available", "missing latest entry", "unbound agent")) {
             DispatchDao dao = mock(DispatchDao.class);
             DispatchService dispatchService = mock(DispatchService.class);
             AgentSdlcResolver resolver = mock(AgentSdlcResolver.class);
@@ -49,12 +52,12 @@ class InteractionWorkflowServiceTest {
             when(dao.findById(102L)).thenReturn(paused);
             when(dao.listByWorkitem(100L, 50L)).thenReturn(List.of(paused, queued));
             when(resolver.resolveSdlcId(100L, 40013L)).thenReturn(scenario.equals("unbound agent") ? null : 910L);
-            SdlcStepDO step = new SdlcStepDO(); step.setId(812L);
-            if (scenario.equals("valid bound step")) {
-                when(resolver.resolveStep(100L, 810L, "812", null)).thenReturn(step);
+            SdlcStepDO step = new SdlcStepDO(); step.setId(912L);
+            if (scenario.equals("latest entry available")) {
+                when(resolver.firstStep(100L, 910L)).thenReturn(step);
                 when(dispatchService.releaseInteractionRework(100L, 104L)).thenReturn(true);
                 service.onPaused(100L, 102L);
-                verify(workitemService).rebindForInteractionRework(100L, 50L, 40013L, 810L, 812L, 0L);
+                verify(workitemService).rebindForInteractionRework(100L, 50L, 40013L, 910L, 912L, 0L);
                 verify(dispatchService).releaseInteractionRework(100L, 104L);
                 verify(publisher).publishEvent(new GuidanceDispatchQueuedEvent(100L, 104L));
             } else {
@@ -160,6 +163,34 @@ class InteractionWorkflowServiceTest {
         assertNull(result);
         verify(resolver).resolveSdlcId(100L, 40015L);
         verify(resolver, never()).resolveSdlcId(100L, 123L);
+        verify(dao, never()).listByWorkitem(anyLong(), anyLong());
+        verify(dispatchService, never()).enqueueInteractionRework(
+                anyLong(), anyLong(), anyLong(), anyLong(), any(), anyLong(), any(), anyLong());
+    }
+
+    @Test
+    void managementRejectionSkipsTheNewInteractionExecution() {
+        DispatchDao dao = mock(DispatchDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        AgentSdlcResolver resolver = mock(AgentSdlcResolver.class);
+        InteractionWorkflowService service = new InteractionWorkflowService(
+                dao, dispatchService, mock(DispatchPauseService.class), resolver,
+                mock(WorkitemService.class), mock(ApplicationEventPublisher.class),
+                transactionManager(), workitemDao());
+        DispatchDO side = dispatch(103L, 40013L, DispatchStatus.SUCCEEDED, "CANONICAL_INTERACTION");
+        when(dao.findById(103L)).thenReturn(side);
+        when(resolver.resolveSdlcId(100L, 40013L)).thenReturn(810L);
+        ExecutionAvailabilityService availability = mock(ExecutionAvailabilityService.class);
+        doThrow(BizException.keyed(ErrorCode.EXECUTION_SDLC_DISABLED, "execution.sdlc_disabled",
+                new Object[0], "disabled")).when(availability)
+                .requireStartable(100L, 40013L, 810L);
+        service.setExecutionAvailabilityService(availability);
+        JSONObject plan = new JSONObject();
+        plan.put("targetStepId", "812");
+
+        DispatchDO result = service.apply(100L, 103L, plan);
+
+        assertNull(result);
         verify(dao, never()).listByWorkitem(anyLong(), anyLong());
         verify(dispatchService, never()).enqueueInteractionRework(
                 anyLong(), anyLong(), anyLong(), anyLong(), any(), anyLong(), any(), anyLong());

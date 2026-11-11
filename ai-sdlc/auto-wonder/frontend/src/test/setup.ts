@@ -4,7 +4,11 @@ import { createRequire } from 'node:module';
 import { useId } from 'react';
 import { getConfig } from '@testing-library/react';
 import { configure } from '@testing-library/dom';
-import { fetch, FormData, Headers, Request, Response } from 'undici';
+
+// Undici captures Blob/File constructors in its WebIDL checks at import time.
+// Install matching Node constructors first so multipart files retain their bytes.
+Object.assign(globalThis, { Blob, File });
+const { fetch, FormData, Headers, Request, Response } = await import('undici');
 
 // user-event resolves the top-level DOM package; RTL configures its nested copy.
 // Flush individual user-event DOM events through RTL's public React wrappers.

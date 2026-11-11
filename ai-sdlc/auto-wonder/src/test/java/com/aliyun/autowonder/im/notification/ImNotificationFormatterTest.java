@@ -1,8 +1,11 @@
 package com.aliyun.autowonder.im.notification;
 
+import com.aliyun.autowonder.notification.NotificationLink;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -361,6 +364,92 @@ class ImNotificationFormatterTest {
         try {
             assertTrue(new ImNotificationFormatter().format(new ImNotificationMessageContext("raw", "已指派", "url", 7), legacy).contains("**指派人**：系统"));
         } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @Test
+    void formatsDuplicateIntentTitlesAsAbsoluteMarkdownLinks() {
+        ImNotificationTask task = duplicateTask("new [draft]", "old *copy*");
+        ImNotificationFormatter formatter = new ImNotificationFormatter();
+        ImNotificationMessageContext context =
+                new ImNotificationMessageContext("研发效能部", null, "https://auto.example.com/", 7L);
+
+        assertEquals("""
+                ### 发现可能重复的工单
+
+                **新工单**：[new \\[draft\\]](https://auto.example.com/workitems/55?workspaceId=7)
+                **已存在的重复工单**：
+                - [old \\*copy\\*](https://auto.example.com/workitems/2?workspaceId=7)""",
+                formatter.format(context, task));
+
+        String english = formatter.format(context, task.withRecipientLocale("en-US"));
+        assertTrue(english.contains("**Submitted work item**: [new \\[draft\\]](https://auto.example.com/workitems/55?workspaceId=7)"));
+        assertTrue(english.contains("- [old \\*copy\\*](https://auto.example.com/workitems/2?workspaceId=7)"));
+    }
+
+    @Test
+    void duplicateIntentFallsBackToPlainContentWithoutACompleteSnapshot() {
+        ImNotificationFormatter formatter = new ImNotificationFormatter();
+        ImNotificationMessageContext context =
+                new ImNotificationMessageContext("研发效能部", null, "https://auto.example.com", 7L);
+        List<List<NotificationLink>> incomplete = List.of(
+                List.of(),
+                List.of(new NotificationLink("SUBMITTED", "new", "/workitems/55?workspaceId=7")),
+                List.of(new NotificationLink("DUPLICATE", "old", "/workitems/2?workspaceId=7")));
+        for (List<NotificationLink> links : incomplete) {
+            String message = formatter.format(context, duplicateTask("纯文本新旧标题", links));
+            assertTrue(message.contains("纯文本新旧标题"));
+            assertTrue(message.contains("[查看工单](https://auto.example.com/workitems/55?workspaceId=7)"));
+            assertFalse(message.contains("**新工单**"));
+        }
+        ImNotificationTask noSnapshot = new ImNotificationTask("duplicate-intent:88:DINGTALK:9", 88L, 7L, 55L, 9L,
+                "SYSTEM", 0L, "数字员工", null, "重复提醒", ImNotificationTask.TYPE_DUPLICATE_INTENT, "纯文本新旧标题");
+        assertTrue(formatter.format(context, noSnapshot).contains("纯文本新旧标题"));
+    }
+
+    @Test
+    void formatsCancelledAccessRequestWithoutTheApprovalLink() {
+        ImNotificationTask task = new ImNotificationTask(
+                "WORKSPACE_ACCESS_CANCELLED:555:DINGTALK:11", 555L, 100L, 0L, 11L,
+                "USER", 9L, "李四", null, null,
+                ImNotificationTask.TYPE_WORKSPACE_ACCESS_REQUEST, "READ_WRITE",
+                ImNotificationTask.SOURCE_ACCESS_CANCELLED);
+        ImNotificationFormatter formatter = new ImNotificationFormatter();
+        ImNotificationMessageContext context =
+                new ImNotificationMessageContext("研发效能部", null, "https://auto.example.com", 100L);
+
+        String chinese = formatter.format(context, task);
+        assertEquals("""
+                ### 权限申请已撤销
+
+                **工作空间**：研发效能部
+                **申请人**：李四
+
+                该加入申请已撤销，无需审批。""", chinese);
+        String english = formatter.format(context, task.withRecipientLocale("en-US"));
+        assertEquals("""
+                ### Access request cancelled
+
+                **Workspace**: 研发效能部
+                **Requester**: 李四
+
+                This join request was cancelled and no approval is needed.""", english);
+        for (String message : List.of(chinese, english)) {
+            assertFalse(message.contains("/settings/members"));
+            assertFalse(message.contains("新的权限申请"));
+            assertFalse(message.contains("New access request"));
+        }
+    }
+
+    private static ImNotificationTask duplicateTask(String submitted, String duplicate) {
+        return duplicateTask(submitted, List.of(
+                new NotificationLink("SUBMITTED", submitted, "/workitems/55?workspaceId=7"),
+                new NotificationLink("DUPLICATE", duplicate, "/workitems/2?workspaceId=7")));
+    }
+
+    private static ImNotificationTask duplicateTask(String content, List<NotificationLink> links) {
+        return new ImNotificationTask("duplicate-intent:88:DINGTALK:9", 88L, 7L, 55L, 9L,
+                "SYSTEM", 0L, "数字员工", null, "重复提醒", ImNotificationTask.TYPE_DUPLICATE_INTENT, content)
+                .withRelatedLinks(links);
     }
 
     private static ImNotificationTask accessTask(String notificationType, String outcome,

@@ -10,4 +10,5 @@ public class DispatchControlCapabilitiesVO {
     private ControlActionCapabilityVO end;
     private ControlActionCapabilityVO forceEnd;
     private ControlActionCapabilityVO resume;
+    private ControlActionCapabilityVO restartLatest;
 }

@@ -27,6 +27,24 @@ class TaskPackagerTest {
     }
 
     @Test
+    void restartedRoundCarriesLineageAndTheCrossRoundReceiptContract() throws Exception {
+        PackageContext ctx = baseCtx();
+        ctx.setDeliveryRoundId(1234L); ctx.setSourceDispatchId(1200L); ctx.setWorkflowSnapshotSha256("frozen-hash");
+        ctx.setExternalOperations(List.of(Map.of("operationKey", "pr:repo/branch", "status", "SUCCEEDED", "receiptRef", "pr:42")));
+        Map<String, byte[]> archive = unzip(storage.get(packager.build(ctx).getOssRef()));
+        JSONObject manifest = JSON.parseObject(new String(archive.get("manifest.json"), StandardCharsets.UTF_8));
+        assertEquals("1234", manifest.getString("deliveryRoundId"));
+        assertEquals("1200", manifest.getString("sourceDispatchId"));
+        assertEquals("frozen-hash", manifest.getString("workflowSnapshotSha256"));
+        String task = new String(archive.get("workitem.md"), StandardCharsets.UTF_8);
+        assertTrue(task.startsWith(ctx.getWorkitemTitle() + "\n\n" + ctx.getWorkitemContentMd()));
+        assertTrue(task.contains("autowonder.external_operation"));
+        assertTrue(task.contains("mayExecute=true"));
+        assertTrue(task.contains("IN_FLIGHT or UNKNOWN requires authoritative external readback"));
+        assertTrue(task.contains("pr:42"));
+    }
+
+    @Test
     void indexedCommentsPreserveExactTextAndRemainStableWhenAnotherCommentArrives() throws Exception {
         PackageContext context = baseCtx();
         String original = "  必须保留接口兼容性\n```java\nreturn value;\n```\n";
@@ -784,5 +802,71 @@ class TaskPackagerTest {
         ref.setName(name + "/deliverables/runtime-source-revision.json");
         ref.setOssRef(ossRef);
         return ref;
+    }
+
+    @Test
+    void prdDrivenPackageCarriesTheFourFrozenDesignFiles() throws Exception {
+        PackageContext c = baseCtx();
+        c.setPrdDesign(frozenDesign());
+
+        Map<String, byte[]> files = unzip(storage.get(packager.build(c).getOssRef()));
+
+        assertTrue(files.containsKey("design/prd.html"));
+        assertTrue(files.containsKey("design/requirements.json"));
+        assertTrue(files.containsKey("design/project-profile.json"));
+        assertTrue(files.containsKey("design/manifest.json"));
+        assertEquals("<html>PRD v2</html>",
+                new String(files.get("design/prd.html"), StandardCharsets.UTF_8));
+        assertTrue(new String(files.get("design/requirements.json"), StandardCharsets.UTF_8)
+                .contains("REQ-001"));
+    }
+
+    @Test
+    void designFilesAreRegisteredInManifestDigestsAndDesignBlock() throws Exception {
+        PackageContext c = baseCtx();
+        c.setPrdDesign(frozenDesign());
+
+        JSONObject manifest = JSON.parseObject(new String(
+                unzip(storage.get(packager.build(c).getOssRef())).get("manifest.json"),
+                StandardCharsets.UTF_8));
+        JSONObject digests = manifest.getJSONObject("fileDigests");
+
+        for (String entry : List.of("design/prd.html", "design/requirements.json",
+                "design/project-profile.json", "design/manifest.json")) {
+            assertNotNull(digests.getString(entry), "missing digest for " + entry);
+            assertTrue(digests.getString(entry).startsWith("sha256:"), entry);
+        }
+        assertEquals(2, manifest.getJSONObject("design").getIntValue("prdVersionNo"));
+        assertEquals("design-sha", manifest.getJSONObject("design").getString("designSha256"));
+        assertEquals(4, manifest.getJSONArray("designFiles").size());
+    }
+
+    @Test
+    void legacyPackageHasNoDesignSectionAndUnchangedShape() throws Exception {
+        PackageContext c = baseCtx();
+
+        Map<String, byte[]> files = unzip(storage.get(packager.build(c).getOssRef()));
+        JSONObject manifest = JSON.parseObject(new String(files.get("manifest.json"),
+                StandardCharsets.UTF_8));
+
+        assertTrue(files.keySet().stream().noneMatch(name -> name.startsWith("design/")),
+                "a workitem without a design must not gain design files");
+        assertFalse(manifest.containsKey("design"));
+        assertFalse(manifest.containsKey("designFiles"));
+    }
+
+    private PrdDesignPackage frozenDesign() {
+        Map<String, byte[]> files = new LinkedHashMap<>();
+        files.put("design/prd.html", "<html>PRD v2</html>".getBytes(StandardCharsets.UTF_8));
+        files.put("design/requirements.json",
+                "{\"requirements\":[{\"key\":\"REQ-001\"}]}".getBytes(StandardCharsets.UTF_8));
+        files.put("design/project-profile.json",
+                "{\"repoId\":42}".getBytes(StandardCharsets.UTF_8));
+        files.put("design/manifest.json",
+                "{\"prdVersionNo\":2}".getBytes(StandardCharsets.UTF_8));
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("prdVersionNo", 2);
+        manifest.put("designSha256", "design-sha");
+        return new PrdDesignPackage(files, manifest, 61L, 2, "design-sha");
     }
 }

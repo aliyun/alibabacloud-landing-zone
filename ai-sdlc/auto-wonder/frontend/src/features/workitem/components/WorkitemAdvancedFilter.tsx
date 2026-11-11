@@ -1,10 +1,13 @@
 import { Fragment, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, DatePicker, Modal, Select, Space, Tag, Tooltip, Typography } from 'antd';
 import { CloseCircleFilled, DeleteOutlined, FilterOutlined } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import { formatDateTime } from '@/shared/i18n/format';
+import { useAuthStore } from '@/shared/auth/store';
 import { useMembers } from '@/features/settings/hooks';
+import { listAllSquads } from '@/features/squad/api';
 import { useWorkitemTagOptions } from '../hooks';
 import {
   EMPTY_CREATED_TIME_RANGE,
@@ -15,6 +18,7 @@ import {
 } from '../createdTimeFilter';
 import {
   TAG_CONDITION_LIMIT,
+  TAG_CONDITION_OPS,
   createEmptyTagCondition,
   hasIncompleteTagCondition,
   isTagConditionsTooLong,
@@ -22,18 +26,26 @@ import {
   type WorkitemTagConditionOp,
 } from '../tagConditionFilter';
 
-/** 高级筛选的完整条件：创建时间、创建者（本地用户 ID，多选之间为 OR）与标签逻辑条件（条件之间为 AND）。 */
+/** 高级筛选的完整条件：创建时间、创建者（本地用户 ID，多选之间为 OR）、标签逻辑条件（条件之间为 AND）
+ *  与交付小队（多选之间为 OR；未归属小队与具体小队互斥）。 */
 export interface WorkitemAdvancedFilterState {
   created: CreatedTimeRangeDraft;
   creatorIds: number[];
   tagConditions: WorkitemTagConditionDraft[];
+  squadIds: number[];
+  unassignedSquad: boolean;
 }
 
 export const EMPTY_ADVANCED_FILTER: WorkitemAdvancedFilterState = {
   created: EMPTY_CREATED_TIME_RANGE,
   creatorIds: [],
   tagConditions: [],
+  squadIds: [],
+  unassignedSquad: false,
 };
+
+/** 「未归属小队」选项的哨兵值，提交前转换为 unassignedSquad=true。 */
+export const UNASSIGNED_SQUAD_ID = -1;
 
 const TAG_OP_LABEL_KEYS = {
   AND: 'list.tagConditionOpAnd',
@@ -42,7 +54,6 @@ const TAG_OP_LABEL_KEYS = {
   NOT: 'list.tagConditionOpNot',
 } as const;
 
-const TAG_OPS = ['AND', 'OR', 'IN', 'NOT'] as const;
 const TAG_MORE_SUFFIX = '…';
 
 interface WorkitemAdvancedFilterProps {
@@ -69,8 +80,14 @@ function creatorName(member: { nickname: string; username: string } | undefined,
  */
 export function WorkitemAdvancedFilter({ applied, onApply }: WorkitemAdvancedFilterProps) {
   const { t, i18n } = useTranslation('workitem');
+  const workspaceId = useAuthStore((state) => state.currentWorkspace?.id);
   const membersQuery = useMembers();
   const tagOptionsQuery = useWorkitemTagOptions();
+  const squadsQuery = useQuery({
+    queryKey: ['workitem-advanced-filter-squads', workspaceId],
+    queryFn: () => listAllSquads(),
+    staleTime: 60_000,
+  });
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<WorkitemAdvancedFilterState>(applied);
   const rowIdRef = useRef(1);
@@ -96,6 +113,20 @@ export function WorkitemAdvancedFilter({ applied, onApply }: WorkitemAdvancedFil
   const creatorTagText = creatorNames.length > 2
     ? t('list.creatorFilterMore', { names: displayedNames, total: creatorNames.length })
     : t('list.creatorFilterNames', { names: displayedNames });
+
+  const squadsFailed = squadsQuery.isError;
+  const squads = squadsQuery.data ?? [];
+  const squadOptions = [
+    ...squads.map((squad) => ({ value: squad.id, label: squad.name })),
+    { value: UNASSIGNED_SQUAD_ID, label: t('list.squadUnassigned') },
+  ];
+  const squadFilterNames = applied.unassignedSquad
+    ? [t('list.squadUnassigned')]
+    : applied.squadIds.map((id) => squads.find((squad) => squad.id === id)?.name ?? `#${id}`);
+  const displayedSquadNames = squadFilterNames.slice(0, 2).join(nameSeparator);
+  const squadTagText = squadFilterNames.length > 2
+    ? t('list.squadFilterMore', { names: displayedSquadNames, total: squadFilterNames.length })
+    : t('list.squadFilterNames', { names: displayedSquadNames });
 
   // 每次打开都从已应用条件起步，避免上次未提交的草稿残留
   const openPanel = () => {
@@ -170,6 +201,18 @@ export function WorkitemAdvancedFilter({ applied, onApply }: WorkitemAdvancedFil
       {creatorNames.length > 2
         ? <Tooltip title={creatorNames.join(nameSeparator)}>{creatorTag}</Tooltip>
         : creatorTag}
+      {squadFilterNames.length > 0 ? (
+        <Tooltip title={squadFilterNames.length > 2 ? squadFilterNames.join(nameSeparator) : undefined}>
+          <Tag
+            data-testid="workitem-squad-filter-tag"
+            closable
+            closeIcon={<CloseCircleFilled data-testid="workitem-squad-filter-clear" aria-label={t('list.clearSquadFilter')} />}
+            onClose={() => onApply({ ...applied, squadIds: [], unassignedSquad: false })}
+          >
+            {squadTagText}
+          </Tag>
+        </Tooltip>
+      ) : null}
       {applied.tagConditions.map((condition) => {
         const opLabel = t(TAG_OP_LABEL_KEYS[condition.op]);
         const visibleTags = condition.tags.slice(0, 2).join(nameSeparator);
@@ -277,7 +320,7 @@ export function WorkitemAdvancedFilter({ applied, onApply }: WorkitemAdvancedFil
                 aria-label={t('list.tagConditionLabel')}
                 value={condition.op}
                 onChange={(op) => updateTagCondition(condition.rowId, { op })}
-                options={TAG_OPS.map((op) => ({ value: op, label: t(TAG_OP_LABEL_KEYS[op]) }))}
+                options={TAG_CONDITION_OPS.map((op) => ({ value: op, label: t(TAG_OP_LABEL_KEYS[op]) }))}
               />
               <Select
                 mode="multiple"
@@ -313,6 +356,36 @@ export function WorkitemAdvancedFilter({ applied, onApply }: WorkitemAdvancedFil
           </Space>
           {tagConditionsIncomplete ? <Alert type="error" showIcon message={t('list.tagConditionIncomplete')} /> : null}
           {tagConditionsTooLong ? <Alert type="error" showIcon message={t('list.tagConditionTooLong')} /> : null}
+          <Typography.Text strong>{t('list.squadLabel')}</Typography.Text>
+          <Select
+            mode="multiple"
+            showSearch
+            allowClear
+            maxTagCount="responsive"
+            style={{ width: '100%' }}
+            placeholder={t('list.squadPlaceholder')}
+            aria-label={t('list.squadLabel')}
+            loading={squadsQuery.isLoading}
+            value={draft.unassignedSquad ? [UNASSIGNED_SQUAD_ID] : draft.squadIds}
+            onChange={(values: number[]) => setDraft((prev) => {
+              const hasSentinel = values.includes(UNASSIGNED_SQUAD_ID);
+              const selectedSquads = values.filter((value) => value !== UNASSIGNED_SQUAD_ID);
+              // 已选「未归属」时再选具体小队：以具体小队为准，自动取消未归属
+              if (hasSentinel && prev.unassignedSquad && selectedSquads.length > 0) {
+                return { ...prev, squadIds: selectedSquads, unassignedSquad: false };
+              }
+              if (hasSentinel) {
+                return { ...prev, squadIds: [], unassignedSquad: true };
+              }
+              return { ...prev, squadIds: selectedSquads, unassignedSquad: false };
+            })}
+            options={squadOptions}
+            filterOption={(input, option) => String(option?.label ?? '')
+              .toLowerCase()
+              .includes(input.trim().toLowerCase())}
+            notFoundContent={squadsFailed ? t('list.squadLoadFailed') : t('list.squadNoData')}
+          />
+          {squadsFailed ? <Alert type="warning" showIcon message={t('list.squadLoadFailed')} /> : null}
         </Space>
       </Modal>
     </Space>

@@ -49,9 +49,11 @@ import { CopyMessageButton } from './CopyMessageButton';
 import { ArtifactPreviewDrawer } from './ArtifactPreviewDrawer';
 import type { Artifact } from '@/shared/types/workitem';
 import { CLARIFICATION_THEME, agentBlockStyle, userBubbleStyle } from './theme';
+import { useClarificationBrowserNotification } from './useClarificationBrowserNotification';
 import {
   useClarificationConversations,
   useClarificationConversation,
+  useLatestClarificationConversation,
   useCreateClarificationConversation,
   useSubmitClarificationTurn,
   useCancelClarificationTurn,
@@ -371,6 +373,61 @@ export function WorkitemClarificationPanel({
   const agentRestorePending = !userSelectedAgentRef.current
     && (urlRestore.pending || urlConversationUnsettled);
 
+  // 默认打开「最近一次会话」（工单 57463）：依据从浏览器本地记忆升级为服务端记录，
+  // 换浏览器/换成员也能直接进入。URL 上下文优先，此时不做这次查询。
+  const restoredFromUrl = restoredAgentIdRef.current != null
+    || restoredConversationIdRef.current != null;
+  const latestQuery = useLatestClarificationConversation(workitemId, !restoredFromUrl);
+  const serverResolvedRef = useRef(false);
+  const serverResolvedConversationIdRef = useRef<number | null>(null);
+  // 解析窗口：没有 URL 上下文、用户还没手动接管选择。期间只展示加载态、不渲染
+  // 选人页，避免「先闪一下选人页再跳走」（FR-5）。命中结果要等落定 effect 把身份
+  // 写进 state 之后才算结束，否则会多渲染一帧选人页。
+  const latestPending = !restoredFromUrl
+    && !userSelectedAgentRef.current
+    && (latestQuery.isLoading
+      || (latestQuery.isSuccess && latestQuery.data != null && !serverResolvedRef.current));
+
+  // 命中即落定身份与会话；没有记录或查询失败都静默回落现有链路（FR-1/FR-6）。
+  // 放在自动选会话之前：它先写 conversationId，自动选择就不会再抢着取列表首项。
+  // 每次挂载只落定一次：/latest 之后重新取数（窗口聚焦/缓存失效）拿到新数据时，
+  // 不能把用户已经从下拉改选的会话顶回最新（CR N-1）。
+  useEffect(() => {
+    if (serverResolvedRef.current) return;
+    if (restoredFromUrl || userSelectedAgentRef.current) return;
+    if (!latestQuery.isSuccess) return;
+    const latest = latestQuery.data;
+    if (!latest) return;
+    serverResolvedRef.current = true;
+    serverResolvedConversationIdRef.current = latest.id;
+    // 小队归属异步补齐（见下），这里先用 0 占位，不阻塞打开会话。
+    setSelection({ squadId: 0, agentId: latest.agentId });
+    setConversationId(latest.id);
+  }, [restoredFromUrl, latestQuery.isSuccess, latestQuery.data]);
+
+  // 服务端会话的小队归属只用于「切换数字员工」回显与交付预填：查不到保持 0 占位，
+  // 不伪造预填（与 URL 恢复口径一致）。数字人已移出所有小队时照常打开会话（FR-4）。
+  const serverSquadQuery = useQuery({
+    queryKey: ['clarification', 'agent-squad', 'server', latestQuery.data?.agentId],
+    queryFn: () => findSquadIdForAgent(latestQuery.data!.agentId),
+    enabled: serverResolvedRef.current
+      && !userSelectedAgentRef.current
+      && latestQuery.data != null,
+    staleTime: 5 * 60_000,
+  });
+  useEffect(() => {
+    if (!serverResolvedRef.current || userSelectedAgentRef.current) return;
+    const agentId = latestQuery.data?.agentId;
+    const squadId = serverSquadQuery.data;
+    if (agentId == null || squadId == null || squadId <= 0) return;
+    setSelection((current) => (
+      current && current.agentId === agentId && current.squadId === squadId
+        ? current
+        : { squadId, agentId }
+    ));
+    writeClarificationPrefill(workitemId, { squadId, agentId });
+  }, [latestQuery.data?.agentId, serverSquadQuery.data, workitemId]);
+
   // 三条选人路径（成员选择 / 「切换数字员工」后的重选 / localStorage 记忆命中）都汇聚到
   // 这个派生值上，其中记忆命中那条没有任何点击事件，所以监听跃迁而不是挂 handler。
   // 用 useLayoutEffect：记忆命中时 useEffect 会先 paint 一帧非全屏再切换，可见闪烁。
@@ -646,6 +703,12 @@ export function WorkitemClarificationPanel({
               message.info(i18n.t('workitem:clarification.questionExpired'));
               return;
             }
+            // 服务端按卡片 schema 拒收（缺必答、未知字段、类型不符）时给出可读原因，
+            // 卡片保持可答，用户补完再提交即可。
+            if (error instanceof ApiError && error.code === ErrorCodes.PARAM_INVALID && error.message) {
+              message.error(error.message);
+              return;
+            }
             message.error(i18n.t('workitem:clarification.answerFailed'));
           },
         },
@@ -672,7 +735,7 @@ export function WorkitemClarificationPanel({
   }, [acpInteractionSupported, convData?.pendingElicitations, streamedRequestIds]);
 
   /** 进行中的问题停靠在输入框位置分步作答：优先用流里的 pending 节点，否则用刷新恢复的。
-   *  同一时刻只显示一个；并发多个时取最早的一个，其余等当前这条 resolved 后再显示。
+   *  同一时刻只显示一个；已显示的问题仍待答时保持它，避免后台恢复的其他问题卸载当前草稿。
    *  已被后端结算（409）的 requestId 一律排除——其 resolved 事件可能没落库，时间线会一直当它 pending。 */
   const deliveredRequestIds = useMemo(() => new Set([...(convData?.answerDeliveries ?? []), ...(convData?.questionHistory ?? [])].map(card => card.requestId)), [convData?.answerDeliveries, convData?.questionHistory]);
   const questionHistories = useMemo(() => new Map(turns.filter(turn => turn.direction === 'IN' || turn.direction === 'INBOUND')
@@ -681,38 +744,35 @@ export function WorkitemClarificationPanel({
   const allQuestionHistory = useMemo(() => [...questionHistories.values()].flat(), [questionHistories]);
   const coveredQuestionIds = useMemo(() => new Set(allQuestionHistory.map(entry => questionIdentity(entry.turnId, entry.requestId))), [allQuestionHistory]);
   const currentQuestionTurnId = convData?.processingTurnId ?? [...turns].reverse().find(turn => turn.direction === 'IN' || turn.direction === 'INBOUND')?.id;
+  const [heldRequestId, setHeldRequestId] = useState<string | null>(null);
   const activeElicitation = useMemo(() => {
     if (!acpInteractionSupported) return null;
-    const streamed = timeline.find(
+    const streamed = timeline.filter(
       (node) => node.kind === 'elicitation' && node.elicitation
         && !node.elicitation.resolved
         && !settledElicitationIds.has(node.elicitation.requestId)
         && !deliveredRequestIds.has(node.elicitation.requestId),
-    )?.elicitation;
-    if (streamed) {
-      return {
-        requestId: streamed.requestId,
-        message: streamed.message ?? undefined,
-        schema: streamed.requestedSchema,
-      };
-    }
-    const restored = restoredElicitations.find((card) => !settledElicitationIds.has(card.requestId) && !deliveredRequestIds.has(card.requestId));
-    if (restored) {
-      return {
-        requestId: restored.requestId,
-        message: restored.message ?? undefined,
-        schema: parseSchemaJson(restored.requestedSchema),
-      };
-    }
-    return null;
-  }, [acpInteractionSupported, timeline, restoredElicitations, settledElicitationIds, deliveredRequestIds]);
+    ).map((node) => ({
+      requestId: node.elicitation!.requestId,
+      message: node.elicitation!.message ?? undefined,
+      schema: node.elicitation!.requestedSchema,
+    }));
+    const restored = restoredElicitations
+      .filter((card) => !settledElicitationIds.has(card.requestId) && !deliveredRequestIds.has(card.requestId))
+      .map((card) => ({
+        requestId: card.requestId,
+        message: card.message ?? undefined,
+        schema: parseSchemaJson(card.requestedSchema),
+      }));
+    const pending = [...streamed, ...restored];
+    return pending.find((card) => card.requestId === heldRequestId) ?? pending[0] ?? null;
+  }, [acpInteractionSupported, timeline, restoredElicitations, settledElicitationIds, deliveredRequestIds, heldRequestId]);
 
   /** 卡片结算后先淡出再卸载（工单 56330）：结算瞬间保留上一张卡片 CLARIFICATION_CARD_DISMISS_MS，
    *  期间输入行不提前出现，避免「卡片与输入框双 present」；新一组卡片到来时立即换新。
    *  渲染期直接完成承接（不放到 effect），否则会出现一帧「卡片已卸、输入框未回」的闪空。 */
   const activeElicitationId = activeElicitation?.requestId ?? null;
   const [heldElicitation, setHeldElicitation] = useState(activeElicitation);
-  const [heldRequestId, setHeldRequestId] = useState<string | null>(activeElicitationId);
   if (heldRequestId !== activeElicitationId) {
     setHeldRequestId(activeElicitationId);
     setHeldElicitation(activeElicitation ?? heldElicitation);
@@ -724,6 +784,31 @@ export function WorkitemClarificationPanel({
     const timer = window.setTimeout(() => setHeldElicitation(null), CLARIFICATION_CARD_DISMISS_MS);
     return () => window.clearTimeout(timer);
   }, [dismissingElicitation]);
+
+  // 只有「已打开面板里新出现」的待答问题才发浏览器提醒：刷新恢复的旧 pending、
+  // 重放与已结算问题都由基线/去重集合挡掉；卡片自身的渲染次数不参与判断。
+  const browserNotificationResolvedRequestIds = useMemo(
+    () => Array.from(new Set([...settledElicitationIds, ...deliveredRequestIds])),
+    [settledElicitationIds, deliveredRequestIds],
+  );
+  const notificationWorkspaceId = useAuthStore(state => state.currentWorkspace?.id ?? null);
+  const notificationUserId = useAuthStore(state => state.user?.id ?? null);
+  const clarificationNotificationIdentity = useMemo(() => ({
+    workspaceId: notificationWorkspaceId,
+    userId: notificationUserId,
+    workitemId,
+    conversationId,
+    agentId: effectiveAgentId ?? null,
+  }), [notificationWorkspaceId, notificationUserId, workitemId, conversationId, effectiveAgentId]);
+  useClarificationBrowserNotification({
+    identity: clarificationNotificationIdentity,
+    activeRequestId: activeElicitationId,
+    initialPendingRequestIds: (convData?.pendingElicitations ?? []).map(card => card.requestId),
+    snapshotReady: convData != null,
+    resolvedRequestIds: browserNotificationResolvedRequestIds,
+    // 浏览器通知点击发生在后台标签页，直接把 URL 契约交给浏览器解析。
+    navigate: (path) => { window.location.assign(path); },
+  });
 
   /** 斜杠命令候选：实时 acp_commands（耐久态）优先，会话详情带回的快照种子兜底，
    *  这样打开会话敲 `/` 立刻有候选，不必等探针结果经 WS 回来。
@@ -808,7 +893,7 @@ export function WorkitemClarificationPanel({
   }, [resetStreamedEvents]);
 
   useEffect(() => {
-    if (agentRestorePending) return;
+    if (agentRestorePending || latestPending) return;
     if (!conversations.data || conversationId !== null) return;
     if (conversations.data.length > 0) {
       setConversationId(conversations.data[0].id);
@@ -830,7 +915,7 @@ export function WorkitemClarificationPanel({
       },
     });
   }, [conversations.data, conversationId, effectiveAgentId, createMutation, workitemId,
-    agentRestorePending]);
+    agentRestorePending, latestPending]);
 
   // 打开会话即补一次带外命令探针：详情里的快照只保证秒显，命令可能早已过期。
   // 每个 conversationId 只打一次（重渲染/详情重拉/StrictMode 双调用都不能重复打），
@@ -864,16 +949,32 @@ export function WorkitemClarificationPanel({
     }
   }, [conversations.data, conversationId, agentRestorePending]);
 
+  // 服务端解析出的会话也可能在两次查询之间被并发操作：列表落地后校验一次，
+  // 不在列表里就清空，交回「取列表首项/自动创建」，避免详情 404 把用户钉死在空会话。
+  const serverConversationCheckedRef = useRef(false);
+  useEffect(() => {
+    if (serverConversationCheckedRef.current) return;
+    const resolvedId = serverResolvedConversationIdRef.current;
+    if (resolvedId == null || conversationId !== resolvedId) return;
+    if (!conversations.data) return;
+    serverConversationCheckedRef.current = true;
+    if (!conversations.data.some((item) => item.id === resolvedId)) {
+      setConversationId(null);
+    }
+  }, [conversations.data, conversationId]);
+
   // 把当前上下文回报给外层写回 URL。首次必须跳过「两者都还没确定」的那一帧：
   // URL 里的 agent/conversation 正是这一帧之前读出来的，回报 null 等于自己抹掉恢复源。
   const hasReportedContextRef = useRef(false);
   useEffect(() => {
     if (!hasReportedContextRef.current && effectiveAgentId == null && conversationId == null) return;
+    // 最近会话结果落地前不回报：此刻的 null 只是「还没解析出来」，写回 URL 会污染恢复源。
+    if (latestPending) return;
     hasReportedContextRef.current = true;
     onContextChange?.(
       agentRestorePending ? { conversationId } : { agentId: effectiveAgentId, conversationId },
     );
-  }, [effectiveAgentId, conversationId, onContextChange, agentRestorePending]);
+  }, [effectiveAgentId, conversationId, onContextChange, agentRestorePending, latestPending]);
 
   const handleCreateConversation = useCallback(() => {
     const agentId = effectiveAgentId;
@@ -898,14 +999,14 @@ export function WorkitemClarificationPanel({
 
   useEffect(() => {
     if (!conversationId || initializedInputRef.current === conversationId
-        || isConversationLoading || agentRestorePending
+        || isConversationLoading || agentRestorePending || latestPending
         || !conversation.isSuccess || convData?.id !== conversationId) return;
     initializedInputRef.current = conversationId;
     if (turns.length === 0 && !inputValueRef.current.trim() && !isReplying) {
       setInputValue(clarificationBootstrapPrompt(workitemId));
     }
   }, [conversationId, turns.length, isConversationLoading, isReplying, workitemId,
-    conversation.isSuccess, convData, agentRestorePending]);
+    conversation.isSuccess, convData, agentRestorePending, latestPending]);
 
   const handleSend = useCallback(() => {
     const content = inputValue.trim();
@@ -1053,6 +1154,48 @@ export function WorkitemClarificationPanel({
   const fullscreenColumnStyle: CSSProperties = fullscreen
     ? { width: '100%', minWidth: 0, overflowWrap: 'break-word' }
     : {};
+
+  if (latestPending) {
+    // 最近会话结果返回前的轻量加载态：只保留头行（返回/全屏仍可用），
+    // 不渲染选人页，避免「先闪一下选人页再跳走」。
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div
+          data-testid="clarification-panel-header"
+          style={{
+            padding: fullscreen ? '12px 24px' : '10px 14px',
+            borderBottom: `1px solid ${CLARIFICATION_THEME.hairline}`,
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {headerPrefix}
+            {/* 解析窗口里也留出改选入口：查询迟迟不返回时用户不必被钉在加载态，
+                点击即接管选择，迟到的结果不再覆盖（AC-10）。 */}
+            <Button
+              size="middle"
+              icon={<UserSwitchOutlined />}
+              aria-label={t('clarification.switchAgent')}
+              style={{ flexShrink: 0 }}
+              onClick={() => {
+                userSelectedAgentRef.current = true;
+                setSelection(null);
+              }}
+            >
+              {t('clarification.switchAgent')}
+            </Button>
+            <span style={{ flex: '1 1 0%' }} />
+            {headerSuffix}
+          </div>
+        </div>
+        <div data-testid="clarification-latest-loading" style={CLARIFICATION_LOAD_HINT_STYLE}>
+          <Typography.Text type="secondary">
+            {t('clarification.loadingLatestConversation')}
+          </Typography.Text>
+        </div>
+      </div>
+    );
+  }
 
   if (needsAgentSelection) {
     return (

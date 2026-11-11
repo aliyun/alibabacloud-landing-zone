@@ -5,8 +5,10 @@ import com.aliyun.autowonder.auth.federation.dto.CreateConnectionRequest;
 import com.aliyun.autowonder.auth.federation.dto.CreateIdpRequest;
 import com.aliyun.autowonder.auth.federation.dto.FederationConnectionVO;
 import com.aliyun.autowonder.auth.federation.dto.FederationIdpVO;
+import com.aliyun.autowonder.auth.federation.dto.PlatformAuthConfigVO;
 import com.aliyun.autowonder.auth.federation.dto.UpdateConnectionRequest;
 import com.aliyun.autowonder.auth.federation.dto.UpdateIdpRequest;
+import com.aliyun.autowonder.auth.federation.dto.UpdatePlatformAuthConfigRequest;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
@@ -31,9 +33,10 @@ class FederationAdminControllerTest {
     private static final String DENIED = "access.admin.federation_denied";
 
     private final FederationRegistryService registryService = mock(FederationRegistryService.class);
+    private final PlatformAuthConfigService authConfigService = mock(PlatformAuthConfigService.class);
     private final SystemAdminService systemAdminService = mock(SystemAdminService.class);
     private final FederationAdminController controller =
-            new FederationAdminController(registryService, systemAdminService);
+            new FederationAdminController(registryService, authConfigService, systemAdminService);
 
     @AfterEach
     void cleanup() {
@@ -68,6 +71,22 @@ class FederationAdminControllerTest {
         assertSame(updatedConnection, controller.updateConnection(7L, updateConnection).getData());
         controller.deleteIdp(1L);
         controller.deleteConnection(7L);
+    }
+
+    @Test
+    void authConfigEndpointsForwardThePlatformConfiguration() {
+        AutoWonderContext.get().setUserId(ADMIN);
+        PlatformAuthConfigVO current = new PlatformAuthConfigVO();
+        current.setRegistrationEnabled(true);
+        UpdatePlatformAuthConfigRequest request = new UpdatePlatformAuthConfigRequest();
+        request.setRegistrationEnabled(false);
+        when(authConfigService.current()).thenReturn(current);
+        when(authConfigService.update(request)).thenReturn(current);
+
+        assertSame(current, controller.authConfig().getData());
+        assertSame(current, controller.updateAuthConfig(request).getData());
+        verify(systemAdminService).requireSystemAdmin(ADMIN, "查看平台认证配置", DENIED);
+        verify(systemAdminService).requireSystemAdmin(ADMIN, "更新平台认证配置", DENIED);
     }
 
     @Test
@@ -114,8 +133,10 @@ class FederationAdminControllerTest {
         assertThrows(BizException.class, () -> controller.createConnection(new CreateConnectionRequest()));
         assertThrows(BizException.class, () -> controller.updateConnection(7L, new UpdateConnectionRequest()));
         assertThrows(BizException.class, () -> controller.deleteConnection(7L));
+        assertThrows(BizException.class, () -> controller.authConfig());
+        assertThrows(BizException.class, () -> controller.updateAuthConfig(new UpdatePlatformAuthConfigRequest()));
 
-        verifyNoInteractions(registryService);
+        verifyNoInteractions(registryService, authConfigService);
     }
 
     private static FederationIdpVO idp(Long id) {

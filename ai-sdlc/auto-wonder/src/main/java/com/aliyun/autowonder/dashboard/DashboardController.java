@@ -10,6 +10,7 @@ import com.aliyun.autowonder.dashboard.dto.PipelineHealthVO;
 import com.aliyun.autowonder.dashboard.dto.RealtimeDashboardVO;
 import com.aliyun.autowonder.dashboard.dto.RunningTaskVO;
 import com.aliyun.autowonder.dashboard.dto.RunningWorkitemVO;
+import com.aliyun.autowonder.dashboard.dto.TodayCreatedWorkitemVO;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -56,6 +57,11 @@ public class DashboardController {
     @GetMapping("/completed/today")
     public Result<List<CompletedWorkitemVO>> getTodayCompleted() {
         return Result.ok(dashboardService.getTodayCompleted(currentWorkspaceId()));
+    }
+
+    @GetMapping("/created/today")
+    public Result<List<TodayCreatedWorkitemVO>> getTodayCreated() {
+        return Result.ok(dashboardService.getTodayCreatedWorkitems(currentWorkspaceId()));
     }
 
     @GetMapping("/completed/week")

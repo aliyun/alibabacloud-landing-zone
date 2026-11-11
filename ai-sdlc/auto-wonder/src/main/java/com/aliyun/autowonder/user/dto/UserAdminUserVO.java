@@ -31,4 +31,10 @@ public class UserAdminUserVO {
     /** 仅正常用户可编辑资料/重置密码/删除/管理空间权限与工号。 */
     private Boolean editable;
     private Boolean restorable;
+    /** 当前实际可创建空间（正常账号且（平台管理员/全局开启/个人授权））。 */
+    private Boolean canCreateWorkspace;
+    /** 个人授权开关是否可操作：全局开启、平台管理员、待审/已删除均不可操作。 */
+    private Boolean workspaceCreationEditable;
+    private Boolean workspaceCreationGlobalDefaultAllowed;
+    private Boolean workspaceCreationAdminLocked;
 }

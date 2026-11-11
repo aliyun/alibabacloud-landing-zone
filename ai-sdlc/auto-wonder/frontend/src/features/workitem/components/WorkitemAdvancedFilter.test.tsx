@@ -47,6 +47,18 @@ function useTagOptionsServer(tags: string[] = TAG_OPTIONS) {
   })));
 }
 
+const SQUADS = [
+  { id: 11, name: '交付一队', description: '', memberCount: 1, gmtCreate: '2026-01-01' },
+  { id: 12, name: '交付二队', description: '', memberCount: 1, gmtCreate: '2026-01-02' },
+  { id: 13, name: '交付三队', description: '', memberCount: 1, gmtCreate: '2026-01-03' },
+];
+
+function useSquadsServer(squads: unknown[] = SQUADS) {
+  server.use(http.get('/api/squads', () => HttpResponse.json({
+    success: true, code: '0', message: '', data: squads, traceId: null,
+  })));
+}
+
 function renderWithProviders(ui: ReactElement) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
@@ -92,6 +104,7 @@ describe('WorkitemAdvancedFilter', () => {
   beforeEach(() => {
     useMembersServer();
     useTagOptionsServer();
+    useSquadsServer();
   });
 
   /** 下拉选项在隐藏无障碍列表里以 value 作为文本，这里只在当前可见的下拉中点选项内容节点。 */
@@ -206,7 +219,7 @@ describe('WorkitemAdvancedFilter', () => {
   });
 
   it('resets the draft and every applied condition', async () => {
-    const onApply = renderFilter({ created: { from: dayjs('2026-10-01'), to: dayjs('2026-10-10') }, creatorIds: [12], tagConditions: [] });
+    const onApply = renderFilter({ ...EMPTY_ADVANCED_FILTER, created: { from: dayjs('2026-10-01'), to: dayjs('2026-10-10') }, creatorIds: [12], tagConditions: [] });
     const dialog = await openPanel();
     expect(dateValue(dialog, '起始日期')).toBe('2026-10-01');
 
@@ -217,7 +230,7 @@ describe('WorkitemAdvancedFilter', () => {
   });
 
   it('starts from the applied condition each time the panel is reopened', async () => {
-    renderFilter({ created: { from: dayjs('2026-10-01'), to: null }, creatorIds: [12], tagConditions: [] });
+    renderFilter({ ...EMPTY_ADVANCED_FILTER, created: { from: dayjs('2026-10-01'), to: null }, creatorIds: [12], tagConditions: [] });
     let dialog = await openPanel();
     expect(dateValue(dialog, '起始日期')).toBe('2026-10-01');
     expect(dateValue(dialog, '结束日期')).toBe('');
@@ -233,7 +246,7 @@ describe('WorkitemAdvancedFilter', () => {
   it('labels a start-only and an end-only condition separately', () => {
     const first = renderWithProviders(
       <WorkitemAdvancedFilter
-        applied={{ created: { from: dayjs('2026-10-01'), to: null }, creatorIds: [], tagConditions: [] }}
+        applied={{ ...EMPTY_ADVANCED_FILTER, created: { from: dayjs('2026-10-01'), to: null }, creatorIds: [], tagConditions: [] }}
         onApply={vi.fn()}
       />,
     );
@@ -242,7 +255,7 @@ describe('WorkitemAdvancedFilter', () => {
 
     renderWithProviders(
       <WorkitemAdvancedFilter
-        applied={{ created: { from: null, to: dayjs('2026-10-10') }, creatorIds: [], tagConditions: [] }}
+        applied={{ ...EMPTY_ADVANCED_FILTER, created: { from: null, to: dayjs('2026-10-10') }, creatorIds: [], tagConditions: [] }}
         onApply={vi.fn()}
       />,
     );
@@ -290,7 +303,7 @@ describe('WorkitemAdvancedFilter', () => {
   });
 
   it('summarizes more than two creators and shows every name in a tooltip', async () => {
-    renderFilter({ created: EMPTY_CREATED_TIME_RANGE, creatorIds: [12, 34, 56], tagConditions: [] });
+    renderFilter({ ...EMPTY_ADVANCED_FILTER, created: EMPTY_CREATED_TIME_RANGE, creatorIds: [12, 34, 56], tagConditions: [] });
 
     const tag = await screen.findByTestId('workitem-creator-filter-tag');
     await waitFor(() => expect(tag).toHaveTextContent('创建者：张三、李四（共 3 人）'));
@@ -303,7 +316,7 @@ describe('WorkitemAdvancedFilter', () => {
 
   it('falls back to the username and then to the user id for unresolvable creators', async () => {
     useMembersServer([{ ...MEMBERS[0], userId: 77, username: 'zhaoliu', nickname: '' }]);
-    renderFilter({ created: EMPTY_CREATED_TIME_RANGE, creatorIds: [77, 99], tagConditions: [] });
+    renderFilter({ ...EMPTY_ADVANCED_FILTER, created: EMPTY_CREATED_TIME_RANGE, creatorIds: [77, 99], tagConditions: [] });
 
     const tag = await screen.findByTestId('workitem-creator-filter-tag');
     await waitFor(() => expect(tag).toHaveTextContent('创建者：zhaoliu、#99'));
@@ -311,22 +324,22 @@ describe('WorkitemAdvancedFilter', () => {
 
   it('clears only the creator condition from its own tag', async () => {
     const created: CreatedTimeRangeDraft = { from: dayjs('2026-10-01'), to: dayjs('2026-10-10') };
-    const onApply = renderFilter({ created, creatorIds: [12], tagConditions: [] });
+    const onApply = renderFilter({ ...EMPTY_ADVANCED_FILTER, created, creatorIds: [12], tagConditions: [] });
     await screen.findByTestId('workitem-creator-filter-tag');
 
     await userEvent.click(screen.getByTestId('workitem-creator-filter-clear'));
 
-    expect(onApply).toHaveBeenCalledWith({ created, creatorIds: [], tagConditions: [] });
+    expect(onApply).toHaveBeenCalledWith({ ...EMPTY_ADVANCED_FILTER, created, creatorIds: [], tagConditions: [] });
     expect(screen.getByTestId('workitem-created-filter-tag')).toBeInTheDocument();
   });
 
   it('clears only the created condition from its own tag', async () => {
-    const onApply = renderFilter({ created: { from: dayjs('2026-10-01'), to: null }, creatorIds: [12], tagConditions: [] });
+    const onApply = renderFilter({ ...EMPTY_ADVANCED_FILTER, created: { from: dayjs('2026-10-01'), to: null }, creatorIds: [12], tagConditions: [] });
     await screen.findByTestId('workitem-creator-filter-tag');
 
     await userEvent.click(screen.getByTestId('workitem-created-filter-clear'));
 
-    expect(onApply).toHaveBeenCalledWith({ created: EMPTY_CREATED_TIME_RANGE, creatorIds: [12], tagConditions: [] });
+    expect(onApply).toHaveBeenCalledWith({ ...EMPTY_ADVANCED_FILTER, created: EMPTY_CREATED_TIME_RANGE, creatorIds: [12], tagConditions: [] });
     expect(screen.getByTestId('workitem-creator-filter-tag')).toBeInTheDocument();
   });
 
@@ -376,7 +389,7 @@ describe('WorkitemAdvancedFilter', () => {
   });
 
   it('stays bilingual through the shared workitem namespace', async () => {
-    renderFilter({ created: EMPTY_CREATED_TIME_RANGE, creatorIds: [12, 34], tagConditions: [] });
+    renderFilter({ ...EMPTY_ADVANCED_FILTER, created: EMPTY_CREATED_TIME_RANGE, creatorIds: [12, 34], tagConditions: [] });
     expect(await screen.findByText('创建者：张三、李四')).toBeInTheDocument();
     const trigger = screen.getByRole('button', { name: /高级筛选/ });
 
@@ -471,6 +484,7 @@ describe('WorkitemAdvancedFilter', () => {
 
   it('resets every applied condition including tag conditions', async () => {
     const onApply = renderFilter({
+      ...EMPTY_ADVANCED_FILTER,
       created: { from: dayjs('2026-10-01'), to: null },
       creatorIds: [12],
       tagConditions: [{ rowId: 1, op: 'AND', tags: ['前端'] }],
@@ -541,5 +555,92 @@ describe('WorkitemAdvancedFilter', () => {
     await userEvent.click(within(tagConditionRow(dialog, 1)).getAllByRole('combobox')[1]);
 
     expect(await screen.findByText('暂无可选标签')).toBeInTheDocument();
+  });
+
+  function squadCombobox(dialog: HTMLElement) {
+    return within(dialog).getByRole('combobox', { name: '交付小队' });
+  }
+
+  it('lists workspace squads with an unassigned option in the squad filter', async () => {
+    renderFilter();
+    const dialog = await openPanel();
+
+    expect(within(dialog).getByText('交付小队')).toBeInTheDocument();
+    expect(squadCombobox(dialog).closest('.ant-select-selector')).toHaveTextContent('选择交付小队（可多选）');
+
+    await userEvent.click(squadCombobox(dialog));
+
+    for (const label of ['交付一队', '交付二队', '交付三队', '未归属小队']) {
+      expect((await screen.findAllByText(label)).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('applies the unassigned option and clears selected squads', async () => {
+    const onApply = renderFilter();
+    const dialog = await openPanel();
+
+    await userEvent.click(squadCombobox(dialog));
+    await pickOption('交付一队');
+    await pickOption('未归属小队');
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    const applied = onApply.mock.calls[0][0] as WorkitemAdvancedFilterState;
+    expect(applied.squadIds).toEqual([]);
+    expect(applied.unassignedSquad).toBe(true);
+  });
+
+  it('clears the unassigned option when a concrete squad is picked', async () => {
+    const onApply = renderFilter({ ...EMPTY_ADVANCED_FILTER, unassignedSquad: true });
+    const dialog = await openPanel();
+
+    await userEvent.click(squadCombobox(dialog));
+    await pickOption('交付一队');
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    const applied = onApply.mock.calls[0][0] as WorkitemAdvancedFilterState;
+    expect(applied.squadIds).toEqual([11]);
+    expect(applied.unassignedSquad).toBe(false);
+  });
+
+  it('shows the applied squad tag and clears only that condition', async () => {
+    const onApply = renderFilter({ ...EMPTY_ADVANCED_FILTER, squadIds: [11, 12] });
+    const tag = await screen.findByTestId('workitem-squad-filter-tag');
+
+    await waitFor(() => expect(tag).toHaveTextContent('交付小队：交付一队、交付二队'));
+
+    await userEvent.click(within(tag).getByTestId('workitem-squad-filter-clear'));
+
+    expect(onApply).toHaveBeenCalledWith({ ...EMPTY_ADVANCED_FILTER, squadIds: [], unassignedSquad: false });
+  });
+
+  it('summarizes three or more squads with the total count', async () => {
+    renderFilter({ ...EMPTY_ADVANCED_FILTER, squadIds: [11, 12, 13] });
+
+    const tag = await screen.findByTestId('workitem-squad-filter-tag');
+    await waitFor(() => expect(tag).toHaveTextContent('交付小队：交付一队、交付二队（共 3 队）'));
+  });
+
+  it('shows the unassigned label in the applied squad tag', async () => {
+    renderFilter({ ...EMPTY_ADVANCED_FILTER, unassignedSquad: true });
+
+    const tag = await screen.findByTestId('workitem-squad-filter-tag');
+    expect(tag).toHaveTextContent('交付小队：未归属小队');
+  });
+
+  it('warns when the squad list fails to load without blocking apply', async () => {
+    server.use(http.get('/api/squads', () => HttpResponse.json(
+      { success: false, code: '500', message: 'boom', data: null },
+      { status: 500 },
+    )));
+    const onApply = renderFilter({ ...EMPTY_ADVANCED_FILTER, squadIds: [11] });
+    const dialog = await openPanel();
+
+    expect(await within(dialog).findByText('交付小队列表加载失败')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /应\s*用/ })).toBeEnabled();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    const applied = onApply.mock.calls[0][0] as WorkitemAdvancedFilterState;
+    expect(applied.squadIds).toEqual([11]);
   });
 });

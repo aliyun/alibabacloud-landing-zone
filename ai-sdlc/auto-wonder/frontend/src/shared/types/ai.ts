@@ -100,3 +100,53 @@ export interface AgentConfigGenResult {
   clarifyingQuestions?: string[];
   recommendations?: AgentConfigRecommendations;
 }
+
+// ---- PRD design scene (autoWonder.prdDesign.v1) ----
+
+export interface PrdRequirement {
+  key: string;
+  title: string;
+  description?: string;
+  priority?: string;
+  acceptanceCriteria?: string[];
+  excluded?: boolean;
+}
+
+export interface PrdOpenQuestion {
+  key: string;
+  question: string;
+  blocking?: boolean;
+  resolved?: boolean;
+  resolution?: string | null;
+}
+
+export interface PrdInterfaceDependency {
+  name: string;
+  method?: string;
+  path?: string;
+  /** EXISTING | PLANNED | TO_BE_CONFIRMED. */
+  status?: string;
+  description?: string;
+}
+
+export interface PrdPageDesign {
+  pageKey: string;
+  name: string;
+  route?: string;
+  layout?: string;
+  interactions?: string[];
+}
+
+export interface PrdDesignResult {
+  title: string;
+  background?: string;
+  goals?: string;
+  inScope?: string[];
+  nonGoals?: string[];
+  pages?: PrdPageDesign[];
+  interfaces?: PrdInterfaceDependency[];
+  targetProjectAdaptation?: string;
+  requirements?: PrdRequirement[];
+  openQuestions?: PrdOpenQuestion[];
+  risks?: string[];
+}

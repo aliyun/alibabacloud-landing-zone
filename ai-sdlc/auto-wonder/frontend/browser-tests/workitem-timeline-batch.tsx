@@ -4,11 +4,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { LocaleProvider } from '../src/shared/i18n/LocaleProvider';
 import { UnifiedTimeline } from '../src/features/workitem/components/UnifiedTimeline';
+import { useUnifiedTimeline } from '../src/features/workitem/hooks';
 import type { TimelineItem } from '../src/shared/types/workitem';
 
 // 工单时间线分批渲染浏览器 fixture：真实 Chrome 验证默认只渲染最近 50 条、
 // 加载更早每次展开 50 条直至全部、展开时视口位置稳定、新评论到达头部可见且
-// 不重置已展开数量、不足 50 条不显示按钮、中英文按钮文案。
+// 不重置已展开数量、不足 50 条不显示按钮、中英文按钮文案；分页窗口在有界滚动
+// 容器内验证整窗换页后的页首锚定、「查看较新的记录」sticky 常驻与同页重渲染不重置。
 // 无后端/DB：mock 最新在前评论数据，受控重渲染模拟轮询新评论到达。
 // Run: node e2e-tests/workitem-timeline-batch/run.cjs
 
@@ -59,6 +61,46 @@ function ShortTimelineFixture() {
   );
 }
 
+function makeSamePageItem(seq: number): TimelineItem {
+  return {
+    id: 9000 + seq,
+    type: 'comment',
+    authorId: 9,
+    authorName: '同页更新',
+    authorType: 'HUMAN',
+    isAgent: false,
+    content: `same-page-appended-${seq}`,
+    gmtCreate: new Date(Date.UTC(2026, 10, 5, 0, 0, 0) + seq * 1000).toISOString(),
+  };
+}
+
+// 与服务端分页路径一致：分页窗口放在 workitem-left-scroll 同形态的有界滚动容器内，
+// 才能观察整窗换页后的页首锚定与「查看较新的记录」sticky 常驻。
+function PagedTimelineFixture() {
+  const [page, setPage] = useState(0);
+  const { data = [], hasMore, isLoading } = useUnifiedTimeline('timeline-history', page);
+  const [samePageItems, setSamePageItems] = useState<TimelineItem[]>([]);
+  const appendSamePageItem = () => {
+    setSamePageItems((current) => [...current, makeSamePageItem(current.length)]);
+  };
+  return (
+    <div data-testid="timeline-paged-fixture" style={{ maxWidth: 860, marginTop: 24 }}>
+      <button type="button" data-testid="fixture-same-page-update" onClick={appendSamePageItem}>
+        same page update
+      </button>
+      <div data-testid="timeline-paged-scroll" style={{ height: 420, overflowY: 'auto' }}>
+        <UnifiedTimeline
+          items={[...data, ...samePageItems]}
+          hasMore={hasMore}
+          loading={isLoading}
+          page={page}
+          onPageChange={setPage}
+        />
+      </div>
+    </div>
+  );
+}
+
 const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 createRoot(document.getElementById('root')!).render(
   <LocaleProvider>
@@ -66,6 +108,7 @@ createRoot(document.getElementById('root')!).render(
       <MemoryRouter initialEntries={['/']}>
         <BatchedTimelineFixture />
         <ShortTimelineFixture />
+        <PagedTimelineFixture />
       </MemoryRouter>
     </QueryClientProvider>
   </LocaleProvider>,

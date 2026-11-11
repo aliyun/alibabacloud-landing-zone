@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.prd.PrdDesignVersionDao">
+
+    <!-- Full row including the LONGTEXT design payload; used for single-version reads. -->
+    <sql id="cols">
+        id, workspace_id, design_id, version_no, status, source_version_id, design_json,
+        design_sha256, html_oss_ref, html_sha256, html_size, renderer_version, summary,
+        change_summary, requirement_count, open_question_count, blocking_question_count,
+        ai_session_id, confirmed_by, confirmed_at, confirmed_sha256, is_deleted, deleted_at,
+        version, creator_id, modifier_id, gmt_create, gmt_modified
+    </sql>
+
+    <!-- Listing never pulls the design payload: version history is metadata only. -->
+    <sql id="listCols">
+        id, workspace_id, design_id, version_no, status, source_version_id,
+        design_sha256, html_oss_ref, html_sha256, html_size, renderer_version, summary,
+        change_summary, requirement_count, open_question_count, blocking_question_count,
+        ai_session_id, confirmed_by, confirmed_at, confirmed_sha256, is_deleted, deleted_at,
+        version, creator_id, modifier_id, gmt_create, gmt_modified
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.prd.PrdDesignVersionDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO prd_design_version
+            (workspace_id, design_id, version_no, status, source_version_id, design_json,
+             design_sha256, html_oss_ref, html_sha256, html_size, renderer_version, summary,
+             change_summary, requirement_count, open_question_count, blocking_question_count,
+             ai_session_id, is_deleted, version, creator_id)
+        VALUES
+            (#{workspaceId}, #{designId}, #{versionNo}, #{status}, #{sourceVersionId}, #{designJson},
+             #{designSha256}, #{htmlOssRef}, #{htmlSha256}, #{htmlSize}, #{rendererVersion}, #{summary},
+             #{changeSummary}, #{requirementCount}, #{openQuestionCount}, #{blockingQuestionCount},
+             #{aiSessionId}, 0, 0, #{creatorId})
+    </insert>
+
+    <select id="findById" resultType="com.aliyun.autowonder.prd.PrdDesignVersionDO">
+        SELECT <include refid="cols"/> FROM prd_design_version
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND is_deleted = 0
+    </select>
+
+    <select id="findByVersionNo" resultType="com.aliyun.autowonder.prd.PrdDesignVersionDO">
+        SELECT <include refid="cols"/> FROM prd_design_version
+        WHERE workspace_id = #{workspaceId} AND design_id = #{designId}
+          AND version_no = #{versionNo} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByDesign" resultType="com.aliyun.autowonder.prd.PrdDesignVersionDO">
+        SELECT <include refid="listCols"/> FROM prd_design_version
+        WHERE workspace_id = #{workspaceId} AND design_id = #{designId} AND is_deleted = 0
+        ORDER BY version_no DESC
+    </select>
+
+    <select id="findLatestByDesign" resultType="com.aliyun.autowonder.prd.PrdDesignVersionDO">
+        SELECT <include refid="cols"/> FROM prd_design_version
+        WHERE workspace_id = #{workspaceId} AND design_id = #{designId} AND is_deleted = 0
+        ORDER BY version_no DESC
+        LIMIT 1
+    </select>
+
+    <select id="findByAiSession" resultType="com.aliyun.autowonder.prd.PrdDesignVersionDO">
+        SELECT <include refid="cols"/> FROM prd_design_version
+        WHERE workspace_id = #{workspaceId} AND ai_session_id = #{aiSessionId} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <!-- Only a draft can be submitted; the status guard makes a concurrent submit lose the race. -->
+    <update id="submitForReview">
+        UPDATE prd_design_version
+        SET status = 'PENDING_REVIEW',
+            version = version + 1
+            <if test="modifierId != null">, modifier_id = #{modifierId}</if>
+        WHERE id = #{id} AND workspace_id = #{workspaceId}
+          AND version = #{expectedVersion} AND status = 'DRAFT' AND is_deleted = 0
+    </update>
+
+    <!-- Rewrite a draft payload. The status guard makes a confirmed version untouchable. -->
+    <update id="updateDraft">
+        UPDATE prd_design_version
+        SET design_json = #{v.designJson},
+            design_sha256 = #{v.designSha256},
+            html_oss_ref = #{v.htmlOssRef},
+            html_sha256 = #{v.htmlSha256},
+            html_size = #{v.htmlSize},
+            renderer_version = #{v.rendererVersion},
+            summary = #{v.summary},
+            change_summary = #{v.changeSummary},
+            requirement_count = #{v.requirementCount},
+            open_question_count = #{v.openQuestionCount},
+            blocking_question_count = #{v.blockingQuestionCount},
+            version = version + 1
+            <if test="modifierId != null">, modifier_id = #{modifierId}</if>
+        WHERE id = #{v.id} AND workspace_id = #{v.workspaceId}
+          AND version = #{expectedVersion} AND status = 'DRAFT' AND is_deleted = 0
+    </update>
+
+    <update id="attachHtml">
+        UPDATE prd_design_version
+        SET html_oss_ref = #{htmlOssRef},
+            html_sha256 = #{htmlSha256},
+            html_size = #{htmlSize}
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND is_deleted = 0
+    </update>
+
+    <!-- A confirmed version is immutable: the status guard refuses to re-confirm or rewrite it. -->
+    <update id="confirm">
+        UPDATE prd_design_version
+        SET status = 'CONFIRMED',
+            confirmed_by = #{confirmedBy},
+            confirmed_at = NOW(3),
+            confirmed_sha256 = #{confirmedSha256},
+            version = version + 1
+        WHERE id = #{id} AND workspace_id = #{workspaceId}
+          AND version = #{expectedVersion} AND status &lt;&gt; 'CONFIRMED' AND is_deleted = 0
+    </update>
+
+    <!-- Confirmed versions are history and must not be deletable. -->
+    <update id="softDelete">
+        UPDATE prd_design_version
+        SET is_deleted = 1,
+            deleted_at = NOW(3),
+            version = version + 1
+            <if test="modifierId != null">, modifier_id = #{modifierId}</if>
+        WHERE id = #{id} AND workspace_id = #{workspaceId}
+          AND version = #{expectedVersion} AND status &lt;&gt; 'CONFIRMED' AND is_deleted = 0
+    </update>
+
+</mapper>

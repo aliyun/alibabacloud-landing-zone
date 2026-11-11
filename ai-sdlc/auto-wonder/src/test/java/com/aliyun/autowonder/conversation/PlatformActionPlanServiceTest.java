@@ -16,6 +16,7 @@ class PlatformActionPlanServiceTest {
         jdbc.execute("CREATE TABLE conversation_action_step(id BIGINT AUTO_INCREMENT PRIMARY KEY,tenant_id BIGINT,plan_id BIGINT,step_no INT,tool_name VARCHAR(128),arguments_json TEXT,arguments_sha256 CHAR(64),idempotency_key VARCHAR(128),idempotent INT,status VARCHAR(24),result_summary_json TEXT,started_at TIMESTAMP,finished_at TIMESTAMP)");
         access=mock(PlatformConversationAccessService.class);var conversation=new AgentConversationDO();conversation.setStatus("ACTIVE");
         when(access.requireBodyWrite(1L,2L,3L)).thenReturn(conversation);
+        when(access.requireBodyRead(1L,2L,3L)).thenReturn(conversation);
         var turns=mock(AgentConversationTurnDao.class);var turn=new AgentConversationTurnDO();turn.setId(4L);
         when(turns.findProcessingInbound(1L,2L)).thenReturn(turn);
         service=new PlatformActionPlanService(jdbc,access,turns);
@@ -42,5 +43,25 @@ class PlatformActionPlanServiceTest {
         AtomicInteger calls=new AtomicInteger();
         var result=service.resolve(1,3,2,plan.id(),plan.payloadHash(),true,a->{if(calls.incrementAndGet()==2)throw new IllegalStateException("private diagnostic");return "ok";});
         assertEquals("FAILED",result.status());assertEquals(2,calls.get());assertFalse(result.resultJson().contains("private diagnostic"));
+    }
+    @Test void proposedPlanCarriesTheProcessingInboundTurnId() {
+        var plan=service.propose(1,3,2,List.of(new PlatformActionPlanService.Action("update",Map.of("id",128))));
+        assertEquals(4L,plan.turnId());
+        var confirmed=service.resolve(1,3,2,plan.id(),plan.payloadHash(),true,a->Map.of("ok",true));
+        assertEquals(4L,confirmed.turnId());
+        var rejected=service.propose(1,3,2,List.of(new PlatformActionPlanService.Action("update",Map.of("id",129))));
+        assertEquals(4L,service.resolve(1,3,2,rejected.id(),rejected.payloadHash(),false,a->{fail();return null;}).turnId());
+    }
+    @Test void listedPlansKeepTheirTurnIdAndExistingFields() {
+        var first=service.propose(1,3,2,List.of(new PlatformActionPlanService.Action("update",Map.of("id",128))));
+        var second=service.propose(1,3,2,List.of(new PlatformActionPlanService.Action("update",Map.of("id",129))));
+        var listed=service.list(1,3,2);
+        assertEquals(2,listed.size());
+        var newest=listed.get(0);
+        assertEquals(second.id(),newest.id());assertEquals(4L,newest.turnId());
+        assertEquals(second.actionsJson(),newest.actionsJson());assertEquals(second.payloadHash(),newest.payloadHash());
+        assertEquals("PENDING",newest.status());assertNull(newest.resultJson());
+        assertEquals(java.time.Instant.parse(second.expiresAt()).getEpochSecond(),java.time.Instant.parse(newest.expiresAt()).getEpochSecond());
+        assertEquals(first.id(),listed.get(1).id());assertEquals(4L,listed.get(1).turnId());
     }
 }

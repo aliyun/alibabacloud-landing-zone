@@ -80,9 +80,10 @@ sort -u -o "$rid_map" "$rid_map"
 AW_E2E_APP_LOG="$APP_LOG" AW_E2E_FILE_LOG="$FILE_LOG" \
 AW_E2E_RID_MAP="$rid_map" AW_E2E_REPORT="$REPORT" \
 AW_E2E_RUNTIME_EVIDENCE="$AW_E2E_STATE_DIR/runtime-dispatch.json" \
+AW_E2E_SUPPLEMENT_LIB="$PWD/e2e-tests/lib/supplement_cleanup_evidence.py" \
 AW_E2E_APP_LOG_START_LINE="${AW_E2E_APP_LOG_START_LINE:-0}" \
 AW_E2E_FILE_LOG_START_LINE="${AW_E2E_FILE_LOG_START_LINE:-0}" python3 <<'PY'
-import json, os, re, sys
+import json, os, re, sys, hashlib, importlib.util
 
 app_log = os.environ["AW_E2E_APP_LOG"]
 file_log = os.environ["AW_E2E_FILE_LOG"]
@@ -117,6 +118,11 @@ def read_lines(path):
 
 app_all_lines = read_lines(app_log)
 file_all_lines = read_lines(file_log)
+spec = importlib.util.spec_from_file_location('supplement_cleanup_evidence', os.environ['AW_E2E_SUPPLEMENT_LIB'])
+supplement_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(supplement_module)
+supplement_claims = {(row['source'], row['line']): row for row in supplement_module.validate(
+    os.path.dirname(os.environ['AW_E2E_RUNTIME_EVIDENCE']), app_log, file_log)}
 app_start = app_start if 0 <= app_start <= len(app_all_lines) else 0
 file_start = file_start if 0 <= file_start <= len(file_all_lines) else 0
 app_lines = app_all_lines[app_start:]
@@ -195,6 +201,9 @@ for src, lines, start in (("stdout", app_lines, app_start), ("file", file_lines,
             continue
         counts[level] += 1
         call = calls.get(rid) or runtime_attribution(line, src, ln)
+        claim = supplement_claims.get((src, ln))
+        if not call and claim and hashlib.sha256((line + '\n').encode()).hexdigest() == claim['sha256']:
+            call = 'supplement_owned_teardown_eof:' + claim['scene'] + ':' + claim['proofId']
         if call:
             attr_counts[level] += 1
             attr_rows.append(f"ATTRIB|{level}|{src}:{ln}|rid={rid}|call={call}|endpoint={endpoint}|{msg}")

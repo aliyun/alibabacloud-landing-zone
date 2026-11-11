@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.executor;
 
+import com.aliyun.autowonder.common.RuntimeNpmPackage;
+
 import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -139,13 +141,15 @@ public class ExecutorLaunchCommandService {
         if (publicBaseUrl == null || publicBaseUrl.isBlank()) {
             throw BizException.keyed(ErrorCode.SYSTEM_ERROR, "executor.mcp_address_missing", null, "平台 MCP 地址未配置，无法生成执行器启动命令");
         }
-        String runtimeVersion = config.runtimeVersion == null ? brandingService.recommendedRuntimeVersion() : config.runtimeVersion;
+        // 只有明确保存的新固定版本生效；历史残留值继续跟随平台推荐版本。
+        String runtimeVersion = Boolean.TRUE.equals(config.runtimeVersionPinned) && config.runtimeVersion != null
+                ? config.runtimeVersion : brandingService.recommendedRuntimeVersion();
         String wsUrl = buildWsUrl(publicBaseUrl);
         String provider = ExecutorLaunchOptionsService.resolveProvider(clientKind);
         boolean qoderFamily = ExecutorLaunchOptionsService.isQoderFamily(provider);
 
         List<String> argv = new ArrayList<>(List.of(
-                "npx", "-y", "autowonder@" + runtimeVersion, "connect",
+                "npx", "-y", RuntimeNpmPackage.spec(runtimeVersion), "connect",
                 "--ws-url", wsUrl,
                 "--token", token,
                 "--executor-id", String.valueOf(executorId),

@@ -446,6 +446,64 @@ class UserDeletionServiceTest {
         verifyNoInteractions(auditLogService);
     }
 
+    // ---- registration rejection ----
+
+    @Test
+    void rejectingAPendingRegistrationUsesTheStatusGuardedDeleteAndAuditsRejection() {
+        UserDO pending = activeUser(7L, "alice");
+        pending.setStatus(2);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(pending);
+        when(workspaceMemberDao.findEarliestActiveWorkspaceId(7L)).thenReturn(100L);
+        when(userDao.logicalDeletePendingReview(eq(7L), any(Date.class), eq(9L))).thenReturn(1);
+
+        service.rejectPendingRegistration(7L, 9L);
+
+        verify(userDao).logicalDeletePendingReview(eq(7L), any(Date.class), eq(9L));
+        verify(workspaceMemberDao).softDeleteAllByUser(7L, 9L);
+        verify(userImIdentityDao).softDeleteAllByUser(7L, 9L);
+        AuditLogRecord record = recordedAudit();
+        assertEquals("USER_REGISTRATION_REJECT", record.getAction());
+        assertEquals(100L, record.getTenantId());
+        assertEquals("alice", record.getDetail().get("targetName"));
+    }
+
+    @Test
+    void rejectingANonPendingAccountIsRejectedWithoutTouchingRows() {
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(activeUser(7L, "alice"));
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.rejectPendingRegistration(7L, 9L));
+
+        assertEquals("37013", error.getCode());
+        verify(userDao, never()).logicalDeletePendingReview(anyLong(), any(Date.class), anyLong());
+        verifyNoDestructiveWork();
+    }
+
+    @Test
+    void aConcurrentApproveThatWinsTheRaceLeavesOnlyOneSuccessfulReview() {
+        UserDO pending = activeUser(7L, "alice");
+        pending.setStatus(2);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(pending);
+        when(userDao.logicalDeletePendingReview(eq(7L), any(Date.class), eq(9L))).thenReturn(0);
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.rejectPendingRegistration(7L, 9L));
+
+        assertEquals("37013", error.getCode());
+        verify(workspaceMemberDao, never()).softDeleteAllByUser(anyLong(), anyLong());
+        verifyNoInteractions(auditLogService);
+    }
+
+    @Test
+    void rejectingAMissingUserReportsNotFound() {
+        when(userDao.findByIdIncludingDeleted(404L)).thenReturn(null);
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.rejectPendingRegistration(404L, 9L));
+
+        assertEquals("10404", error.getCode());
+    }
+
     // ---- fixtures ----
 
     private UserDO activeUser(long id, String username) {

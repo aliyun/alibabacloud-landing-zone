@@ -224,6 +224,8 @@ class ExecutorUpdateSchemaContractTest {
                 "the scan must not drag secrets or wide columns into memory");
         assertTrue(scan.contains("JSON_EXTRACT(launch_config, '$.runtimeVersion')"),
                 "explicit command version pins must be excluded before scheduling automatic upgrades");
+        assertTrue(scan.contains("JSON_EXTRACT(launch_config, '$.runtimeVersionPinned')"),
+                "a historical runtime version without an explicit pin must remain eligible");
     }
 
     private static String createTable(String sql, String table) {

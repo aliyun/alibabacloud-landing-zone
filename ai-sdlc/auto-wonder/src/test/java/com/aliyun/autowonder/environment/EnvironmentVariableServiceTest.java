@@ -47,6 +47,8 @@ class EnvironmentVariableServiceTest {
         assertEquals(7L, inserted.getCreatorId());
         assertEquals("kc:v1:opaque", inserted.getCredentialRef());
         assertEquals("**", result.getValue());
+        assertEquals(0, result.getOnlineMountCount().intValue());
+        assertEquals(0, result.getDraftMountCount().intValue());
         String json = new ObjectMapper().writeValueAsString(result);
         assertFalse(json.contains("plain-secret"));
         assertFalse(json.contains("kc:v1:opaque"));
@@ -63,6 +65,61 @@ class EnvironmentVariableServiceTest {
 
         assertEquals(List.of("**", "**"), result.stream().map(EnvironmentVariableVO::getValue).toList());
         verifyNoInteractions(keyCenter);
+    }
+
+    @Test
+    void listMapsMountCountsAndFallsBackToZeroForLegacyRows() {
+        EnvironmentVariableDO mounted = row(1L, 41L, "ONLINE", "kc:a", 0);
+        mounted.setOnlineMountCount(2);
+        mounted.setDraftMountCount(0);
+        EnvironmentVariableDO draft = row(2L, 41L, "DRAFT", "kc:b", 0);
+        draft.setOnlineMountCount(0);
+        draft.setDraftMountCount(1);
+        EnvironmentVariableDO legacy = row(3L, 41L, "LEGACY", "kc:c", 0);
+        when(dao.listActive(41L)).thenReturn(List.of(mounted, draft, legacy));
+
+        List<EnvironmentVariableVO> result = service.list(41L);
+
+        assertEquals(2, result.get(0).getOnlineMountCount().intValue());
+        assertEquals(0, result.get(0).getDraftMountCount().intValue());
+        assertEquals(0, result.get(1).getOnlineMountCount().intValue());
+        assertEquals(1, result.get(1).getDraftMountCount().intValue());
+        assertEquals(0, result.get(2).getOnlineMountCount().intValue());
+        assertEquals(0, result.get(2).getDraftMountCount().intValue());
+    }
+
+    @Test
+    void updateReturnsLiveMountCounts() {
+        EnvironmentVariableDO current = row(9L, 41L, "TOKEN", "kc:existing", 3);
+        EnvironmentVariableDO persisted = row(9L, 41L, "TOKEN", "kc:existing", 4);
+        when(dao.findActiveById(41L, 9L)).thenReturn(current, persisted);
+        when(dao.updateMetadata(41L, 9L, "TOKEN", null, 7L, 3)).thenReturn(1);
+        EnvironmentVariableDO mounts = new EnvironmentVariableDO();
+        mounts.setOnlineMountCount(3);
+        mounts.setDraftMountCount(1);
+        when(dao.countMounts(41L, 9L)).thenReturn(List.of(mounts));
+
+        EnvironmentVariableVO result = service.update(41L, 7L, 9L,
+                new UpdateEnvironmentVariableRequest("TOKEN", null, false, null));
+
+        assertEquals(3, result.getOnlineMountCount().intValue());
+        assertEquals(1, result.getDraftMountCount().intValue());
+        verify(dao).countMounts(41L, 9L);
+    }
+
+    @Test
+    void updateFallsBackToZeroMountCountsWhenNoRowIsReturned() {
+        EnvironmentVariableDO current = row(9L, 41L, "TOKEN", "kc:existing", 3);
+        EnvironmentVariableDO persisted = row(9L, 41L, "TOKEN", "kc:existing", 4);
+        when(dao.findActiveById(41L, 9L)).thenReturn(current, persisted);
+        when(dao.updateMetadata(41L, 9L, "TOKEN", null, 7L, 3)).thenReturn(1);
+        when(dao.countMounts(41L, 9L)).thenReturn(List.of());
+
+        EnvironmentVariableVO result = service.update(41L, 7L, 9L,
+                new UpdateEnvironmentVariableRequest("TOKEN", null, false, null));
+
+        assertEquals(0, result.getOnlineMountCount().intValue());
+        assertEquals(0, result.getDraftMountCount().intValue());
     }
 
     @ParameterizedTest

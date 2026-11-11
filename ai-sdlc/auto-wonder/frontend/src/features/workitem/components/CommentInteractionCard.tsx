@@ -1,11 +1,13 @@
 import { formatDateTime } from '@/shared/i18n/format';
 import { Trans, useTranslation } from 'react-i18next';
 import { memo, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { CommentRobotIcon } from './CommentRobotIcon';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { CopyContentMenu } from '@/shared/ui/CopyContentMenu';
-import type { Artifact, RuntimeTraceEvent, TimelineItem } from '@/shared/types/workitem';
+import type { Artifact, CommentInteraction, RuntimeTraceEvent } from '@/shared/types/workitem';
 import { getRuntimeLog } from '../api';
+import { isTerminalInteractionExecution } from '../interactionExecution';
 import { activityText, eventErrors, redactDiagnostic } from './commentActivity';
 import { failureHistoryOf } from './failureHistory';
 import { FailureHistoryPanel } from './FailureHistoryPanel';
@@ -13,13 +15,19 @@ import './CommentInteractionCard.css';
 
 const ACTIVITY_TIME_FORMAT: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
 
-type Interaction = NonNullable<TimelineItem['interactions']>[number];
-export const CommentInteractionCard = memo(function CommentInteractionCard({ interaction, createdAt, artifacts, onArtifactClick }: {
+type Interaction = CommentInteraction;
+export const CommentInteractionCard = memo(function CommentInteractionCard({ interaction, createdAt, artifacts, onArtifactClick, actions }: {
   interaction: Interaction; createdAt: string; artifacts?: Artifact[]; onArtifactClick?: (artifact: Artifact) => void;
+  actions?: ReactNode;
 }) {
   const { t } = useTranslation('workitem');
   const [traceTerminal, setTraceTerminal] = useState('');
-  const active = !traceTerminal && !interaction.replyContent && ['QUEUED', 'DELIVERED'].includes(interaction.status);
+  const executionTerminal = isTerminalInteractionExecution(interaction.executionStatus);
+  // A cancel request projects the guidance as CANCELED before the executor confirms; keep the
+  // card in "ending" until the dispatch itself is terminal.
+  const canceling = Boolean(interaction.cancelRequested) && !executionTerminal && !traceTerminal;
+  const active = !traceTerminal && !interaction.replyContent
+    && (['QUEUED', 'DELIVERED'].includes(interaction.status) || canceling);
   const failed = interaction.status === 'FAILED' || traceTerminal === 'dispatch.failed';
   const canceled = interaction.status === 'CANCELED' || traceTerminal === 'dispatch.canceled';
   const [expanded, setExpanded] = useState(false);
@@ -80,7 +88,9 @@ export const CommentInteractionCard = memo(function CommentInteractionCard({ int
   const fallback = interaction.status === 'QUEUED'
     ? ({ PENDING: t('interaction.queued'), PACKAGING: t('interaction.packaging'), DISPATCHED: t('interaction.awaitingExecutor') }[interaction.executionStatus || ''] || t('interaction.starting'))
     : t('interaction.awaitingActivity');
-  const state = failed ? t('interaction.failed') : canceled ? t('interaction.canceled') : active ? t('interaction.processing') : interaction.replyContent ? t('interaction.replied') : t('interaction.awaitingSync');
+  const state = failed ? t('interaction.failed') : canceling ? t('interaction.ending')
+    : canceled ? t('interaction.canceled') : active ? t('interaction.processing')
+      : interaction.replyContent ? t('interaction.replied') : t('interaction.awaitingSync');
   const showLog = active || expanded;
   return <section className={`aw-comment-reply${failed ? ' aw-comment-reply--failed' : ''}`}
     data-testid={interaction.replyContent ? 'comment-interaction-reply' : 'comment-interaction-status'}>
@@ -93,7 +103,9 @@ export const CommentInteractionCard = memo(function CommentInteractionCard({ int
       {interaction.replyContent && <CopyContentMenu contentMd={interaction.replyContent} tooltip={t('interaction.copyReply')} />}
     </header>
     <div className="aw-comment-stage">
-      <span>{failed ? t('interaction.replyFailed') : canceled ? t('interaction.interactionCanceled') : active ? latest?.text || fallback : interaction.replyContent ? t('interaction.replyCompleted') : t('interaction.executionEnded')}</span>
+      <span>{failed ? t('interaction.replyFailed') : canceling ? t('interaction.endingHint')
+        : canceled ? t('interaction.interactionCanceled') : active ? latest?.text || fallback
+          : interaction.replyContent ? t('interaction.replyCompleted') : t('interaction.executionEnded')}</span>
       {Number.isFinite(duration) && <span>{active ? t('interaction.waited', { count: duration }) : t('interaction.duration', { count: duration })}</span>}
     </div>
     {showLog && <div ref={viewport} className={`aw-comment-log${expanded ? ' aw-comment-log--expanded' : ''}`} tabIndex={0}
@@ -111,7 +123,11 @@ export const CommentInteractionCard = memo(function CommentInteractionCard({ int
     <div className="aw-comment-controls">
       {interaction.dispatchId && <button type="button" onClick={() => setExpanded(!expanded)}>{expanded ? t('interaction.collapseLog') : t('interaction.expandLog')}</button>}
       {showLog && !following && <button type="button" onClick={() => setFollowing(true)}>{t('interaction.latest')}</button>}
+      {actions}
     </div>
+    {/* stopPending also covers a normal cancel while the executor is still running; only a
+        terminal execution means the platform ended it without stop confirmation. */}
+    {interaction.stopPending && executionTerminal && <div className="aw-comment-stop-warning" role="status">{t('interaction.stopPending')}</div>}
     {interaction.replyContent && <div className="aw-comment-answer"><MarkdownView content={interaction.replyContent} artifacts={artifacts} onArtifactClick={onArtifactClick} /></div>}
     {failed && <div className="aw-comment-error">
       <p>{t('interaction.unconfirmed')}</p>

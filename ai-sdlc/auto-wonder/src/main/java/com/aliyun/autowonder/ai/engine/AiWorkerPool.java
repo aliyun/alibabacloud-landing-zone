@@ -123,6 +123,12 @@ public class AiWorkerPool {
     }
 
     public void executeSession(AiSessionDO session, String userInput) {
+        if (AiConstants.Scene.PRD_DESIGN.equals(session.getScene())) {
+            sessionDao.updateFailed(session.getId(), session.getTenantId(),
+                    "PRD generation requires a client executor", session.getVersion());
+            streamPublisher.publishStatus(session.getId(), session.getTenantId(), AiConstants.Status.FAILED);
+            return;
+        }
         SceneAdapter adapter = sceneRegistry.get(session.getScene());
         if (adapter == null) {
             log.info("ai session exec failed sessionId={} reason=unsupported_scene scene={}", session.getId(), session.getScene());
@@ -284,7 +290,10 @@ public class AiWorkerPool {
 
     private String allowedToolsFor(AiSessionDO session) {
         if (AiConstants.Scene.SDLC_GEN.equals(session.getScene())
-                || AiConstants.Scene.AGENT_CONFIG_GEN.equals(session.getScene())) {
+                || AiConstants.Scene.AGENT_CONFIG_GEN.equals(session.getScene())
+                // PRD design is derived from the frozen project profile; repository access belongs to
+                // the probe scene, and tools here would make the same inputs yield different designs.
+                || AiConstants.Scene.PRD_DESIGN.equals(session.getScene())) {
             return "";
         }
         return null;

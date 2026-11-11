@@ -130,6 +130,28 @@ class PlatformIntelligenceServiceTest {
         verifyNoInteractions(conversations);
     }
 
+    @Test
+    void cancelReusesTheExistingConversationAndTurnWithoutWaiting() {
+        persist("PROCESSING", null);
+
+        service.cancel(1L, requestId);
+
+        verify(conversations).requestTurnCancel(1L, 77L, 88L);
+    }
+
+    @Test
+    void cancelIsSkippedForUnknownOrTerminalRequests() {
+        service.cancel(1L, requestId);
+        verifyNoInteractions(conversations);
+
+        persist("SUCCESS", "done");
+        service.cancel(1L, requestId);
+        persist("CANCELED", null);
+        service.cancel(1L, requestId);
+
+        verifyNoInteractions(conversations);
+    }
+
     private String externalId() { return "platform-internal:" + requestId; }
 
     private void persist(String status, String reply) {

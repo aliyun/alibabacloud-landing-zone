@@ -22,6 +22,7 @@ test_classes=(
   MemoryBehaviorLoopMySqlTest
   MemoryTopicTransactionMySqlTest
   DispatchControlEventMySqlTest
+  DispatchAdmissionMySqlTest
   ExecutorLaunchConfigRecoveryMySqlTest
   DispatchResultConcurrencyMySqlTest
   InteractionWaiterRecoveryMySqlTest
@@ -44,6 +45,7 @@ report_classes=(
   com.aliyun.autowonder.memory.store.MemoryBehaviorLoopMySqlTest
   com.aliyun.autowonder.memory.store.MemoryTopicTransactionMySqlTest
   com.aliyun.autowonder.dispatch.DispatchControlEventMySqlTest
+  com.aliyun.autowonder.dispatch.DispatchAdmissionMySqlTest
   com.aliyun.autowonder.executor.ExecutorLaunchConfigRecoveryMySqlTest
   com.aliyun.autowonder.dispatch.DispatchResultConcurrencyMySqlTest
   com.aliyun.autowonder.guidance.InteractionWaiterRecoveryMySqlTest

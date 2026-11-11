@@ -294,5 +294,29 @@
       ],
       "instructions": "List available platform skills and install reusable AutoWonder skills for agents."
     }
+  },
+  {
+    "sourceCommit": "a05bb03133b9e81f733786da5229f7baa523fd13",
+    "config": {
+      "kind": "codex-skill",
+      "id": "initialize-autowonder-workspace",
+      "mcpServer": "autowonder",
+      "tools": [
+        "autowonder.list_harness_templates",
+        "autowonder.get_harness_template",
+        "autowonder.prepare_workspace_onboarding",
+        "autowonder.get_workspace_onboarding",
+        "autowonder.preview_harness_initialization",
+        "autowonder.initialize_harness",
+        "autowonder.get_harness_initialization",
+        "autowonder.resume_harness_initialization",
+        "autowonder.preview_workspace_configuration",
+        "autowonder.apply_workspace_configuration",
+        "autowonder.get_workspace_configuration",
+        "autowonder.resume_workspace_configuration",
+        "autowonder.check_workspace_readiness"
+      ],
+      "instructions": "在 AutoWonder Chief 中完成当前工作空间的初始化配置：初始化交付模板，引导配置项目变量、部署 Skill、仓库权限及执行器，直到具备创建工单交付的条件。"
+    }
   }
 ]

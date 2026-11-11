@@ -20,7 +20,6 @@ import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import {
   useAddMember,
   useCurrentMembership,
-  useMemberCandidates,
   useMembers,
   useRemoveMember,
   useTransferOwner,
@@ -31,6 +30,7 @@ import {
 import { AccessRequestsPanel } from './AccessRequestsPanel';
 import { workspaceRoleLabel } from './roles';
 import { WorkspaceRolesPanel } from './WorkspaceRolesPanel';
+import { AddMemberModal } from './AddMemberModal';
 import { MemberAccessModal } from './MemberAccessModal';
 import { OwnerTransferModal } from './OwnerTransferModal';
 import type { MemberVO } from './api';
@@ -53,13 +53,9 @@ export function MembersPage() {
   const accessCommand = useAccessCommand();
   const { data: members = [], isLoading } = useMembers();
   const { data: roles = [] } = useWorkspaceRoles();
-  const [selectedRoleId, setSelectedRoleId] = useState<number>();
   const { data: membership } = useCurrentMembership();
   const isAdmin = membership?.accessLevel === 'ADMIN';
-  const [candidateKeyword, setCandidateKeyword] = useState('');
-  const [selectedUserId, setSelectedUserId] = useState<number>();
-  const { data: candidates = [], isFetching: candidatesLoading } =
-    useMemberCandidates(candidateKeyword);
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
   const addMemberMutation = useAddMember();
   const removeMemberMutation = useRemoveMember();
   const updateRoleMutation = useUpdateMemberRole();
@@ -90,14 +86,10 @@ export function MembersPage() {
     ? members
     : members.filter((member) => member.roleId === roleFilter);
 
-  const handleAddMember = () => {
-    if (selectedUserId === undefined) return;
+  const handleAddMember = (userId: number, roleId?: number) => {
     accessCommand('ADMIN', t('addMember'), () => {
-      addMemberMutation.mutate({ userId: selectedUserId, roleId: selectedRoleId }, {
-        onSuccess: () => {
-          setSelectedUserId(undefined);
-          setCandidateKeyword('');
-        },
+      addMemberMutation.mutate({ userId, roleId }, {
+        onSuccess: () => setAddMemberOpen(false),
       });
     });
   };
@@ -227,50 +219,16 @@ export function MembersPage() {
               {t('transferOwner')}
             </Button>,
           )}
-          {activeTab === 'members' && (
-            <Space size={8}>
-              {adminOnlyTip(
-                <Select
-                  showSearch
-                  allowClear
-                  filterOption={false}
-                  aria-label={t('searchPeople')}
-                  disabled={!isAdmin}
-                  value={selectedUserId}
-                  placeholder={t('searchPeople')}
-                  loading={candidatesLoading}
-                  style={{ width: 240 }}
-                  onSearch={setCandidateKeyword}
-                  onClear={() => {
-                    setSelectedUserId(undefined);
-                    setCandidateKeyword('');
-                  }}
-                  onChange={setSelectedUserId}
-                  options={candidates.map((candidate) => ({
-                    value: candidate.userId,
-                    label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
-                  }))}
-                  notFoundContent={
-                    candidateKeyword.trim() ? t('noCandidates') : t('searchPeopleHint')
-                  }
-                />,
-              )}
-              <Select aria-label={t('newMemberRole')} disabled={!isAdmin} style={{ minWidth: 140 }}
-                value={selectedRoleId ?? roles.find((role) => role.code === 'READ_ONLY')?.id}
-                onChange={setSelectedRoleId} options={roles.map((role) => ({ value: role.id, label: workspaceRoleLabel(role) }))} />
-              {adminOnlyTip(
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined aria-hidden="true" />}
-                  aria-label={t('addMember')}
-                  disabled={!isAdmin || selectedUserId === undefined}
-                  loading={addMemberMutation.isPending}
-                  onClick={handleAddMember}
-                >
-                  {t('addMember')}
-                </Button>,
-              )}
-            </Space>
+          {activeTab === 'members' && adminOnlyTip(
+            <Button
+              type="primary"
+              icon={<PlusOutlined aria-hidden="true" />}
+              aria-label={t('addMember')}
+              disabled={!isAdmin}
+              onClick={() => accessCommand('ADMIN', t('addMember'), () => setAddMemberOpen(true))}
+            >
+              {t('addMember')}
+            </Button>,
           )}
         </Space>
       }
@@ -331,6 +289,13 @@ export function MembersPage() {
             children: <AccessRequestsPanel />,
           },
         ]}
+      />
+      <AddMemberModal
+        open={addMemberOpen}
+        roles={roles}
+        loading={addMemberMutation.isPending}
+        onClose={() => setAddMemberOpen(false)}
+        onConfirm={handleAddMember}
       />
       <MemberAccessModal
         open={editTarget !== null}

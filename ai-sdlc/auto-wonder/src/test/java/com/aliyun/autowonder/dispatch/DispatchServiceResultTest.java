@@ -229,6 +229,53 @@ class DispatchServiceResultTest {
     }
 
     @Test
+    void telemetryStartsAfterCommitWithoutHoldingTheResultThread() throws Exception {
+        var telemetry = mock(com.aliyun.autowonder.evolution.EvolutionTelemetryEvidenceLiteService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "telemetryEvidenceService", telemetry);
+        var running = at(DispatchStatus.RUNNING);
+        running.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(running);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var worker = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        var finished = new java.util.concurrent.CountDownLatch(1);
+        when(telemetry.ingestDispatch(eq(500L), eq(true), eq("done"), isNull(), eq(TENANT), anyLong()))
+                .thenAnswer(call -> {
+                    worker.set(Thread.currentThread());
+                    started.countDown();
+                    try { assertTrue(release.await(10, java.util.concurrent.TimeUnit.SECONDS)); }
+                    finally { finished.countDown(); }
+                    return null;
+                });
+        try {
+            try (var scope = ResultCommitActions.open()) {
+                service.onResult(TENANT, 9L, 500L, true, "done", null, false, true);
+                verifyNoInteractions(telemetry);
+                scope.committed();
+            }
+            assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS));
+            assertNotEquals(Thread.currentThread(), worker.get());
+            assertEquals(1, finished.getCount(), "slow telemetry must still be running after result commit returns");
+        } finally {
+            release.countDown();
+        }
+        assertTrue(finished.await(2, java.util.concurrent.TimeUnit.SECONDS));
+    }
+
+    @Test
+    void rolledBackResultDoesNotPublishTelemetry() {
+        var telemetry = mock(com.aliyun.autowonder.evolution.EvolutionTelemetryEvidenceLiteService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "telemetryEvidenceService", telemetry);
+        var running = at(DispatchStatus.RUNNING);
+        running.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(running);
+        try (var scope = ResultCommitActions.open()) {
+            service.onResult(TENANT, 9L, 500L, true, "done", null, false, true);
+        }
+        verifyNoInteractions(telemetry);
+    }
+
+    @Test
     void explicitHandoffCompletesWithoutAlsoDrivingOrdinaryNextStep() {
         DispatchDO running = at(DispatchStatus.RUNNING);
         running.setExecutorId(9L);
@@ -633,6 +680,7 @@ class DispatchServiceResultTest {
 
     @Test
     void heartbeatTouchesOnlyProvidedOwnedDispatches() {
+        service.recordRunningDispatches(9L, java.util.List.of(500L, 501L));
         service.renewActiveLeases(TENANT, 9L, java.util.List.of(500L, 501L));
 
         verify(executorRegistry).updateRunningDispatches(9L, java.util.List.of(500L, 501L));
@@ -641,6 +689,7 @@ class DispatchServiceResultTest {
 
     @Test
     void emptyHeartbeatStillRecordsThatExecutorReleasedAllDispatches() {
+        service.recordRunningDispatches(9L, java.util.List.of());
         service.renewActiveLeases(TENANT, 9L, java.util.List.of());
 
         verify(executorRegistry).updateRunningDispatches(9L, java.util.List.of());
@@ -649,6 +698,7 @@ class DispatchServiceResultTest {
 
     @Test
     void missingRunningDispatchesClearsRegistryLeaseWithoutTouchingDispatchRows() {
+        service.recordRunningDispatches(9L, null);
         service.renewActiveLeases(TENANT, 9L, null);
 
         verify(executorRegistry).updateRunningDispatches(9L, null);

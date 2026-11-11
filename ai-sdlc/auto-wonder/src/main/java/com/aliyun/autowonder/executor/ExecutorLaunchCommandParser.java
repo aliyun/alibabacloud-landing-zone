@@ -22,7 +22,8 @@ final class ExecutorLaunchCommandParser {
     static UpdateExecutorLaunchConfigRequest parse(String command, String baseline, Integer version) {
         List<String> argv = words(command);
         Map<String, String> flags = flags(argv);
-        Map<String, String> expected = flags(words(baseline));
+        List<String> baselineArgv = words(baseline);
+        Map<String, String> expected = flags(baselineArgv);
         for (String key : List.of("ws-url", "token", "executor-id", "provider", "token-aware-enable")) {
             if (!Objects.equals(flags.get(key), expected.get(key))) {
                 throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.command.identity_changed", null,
@@ -32,12 +33,14 @@ final class ExecutorLaunchCommandParser {
         for (String key : List.of("memory-mode", "max-tasks", "model", "reasoning-effort", "context-window")) {
             if (expected.containsKey(key) && !flags.containsKey(key)) throw invalid();
         }
-        String runtimeVersion = argv.get(2).substring("autowonder@".length());
+        String runtimeVersion = argv.get(2).substring(argv.get(2).startsWith("@alicloud/")
+                ? "@alicloud/autowonder@".length() : "autowonder@".length());
         if (!runtimeVersion.matches("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)")
                 || RuntimeVersion.compare(runtimeVersion, runtimeVersion).isEmpty()) throw invalid();
         var result = new UpdateExecutorLaunchConfigRequest();
         result.setVersion(version);
-        result.setRuntimeVersion(runtimeVersion);
+        // 只在版本被明确修改时固定版本，保存其他参数时保留已有的版本选择方式。
+        result.setRuntimeVersion(baselineArgv.get(2).endsWith("@" + runtimeVersion) ? null : runtimeVersion);
         result.setWorkspaceRoot(flags.getOrDefault("workspace-root", ""));
         result.setDaemonName(flags.getOrDefault("name", ""));
         result.setDebug(flags.containsKey("debug"));
@@ -56,7 +59,7 @@ final class ExecutorLaunchCommandParser {
     private static Map<String, String> flags(List<String> argv) {
         if (argv.size() < 4 || !"npx".equals(argv.get(0))
                 || !("-y".equals(argv.get(1)) || "--yes".equals(argv.get(1)))
-                || !argv.get(2).startsWith("autowonder@") || !"connect".equals(argv.get(3))) throw invalid();
+                || !(argv.get(2).startsWith("autowonder@") || argv.get(2).startsWith("@alicloud/autowonder@")) || !"connect".equals(argv.get(3))) throw invalid();
         Map<String, String> result = new HashMap<>();
         for (int index = 4; index < argv.size(); index++) {
             String argument = argv.get(index);

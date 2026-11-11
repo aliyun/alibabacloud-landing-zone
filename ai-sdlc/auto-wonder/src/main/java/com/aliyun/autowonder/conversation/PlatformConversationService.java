@@ -120,7 +120,8 @@ public class PlatformConversationService {
     public PlatformConversationVO get(Long tenantId, Long conversationId, Long userId) {
         AgentConversationDO conv = accessService.requireBodyRead(tenantId, conversationId, userId);
 
-        List<PlatformTurnVO> turns = turnDao.listTurnsByConversation(tenantId, conversationId).stream()
+        List<AgentConversationTurnDO> history = turnDao.listTurnsByConversation(tenantId, conversationId);
+        List<PlatformTurnVO> turns = history.stream()
                 .map(t -> PlatformTurnVO.builder()
                         .id(t.getId())
                         .direction(t.getDirection())
@@ -142,7 +143,7 @@ public class PlatformConversationService {
         vo.setAnswerDeliveries(elicitationService.listAnswerDeliveries(tenantId, conversationId).stream()
                 .map(ClarificationElicitationVO::fromDelivery).toList());
         vo.setAvailableCommands(commandsService.snapshot(tenantId, conversationId));
-        applyProcessing(vo, tenantId, conversationId);
+        applyProcessing(vo, history);
         if (accessService.isOwner(conv, userId)) {
             // 分享名单本身就是隐私，只给 Owner 看。
             vo.setShares(List.of());
@@ -151,11 +152,9 @@ public class PlatformConversationService {
     }
 
     /** 刷新页面后据此恢复「正在回复」的状态，不用等下一条事件推过来。 */
-    private void applyProcessing(PlatformConversationVO vo, Long tenantId, Long conversationId) {
-        AgentConversationTurnDO processing = turnDao.findProcessingInbound(tenantId, conversationId);
-        if (processing == null) {
-            processing = turnDao.findNextQueuedInbound(tenantId, conversationId);
-        }
+    private void applyProcessing(PlatformConversationVO vo, List<AgentConversationTurnDO> history) {
+        // A later status query can observe completion while these history rows still lack its reply.
+        AgentConversationTurnDO processing = ConversationTurnSnapshot.activeInbound(history);
         if (processing != null) {
             vo.setProcessingStatus(processing.getStatus());
             vo.setProcessingTurnId(processing.getId());

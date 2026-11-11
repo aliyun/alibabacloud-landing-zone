@@ -41,6 +41,7 @@ import {
   updateUserAdminImIdentity,
   updateUserAdminProfile,
   updateUserAdminWorkspaceLevel,
+  updateUserWorkspaceCreationPermission,
   userAdminDetailQueryKey,
   userAdminImQueryKey,
   userAdminWorkspacesQueryKey,
@@ -49,6 +50,7 @@ import {
   type UserAdminWorkspace,
   type WorkspaceAccessLevel,
 } from './userAdminApi';
+import { WorkspaceCreationPermissionSwitch } from './WorkspaceCreationPermissionSwitch';
 
 const { Paragraph, Text } = Typography;
 
@@ -57,6 +59,7 @@ const PHONE_PATTERN = /^\+?[0-9][0-9 -]*$/;
 
 const statusKeys = {
   NORMAL: { labelKey: 'statusNormal', color: 'success' },
+  PENDING_REVIEW: { labelKey: 'statusPendingReview', color: 'gold' },
   DELETED: { labelKey: 'statusDeleted', color: 'default' },
   DEACTIVATED: { labelKey: 'statusDeactivated', color: 'orange' },
 } as const;
@@ -117,6 +120,22 @@ export function UserDetailDrawer({ userId, open, initialAction, onClose, onChang
     queryFn: () => getUserAdminDetail(userId as number),
     enabled: open && userId != null,
     retry: false,
+  });
+
+  // 详情与列表共用同一授权接口；成功后同步刷新详情，失败由列表刷新恢复旧值。
+  const permissionMutation = useMutation({
+    mutationFn: ({ targetId, allowed }: { targetId: number; allowed: boolean }) =>
+      updateUserWorkspaceCreationPermission(targetId, allowed),
+    onSuccess: (updated) => {
+      message.success(t('permissionUpdated'));
+      queryClient.setQueryData(userAdminDetailQueryKey(updated.id), updated);
+      void queryClient.invalidateQueries({ queryKey: USER_ADMIN_QUERY_KEY_ROOT });
+      onChanged();
+    },
+    onError: (error: Error) => {
+      message.error(error.message || t('permissionUpdateFailed'));
+      void detailQuery.refetch();
+    },
   });
   const detail = detailQuery.data;
   const status: UserAdminStatus | undefined = detail?.status;
@@ -368,6 +387,17 @@ export function UserDetailDrawer({ userId, open, initialAction, onClose, onChang
           key: 'type',
           label: t('colType'),
           children: detail.isAdmin ? <Tag color="blue">{t('typeAdmin')}</Tag> : t('typeUser'),
+        },
+        {
+          key: 'canCreateWorkspace',
+          label: <span style={{ whiteSpace: 'nowrap' }}>{t('colCanCreate')}</span>,
+          children: (
+            <WorkspaceCreationPermissionSwitch
+              user={detail}
+              pending={permissionMutation.isPending}
+              onChange={(allowed) => permissionMutation.mutate({ targetId: detail.id, allowed })}
+            />
+          ),
         },
         { key: 'createdAt', label: t('colCreatedAt'), children: dateTimeText(detail.createdAt) },
         { key: 'lastLoginAt', label: t('colLastLoginAt'), children: dateTimeText(detail.lastLoginAt) },

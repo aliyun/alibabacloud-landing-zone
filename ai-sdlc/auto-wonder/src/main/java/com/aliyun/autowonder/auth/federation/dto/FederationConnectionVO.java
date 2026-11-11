@@ -31,6 +31,10 @@ public class FederationConnectionVO {
     private String subjectClaim;
     private String nameClaim;
     private String emailClaim;
+    private String feishuUserIdClaim;
+    private Boolean autoProvision;
+    /** 由平台单行配置的默认连接 ID 派生，连接自身不持久化该标记。 */
+    private Boolean defaultLogin;
     private String allowedTenants;
     private Integer sortOrder;
     private Date gmtCreate;

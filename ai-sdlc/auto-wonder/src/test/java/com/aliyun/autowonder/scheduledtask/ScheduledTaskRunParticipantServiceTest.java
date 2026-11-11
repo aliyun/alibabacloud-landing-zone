@@ -8,6 +8,11 @@ import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.scheduledtask.dto.ScheduledRunMentionCandidateVO;
+import com.aliyun.autowonder.squad.SquadDO;
+import com.aliyun.autowonder.squad.SquadDao;
+import com.aliyun.autowonder.squad.SquadMemberDO;
+import com.aliyun.autowonder.squad.SquadMemberDao;
+import com.aliyun.autowonder.squad.SquadNameResolver;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.websocket.PresenceManager;
@@ -31,6 +36,8 @@ class ScheduledTaskRunParticipantServiceTest {
     private UserDao userDao;
     private PresenceManager presenceManager;
     private WorkspaceMemberDao workspaceMemberDao;
+    private SquadDao squadDao;
+    private SquadMemberDao squadMemberDao;
     private ScheduledTaskRunParticipantService service;
 
     @BeforeEach
@@ -41,8 +48,11 @@ class ScheduledTaskRunParticipantServiceTest {
         userDao = mock(UserDao.class);
         presenceManager = mock(PresenceManager.class);
         workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        squadDao = mock(SquadDao.class);
+        squadMemberDao = mock(SquadMemberDao.class);
         service = new ScheduledTaskRunParticipantService(dispatchDao, agentDao, executorDao, userDao,
                 presenceManager, workspaceMemberDao);
+        service.setSquadNameResolver(new SquadNameResolver(squadDao, squadMemberDao));
     }
 
     @Test
@@ -644,5 +654,77 @@ class ScheduledTaskRunParticipantServiceTest {
         ScheduledRunMentionCandidateVO live = findCandidate(result, "AGENT", 71L);
         assertTrue(live.isOnline());
         assertEquals("ONLINE", live.getExecutorStatus());
+    }
+
+    @Test
+    void mentionCandidatesPutCurrentRunSquadFirstAndLabelSquadNames() {
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setId(300L);
+        run.setWorkspaceId(1L);
+        run.setOwnerId(10L);
+        run.setSquadId(900L);
+        run.setInitialAgentId(50L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":50},{\"agentId\":70}]}");
+
+        UserDO owner = new UserDO();
+        owner.setId(10L);
+        owner.setNickname("Alice");
+        owner.setUsername("alice");
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(owner);
+
+        AgentDO inSquad = new AgentDO();
+        inSquad.setId(50L);
+        inSquad.setName("交付小队助手");
+        AgentDO otherSquad = new AgentDO();
+        otherSquad.setId(60L);
+        otherSquad.setName("其他小队助手");
+        AgentDO frozenOnly = new AgentDO();
+        frozenOnly.setId(70L);
+        frozenOnly.setName("冻结助手");
+        when(agentDao.findById(50L)).thenReturn(inSquad);
+        when(agentDao.findById(60L)).thenReturn(otherSquad);
+        when(agentDao.findById(70L)).thenReturn(frozenOnly);
+
+        DispatchDO dispatched = new DispatchDO();
+        dispatched.setAgentId(60L);
+        when(dispatchDao.listBySource(1L, ExecutionSourceType.SCHEDULED_TASK_RUN.name(), 300L))
+                .thenReturn(List.of(dispatched));
+
+        when(squadMemberDao.listByAgentIds(eq(1L), any())).thenReturn(List.of(
+                squadMember(901L, 900L, 50L),
+                squadMember(902L, 902L, 60L)));
+        when(squadDao.listByIds(any())).thenReturn(List.of(
+                squad(900L, "交付一队"), squad(902L, "其他小队")));
+
+        List<ScheduledRunMentionCandidateVO> candidates = service.getMentionCandidates(1L, run, null, 50);
+
+        assertEquals(List.of(50L, 10L, 60L, 70L),
+                candidates.stream().map(ScheduledRunMentionCandidateVO::getUserId).toList());
+        assertEquals("交付一队", candidates.get(0).getSquadName());
+        assertTrue(candidates.get(0).isCurrentSquad());
+        assertNull(candidates.get(1).getSquadName());
+        assertEquals("其他小队", candidates.get(2).getSquadName());
+        assertFalse(candidates.get(2).isCurrentSquad());
+        assertNull(candidates.get(3).getSquadName());
+
+        List<ParticipantVO> participants = service.getParticipants(1L, run);
+        assertEquals("交付一队", participants.get(1).getSquadName());
+        assertTrue(participants.get(1).isCurrentSquad());
+    }
+
+    private SquadDO squad(long id, String name) {
+        SquadDO squad = new SquadDO();
+        squad.setId(id);
+        squad.setName(name);
+        return squad;
+    }
+
+    private SquadMemberDO squadMember(long id, long squadId, long agentId) {
+        SquadMemberDO member = new SquadMemberDO();
+        member.setId(id);
+        member.setTenantId(1L);
+        member.setSquadId(squadId);
+        member.setAgentId(agentId);
+        return member;
     }
 }

@@ -12,6 +12,8 @@ public final class TenantTables {
             "sdlc", "sdlc_step", "dispatch", "dispatch_model_selection", "workitem_comment_delivery",
             "ai_session", "ai_message",
             "repo", "repo_conclusion", "repo_relation",
+            "workspace_onboarding", "workspace_onboarding_step", "harness_snapshot",
+            "harness_run", "harness_run_step", "workspace_readiness_check",
             "memory", "memory_review", "memory_store", "memory_document", "memory_change",
             "memory_store_acl", "memory_import_source", "memory_import_snapshot",
             "memory_import_receipt", "skill", "evolution_proposal", "evolution_evidence",

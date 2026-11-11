@@ -17,6 +17,7 @@ public class RuntimeTraceVO {
     private String provider;
     private boolean changed = true;
     private Long lastSeq;
+    private Long nextBeforeId;
     private TokenUsage tokenUsage = new TokenUsage();
     private List<Event> events = new ArrayList<>();
     private List<Session> sessions = new ArrayList<>();

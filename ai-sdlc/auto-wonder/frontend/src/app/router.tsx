@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-do
 import { Suspense } from 'react';
 import { Spin } from 'antd';
 import { lazyWithChunkReload } from '@/shared/lib/chunkLoadRecovery';
+import { RouteFailure } from './RouteFailure';
 import { AuthLayout } from './AuthLayout';
 import { AppLayout } from './AppLayout';
 import { RouteGuard } from './RouteGuard';
@@ -49,13 +50,15 @@ import { EnvironmentVariablesPage } from '@/features/environmentVariables/Enviro
 import { HelpCenterPage } from '@/features/help/HelpCenterPage';
 import { SharedArtifactPage } from '@/features/workitem/SharedArtifactPage';
 
-const WorkitemDetailPage = lazyWithChunkReload<Record<string, never>>(() => import('@/features/workitem/WorkitemDetailPage')
+const WorkitemDetailPage = lazyWithChunkReload(() => import('@/features/workitem/WorkitemDetailPage')
   .then(module => ({ default: module.WorkitemDetailPage })));
-const ReposHubPage = lazyWithChunkReload<Record<string, never>>(() => import('@/features/repo/ReposHubPage')
+const PrdDesignWorkbench = lazyWithChunkReload(() => import('@/features/prd/PrdDesignWorkbench')
+  .then(module => ({ default: module.PrdDesignWorkbench })));
+const ReposHubPage = lazyWithChunkReload(() => import('@/features/repo/ReposHubPage')
   .then(module => ({ default: module.ReposHubPage })));
 
 export function createAppRoutes(): RouteObject[] {
-  return [
+  const routes: RouteObject[] = [
     { path: '/api/share/workitems/:token/:kind/:id', element: <SharedArtifactPage /> },
     {
       element: <AppLayout helpCenter />,
@@ -92,6 +95,7 @@ export function createAppRoutes(): RouteObject[] {
       element: <RouteGuard requireWorkspace={false}><AppLayout /></RouteGuard>,
       children: [
         { path: '/profile/settings', element: <ProfileSettingsPage /> },
+        { path: '/notifications', element: <NotificationCenterPage /> },
       ],
     },
     {
@@ -111,6 +115,7 @@ export function createAppRoutes(): RouteObject[] {
         { path: '/workitems/new', element: <WorkitemCreatePage /> },
         { path: '/workitems/recycled', element: <WorkitemRecycleBinPage /> },
         { path: '/workitems/:id', element: <Suspense fallback={<Spin />}><WorkitemDetailPage /></Suspense> },
+        { path: '/workitems/:workitemId/design', element: <Suspense fallback={<Spin />}><PrdDesignWorkbench /></Suspense> },
         { path: '/agents', element: <AgentsHubPage /> },
         { path: '/agents/reviews', element: <RedirectWithQuery to="/agents" tab="reviews" /> },
         { path: '/agents/new', element: <AgentCreatePage /> },
@@ -138,7 +143,6 @@ export function createAppRoutes(): RouteObject[] {
         { path: '/integrations/channels', element: <RedirectWithQuery to="/integrations" tab="channels" /> },
         { path: '/evolution', element: <EvolutionPage /> },
         { path: '/audit-logs', element: <AuditLogPage /> },
-        { path: '/notifications', element: <NotificationCenterPage /> },
         { path: '/settings/members', element: <MemberRoleSettingsPage /> },
         { path: '/settings/members-roles', element: <Navigate to="/settings/members" replace /> },
         { path: '/settings/members-roles/:tab', element: <Navigate to="/settings/members" replace /> },
@@ -152,6 +156,12 @@ export function createAppRoutes(): RouteObject[] {
     },
     { path: '*', element: <Navigate to="/login" replace /> },
   ];
+  const protect = (route: RouteObject): RouteObject => ({
+    ...route,
+    errorElement: <RouteFailure />,
+    ...(route.children ? { children: route.children.map(protect) } : {}),
+  } as RouteObject);
+  return routes.map(protect);
 }
 
 export const router = createBrowserRouter(createAppRoutes());

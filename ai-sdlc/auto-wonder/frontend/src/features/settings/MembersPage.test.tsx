@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
@@ -261,11 +261,12 @@ describe('MembersPage', () => {
     expect(addButton).toBeDisabled();
     expect(editButton).toBeDisabled();
     expect(removeButton).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: '搜索全局人员' })).toBeDisabled();
 
     await user.hover(transferButton.parentElement!);
     expect(await screen.findByText('仅管理员可操作')).toBeInTheDocument();
 
+    await user.click(addButton);
+    expect(screen.queryByRole('dialog', { name: '添加成员' })).not.toBeInTheDocument();
     await user.click(editButton);
     expect(screen.queryByRole('dialog', { name: '编辑成员' })).not.toBeInTheDocument();
     await user.click(transferButton);
@@ -276,14 +277,20 @@ describe('MembersPage', () => {
   });
 
   it('enables edit controls for admin members once membership loads', async () => {
+    const user = userEvent.setup();
     renderPage();
 
     const devRow = (await screen.findByText('dev1@co.com')).closest('tr');
     expect(devRow).not.toBeNull();
     await waitForAdminControls();
-    expect(screen.getByRole('combobox', { name: '搜索全局人员' })).toBeEnabled();
+    const addButton = screen.getByRole('button', { name: '添加成员' });
+    expect(addButton).toBeEnabled();
     expect(within(devRow!).getByRole('button', { name: '编辑' })).toBeEnabled();
     expect(within(devRow!).getByRole('button', { name: '移除' })).toBeEnabled();
+
+    await user.click(addButton);
+    const dialog = screen.getByRole('dialog', { name: '添加成员' });
+    expect(within(dialog).getByRole('combobox', { name: '搜索全局人员' })).toBeEnabled();
   });
 
   it('rechecks access when an already-open member editor is submitted', async () => {
@@ -366,7 +373,7 @@ describe('MembersPage', () => {
     expect(await screen.findByText('Owner 访问级别不能直接修改，请先移交 Owner')).toBeInTheDocument();
   });
 
-  it('searches global people and adds the selected user', async () => {
+  it('searches global people after opening the add-member dialog and adds the selected user', async () => {
     const user = userEvent.setup();
     const addHandler = vi.fn();
     server.use(
@@ -389,11 +396,129 @@ describe('MembersPage', () => {
 
     await screen.findByText('admin@co.com');
     await waitForAdminControls();
-    await user.type(screen.getByRole('combobox', { name: '搜索全局人员' }), 'new');
-    await user.click(await screen.findByText('新人 (newbie@co.com)'));
     await user.click(screen.getByRole('button', { name: '添加成员' }));
+    const dialog = screen.getByRole('dialog', { name: '添加成员' });
+    expect(within(dialog).getByRole('button', { name: '添加成员' })).toBeDisabled();
+    expect(within(dialog).getByRole('combobox', { name: '搜索全局人员' })).toHaveValue('');
+
+    await user.type(within(dialog).getByRole('combobox', { name: '搜索全局人员' }), 'new');
+    await user.click(await screen.findByText('新人 (newbie@co.com)'));
+    await user.click(within(dialog).getByRole('button', { name: '添加成员' }));
 
     await waitFor(() => expect(addHandler).toHaveBeenCalledWith({ userId: 3 }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '添加成员' })).not.toBeInTheDocument());
+  });
+
+  it('adds a member with the role chosen in the dialog and defaults to the read-only role', async () => {
+    const user = userEvent.setup();
+    const addHandler = vi.fn();
+    server.use(
+      http.get('/api/workspaces/current/member-candidates', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        data: [{ userId: 3, username: 'newbie', email: 'newbie@co.com', nickname: '新人' }],
+        traceId: null,
+      })),
+      http.post('/api/workspaces/current/members', async ({ request }) => {
+        addHandler(await request.json());
+        return HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null });
+      }),
+    );
+    renderPage();
+
+    await screen.findByText('admin@co.com');
+    await waitForAdminControls();
+    await user.click(screen.getByRole('button', { name: '添加成员' }));
+    const dialog = screen.getByRole('dialog', { name: '添加成员' });
+    const roleSelect = within(dialog).getByRole('combobox', { name: '新成员角色' });
+    expect(roleSelect.closest('.ant-select')).toHaveTextContent('只读者');
+
+    await user.type(within(dialog).getByRole('combobox', { name: '搜索全局人员' }), 'new');
+    await user.click(await screen.findByText('新人 (newbie@co.com)'));
+    await user.click(roleSelect);
+    await user.click(screen.getAllByText('管理员')
+      .find((element) => element.classList.contains('ant-select-item-option-content'))!);
+    await user.click(within(dialog).getByRole('button', { name: '添加成员' }));
+
+    await waitFor(() => expect(addHandler).toHaveBeenCalledWith({ userId: 3, roleId: 13 }));
+  });
+
+  it('clears the candidate selection and search text when the add-member dialog is cancelled', async () => {
+    const user = userEvent.setup();
+    let candidateFetches = 0;
+    server.use(
+      http.get('/api/workspaces/current/member-candidates', () => {
+        candidateFetches += 1;
+        return HttpResponse.json({
+          success: true,
+          code: '0',
+          message: '',
+          data: [{ userId: 3, username: 'newbie', email: 'newbie@co.com', nickname: '新人' }],
+          traceId: null,
+        });
+      }),
+    );
+    renderPage();
+
+    await screen.findByText('admin@co.com');
+    await waitForAdminControls();
+    await user.click(screen.getByRole('button', { name: '添加成员' }));
+    let dialog = screen.getByRole('dialog', { name: '添加成员' });
+    expect(candidateFetches).toBe(0);
+    await user.type(within(dialog).getByRole('combobox', { name: '搜索全局人员' }), 'new');
+    await user.click(await screen.findByText('新人 (newbie@co.com)'));
+    const fetchesAfterSelect = candidateFetches;
+    expect(fetchesAfterSelect).toBeGreaterThan(0);
+
+    await user.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: '添加成员' })).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '添加成员' }));
+    dialog = screen.getByRole('dialog', { name: '添加成员' });
+    expect(within(dialog).getByRole('button', { name: '添加成员' })).toBeDisabled();
+    expect(within(dialog).getByRole('combobox', { name: '搜索全局人员' })).toHaveValue('');
+    expect(candidateFetches).toBe(fetchesAfterSelect);
+  });
+
+  it('shows the empty candidate hint, falls back to the username and clears the selection', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/workspaces/current/member-candidates', ({ request }) => {
+        const keyword = new URL(request.url).searchParams.get('keyword');
+        return HttpResponse.json({
+          success: true,
+          code: '0',
+          message: '',
+          data: keyword === 'zzz'
+            ? []
+            : [{ userId: 4, username: 'plain', email: '', nickname: '' }],
+          traceId: null,
+        });
+      }),
+    );
+    renderPage();
+
+    await screen.findByText('admin@co.com');
+    await waitForAdminControls();
+    await user.click(screen.getByRole('button', { name: '添加成员' }));
+    const dialog = screen.getByRole('dialog', { name: '添加成员' });
+    const search = within(dialog).getByRole('combobox', { name: '搜索全局人员' });
+
+    await user.type(search, 'zzz');
+    expect(await screen.findByText('暂无可添加人员')).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, 'plain');
+    await user.click(await screen.findByText('plain'));
+    const clear = dialog.querySelector('.ant-select-clear');
+    expect(clear).not.toBeNull();
+    fireEvent.mouseDown(clear!);
+
+    expect(search).toHaveValue('');
+    expect(within(dialog).getByRole('button', { name: '添加成员' })).toBeDisabled();
   });
 
   it('shows the approval tab but does not fetch requests until it is opened', async () => {

@@ -93,11 +93,14 @@ it('switches detail configuration, draft roles and historical row codes with mis
   await language('en-US');
   expect(screen.getByRole('button', { name: 'Edit configuration' })).toBeInTheDocument();
   expect(screen.getByText('QA engineer')).toBeInTheDocument();
-  expect(screen.getByText('Evolution mode: Assisted review (recommended)')).toBeInTheDocument();
+  expect(screen.getByText('Automatic memory (recommended)')).toBeInTheDocument();
   expect(screen.getAllByText('Not configured')).toHaveLength(2);
   await user.click(screen.getByRole('button', { name: 'View draft differences' }));
-  expect(await screen.findByText('Backend developer')).toBeInTheDocument();
-  expect(screen.getByText('Manual')).toBeInTheDocument();
+  expect(await screen.findByText(/Backend developer/)).toBeInTheDocument();
+  expect(screen.getByText(/Manual/)).toBeInTheDocument();
+  // The inline diff repeats role/permission/name labels; collapse it before asserting the tabs.
+  await user.click(screen.getByRole('button', { name: 'Hide differences' }));
+  await waitFor(() => expect(screen.queryByText(/Backend developer/)).not.toBeInTheDocument());
   await user.click(screen.getByRole('tab', { name: 'Repository permissions (1)' }));
   expect(await screen.findByText('Read only')).toBeInTheDocument();
   expect(screen.getByText('Unrestricted')).toBeInTheDocument();
@@ -119,7 +122,7 @@ it('switches detail configuration, draft roles and historical row codes with mis
   expect(container.querySelector('em')).toBeNull();
   await language('zh-CN');
   expect(within(table).getAllByText('后端开发工程师')).toHaveLength(2);
-  expect(screen.getByText('自进化模式：辅助审核（推荐）')).toBeInTheDocument();
+  expect(screen.getAllByText('自动记忆（推荐）').length).toBeGreaterThan(0);
   await language('en-US');
   expect(within(table).getByText('Backend developer')).toBeInTheDocument();
   expect(within(table).getByText('后端开发工程师')).toBeInTheDocument();
@@ -158,12 +161,11 @@ it('switches preview children and rejection drafts, uses completion locale and l
   const success = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
   const { container } = renderRoute('/reviews');
   await screen.findByText('<em>员工</em>');
-  await user.click(screen.getByRole('button', { name: /预览/ }));
-  await screen.findByText('测试工程师');
+  await user.click(screen.getByRole('button', { name: /查看变更/ }));
+  await screen.findByRole('dialog');
   await language('en-US');
-  const preview = screen.getByRole('dialog', { name: 'Configuration preview — <em>员工</em>' });
-  expect(within(preview).getByText('QA engineer')).toBeInTheDocument();
-  expect(within(preview).getByText('Pending review')).toBeInTheDocument();
+  const preview = screen.getByRole('dialog', { name: 'Review changes — <em>员工</em>' });
+  expect(within(preview).getByText(/QA engineer/)).toBeInTheDocument();
   expect(within(preview).getByText('<strong>业务原文</strong>')).toBeInTheDocument();
   await language('zh-CN');
   expect(within(preview).getByRole('button', { name: '关闭' })).toBeInTheDocument();

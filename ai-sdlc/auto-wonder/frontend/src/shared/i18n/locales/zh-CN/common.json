@@ -1,4 +1,5 @@
 {
+  "failure": {"loading": "正在加载…", "title": "暂时无法显示此内容", "description": "请重试，或通过导航继续使用其他功能。", "retry": "重试"},
   "language": { "switch": "切换语言", "syncFailed": "语言偏好保存失败，当前选择仍在此浏览器中生效。" },
   "overlay": { "close": "关闭" },
   "appearance": { "dark": "深色", "light": "浅色", "system": "跟随系统", "switch": "切换外观", "current": "外观：{{mode}}", "scope": "外观仅在当前浏览器生效。" },

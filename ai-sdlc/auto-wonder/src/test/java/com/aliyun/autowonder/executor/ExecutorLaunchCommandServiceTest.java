@@ -26,7 +26,7 @@ import static org.mockito.Mockito.*;
 class ExecutorLaunchCommandServiceTest {
 
     private static final String BASE_URL = "https://auto-wonder.example.com";
-    private static final String RUNTIME_VERSION = "0.2.152";
+    private static final String RUNTIME_VERSION = "0.3.33";
     private static final String WS_URL = "wss://auto-wonder.example.com/ws/executor";
     private static final String PREAMBLE =
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
@@ -56,7 +56,7 @@ class ExecutorLaunchCommandServiceTest {
         ExecutorLaunchCommandVO vo = build("awexec_plain", "QODER_CLI", "platform", "qmodel_latest",
                 "medium", "260000", "posix", false, null);
 
-        assertEquals("npx -y autowonder@" + RUNTIME_VERSION + " connect"
+        assertEquals("npx -y @alicloud/autowonder@" + RUNTIME_VERSION + " connect"
                 + " --ws-url " + WS_URL
                 + " --token awexec_plain"
                 + " --executor-id 9"
@@ -93,7 +93,7 @@ class ExecutorLaunchCommandServiceTest {
         assertEquals("windows", vo.getOs());
         assertNull(vo.getShell());
         assertTrue(vo.getCommand().startsWith("powershell -NoProfile -EncodedCommand "));
-        assertEquals(PREAMBLE + "npx -y autowonder@" + RUNTIME_VERSION + " connect"
+        assertEquals(PREAMBLE + "npx -y @alicloud/autowonder@" + RUNTIME_VERSION + " connect"
                         + " --ws-url " + WS_URL
                         + " --token awexec_plain"
                         + " --executor-id 9"
@@ -151,7 +151,7 @@ class ExecutorLaunchCommandServiceTest {
                 null, null, "posix", false, null);
 
         assertEquals("qoder", vo.getProvider());
-        assertEquals("npx -y autowonder@" + RUNTIME_VERSION + " connect"
+        assertEquals("npx -y @alicloud/autowonder@" + RUNTIME_VERSION + " connect"
                 + " --ws-url " + WS_URL
                 + " --token awexec_plain"
                 + " --executor-id 9"
@@ -169,7 +169,7 @@ class ExecutorLaunchCommandServiceTest {
                 "medium", "260000", "posix", false, null);
 
         assertEquals("claude", vo.getProvider());
-        assertEquals("npx -y autowonder@" + RUNTIME_VERSION + " connect"
+        assertEquals("npx -y @alicloud/autowonder@" + RUNTIME_VERSION + " connect"
                 + " --ws-url " + WS_URL
                 + " --token awexec_plain"
                 + " --executor-id 9"
@@ -330,7 +330,7 @@ class ExecutorLaunchCommandServiceTest {
         }
     }
 
-    @Test void savedVersionWorkspaceNameAndDebugAreUsedInBothShellFormats() {
+    @Test void savedPinnedVersionIsIgnoredWhileWorkspaceNameAndDebugAreKept() {
         stubStoredExecutor("QODER_CLI", "platform", "auto", "medium", "260000");
         var config = launchConfigService.requireCompleteConfig(9L, TENANT);
         config.runtimeVersion = "0.3.9";
@@ -338,14 +338,19 @@ class ExecutorLaunchCommandServiceTest {
         config.daemonName = "custom daemon";
         config.debug = true;
         var posix = wiredService.buildForExecutor(9L, TENANT, "posix", false, null);
-        assertEquals("0.3.9", posix.getRuntimeVersion());
+        // 历史固定的 0.3.9 不再进入命令，命令版本恒为平台推荐版本
+        assertEquals(RUNTIME_VERSION, posix.getRuntimeVersion());
+        assertTrue(posix.getCommand().contains("autowonder@" + RUNTIME_VERSION), posix.getCommand());
+        assertFalse(posix.getCommand().contains("autowonder@0.3.9"), posix.getCommand());
         assertEquals(config.workspaceRoot, posix.getWorkspaceRoot());
         var parsed = ExecutorLaunchCommandParser.parse(posix.getCommand(), posix.getCommand(), 2);
+        assertNull(parsed.getRuntimeVersion());
         assertEquals(config.workspaceRoot, parsed.getWorkspaceRoot());
         assertEquals("custom daemon", parsed.getDaemonName());
         assertTrue(parsed.getDebug());
         String windows = decode(wiredService.buildForExecutor(9L, TENANT, "windows", false, null).getCommand());
-        assertTrue(windows.contains("autowonder@0.3.9"));
+        assertTrue(windows.contains("npx -y @alicloud/autowonder@" + RUNTIME_VERSION + " connect"), windows);
+        assertFalse(windows.contains("autowonder@0.3.9"), windows);
         assertTrue(windows.contains("--workspace-root '/data/任务 owner''s'"));
     }
 
@@ -354,13 +359,79 @@ class ExecutorLaunchCommandServiceTest {
         String command = wiredService.buildForExecutor(9L, TENANT, "posix", false, null).getCommand();
         var request = new com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchCommandRequest();
         request.setVersion(4);
-        request.setCommand(command.replace("autowonder@" + RUNTIME_VERSION, "autowonder@0.3.9") + " --workspace-root '/data/new tasks'");
+        request.setCommand(command.replace("@alicloud/autowonder@" + RUNTIME_VERSION, "autowonder@0.3.9") + " --workspace-root '/data/new tasks'");
         wiredService.saveCommand(9L, TENANT, 7L, request);
         var parsed = org.mockito.ArgumentCaptor.forClass(com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest.class);
         verify(launchConfigService).updateConfig(eq(9L), eq(TENANT), parsed.capture(), eq(7L));
         assertEquals("0.3.9", parsed.getValue().getRuntimeVersion());
         assertEquals("/data/new tasks", parsed.getValue().getWorkspaceRoot());
         assertEquals(4, parsed.getValue().getVersion());
+    }
+
+    @Test void savingAnUneditedCommandDoesNotCreateAPin() {
+        stubStoredExecutor("QODER_CLI", "platform", "auto", "medium", "260000");
+        launchConfigService.requireCompleteConfig(9L, TENANT).runtimeVersion = "0.3.27";
+        var request = new com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchCommandRequest();
+        request.setVersion(14);
+        request.setCommand(wiredService.buildForExecutor(9L, TENANT, "posix", false, null).getCommand());
+
+        wiredService.saveCommand(9L, TENANT, 7L, request);
+
+        var parsed = org.mockito.ArgumentCaptor.forClass(com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest.class);
+        verify(launchConfigService).updateConfig(eq(9L), eq(TENANT), parsed.capture(), eq(7L));
+        assertNull(parsed.getValue().getRuntimeVersion());
+    }
+
+    @Test void explicitPinsAreUsedForPreviewCopyAndDebugCommands() {
+        stubStoredExecutor("QODER_CLI", "platform", "auto", "medium", "260000");
+        var config = launchConfigService.requireCompleteConfig(9L, TENANT);
+        config.runtimeVersion = "0.3.35";
+        config.runtimeVersionPinned = true;
+        for (String os : new String[]{"posix", "windows"}) {
+            for (boolean debug : new boolean[]{false, true}) {
+                var result = wiredService.buildForExecutor(9L, TENANT, os, debug, null);
+                String command = "windows".equals(os) ? decode(result.getCommand()) : result.getCommand();
+                assertEquals("0.3.35", result.getRuntimeVersion());
+                assertTrue(command.contains("@alicloud/autowonder@0.3.35"), command);
+            }
+        }
+        var request = new com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchCommandRequest();
+        request.setVersion(4);
+        request.setCommand(wiredService.buildForExecutor(9L, TENANT, "posix", false, null).getCommand() + " --debug");
+        wiredService.saveCommand(9L, TENANT, 7L, request);
+        var parsed = org.mockito.ArgumentCaptor.forClass(com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest.class);
+        verify(launchConfigService).updateConfig(eq(9L), eq(TENANT), parsed.capture(), eq(7L));
+        assertNull(parsed.getValue().getRuntimeVersion(), "saving other arguments preserves the existing pin");
+    }
+
+    @Test void aHigherHistoricalPinStillFollowsThePlatformRecommendation() {
+        stubStoredExecutor("QODER_CLI", "platform", "auto", "medium", "260000");
+        launchConfigService.requireCompleteConfig(9L, TENANT).runtimeVersion = "9.9.9";
+
+        var posix = wiredService.buildForExecutor(9L, TENANT, "posix", false, null);
+        assertEquals(RUNTIME_VERSION, posix.getRuntimeVersion());
+        assertTrue(posix.getCommand().contains("autowonder@" + RUNTIME_VERSION));
+        assertFalse(posix.getCommand().contains("autowonder@9.9.9"));
+        String windows = decode(wiredService.buildForExecutor(9L, TENANT, "windows", true, null).getCommand());
+        assertTrue(windows.contains("autowonder@" + RUNTIME_VERSION));
+        assertFalse(windows.contains("autowonder@9.9.9"));
+        verify(launchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
+    }
+
+    @Test void aNewPlatformRecommendationIsReflectedByTheNextPreviewAndCopy() {
+        stubStoredExecutor("QODER_CLI", "platform", "auto", "medium", "260000");
+        launchConfigService.requireCompleteConfig(9L, TENANT).runtimeVersion = "0.3.27";
+        assertTrue(wiredService.buildForExecutor(9L, TENANT, "posix", false, null).getCommand()
+                .contains("autowonder@" + RUNTIME_VERSION));
+
+        when(brandingService.recommendedRuntimeVersion()).thenReturn("0.3.31");
+
+        var refreshed = wiredService.buildForExecutor(9L, TENANT, "posix", false, null);
+        assertEquals("0.3.31", refreshed.getRuntimeVersion());
+        assertTrue(refreshed.getCommand().contains("autowonder@0.3.31"));
+        assertFalse(refreshed.getCommand().contains("autowonder@" + RUNTIME_VERSION));
+        // 重新生成命令是只读路径：推荐版本变化不能触发任何配置写回
+        verify(launchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
     }
 
     // ---------- buildForExecutor：页面与 MCP 共用的唯一生成入口 ----------
@@ -398,7 +469,9 @@ class ExecutorLaunchCommandServiceTest {
         when(launchConfigService.previewConfig(9L, TENANT, draft)).thenReturn(config);
 
         String posix = wiredService.previewForExecutor(9L, TENANT, request).getCommand();
-        assertTrue(posix.contains("autowonder@0.3.9"));
+        // 草稿里即便带着固定版本，预览命令也只用平台推荐版本
+        assertTrue(posix.contains("npx -y @alicloud/autowonder@" + RUNTIME_VERSION + " connect"), posix);
+        assertFalse(posix.contains("autowonder@0.3.9"), posix);
         assertTrue(posix.contains("--model ultimate --reasoning-effort low --context-window 1000000"));
         assertTrue(posix.contains("--max-tasks 7"));
         assertTrue(posix.contains("--workspace-root '/data/tasks with spaces'"));
@@ -418,7 +491,7 @@ class ExecutorLaunchCommandServiceTest {
 
         ExecutorLaunchCommandVO vo = wiredService.buildForExecutor(9L, TENANT, "posix", false, null);
 
-        assertEquals("npx -y autowonder@" + RUNTIME_VERSION + " connect"
+        assertEquals("npx -y @alicloud/autowonder@" + RUNTIME_VERSION + " connect"
                 + " --ws-url " + WS_URL
                 + " --token awexec_db"
                 + " --executor-id 9"
@@ -448,7 +521,7 @@ class ExecutorLaunchCommandServiceTest {
         assertTrue(vo.isDebug());
         assertEquals("powershell", vo.getShell());
         assertTrue(vo.getCommand().startsWith("powershell -NoProfile -EncodedCommand "));
-        assertEquals(PREAMBLE + "npx -y autowonder@" + RUNTIME_VERSION + " connect"
+        assertEquals(PREAMBLE + "npx -y @alicloud/autowonder@" + RUNTIME_VERSION + " connect"
                         + " --ws-url " + WS_URL
                         + " --token awexec_db"
                         + " --executor-id 9"

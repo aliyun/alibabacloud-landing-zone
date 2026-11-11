@@ -119,6 +119,236 @@ class ConversationElicitationServiceTest {
         assertEquals(70L, active.getSubmittedUserId());
     }
 
+    /** 多题卡片只回传已答字段时，前端已挡不住，服务端必须在落终态前拒收。 */
+    @Test
+    void partialAcceptIsRejectedBeforeDurableAnswer() {
+        when(dao.findByRequestId(1L, 10L, "schema-card")).thenReturn(negotiated("schema-card", MULTI_SCHEMA));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        BizException error = assertThrows(BizException.class, () ->
+                service.reply(1L, 10L, "schema-card", "accept", "{\"q0\":\"a\"}"));
+
+        assertEquals("10001", error.getCode());
+        assertEquals("conversation.elicitation_required_answers_missing", error.getMessageKey());
+        verify(delivery, never()).submit(anyLong(), anyLong(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void completeAcceptPassesSchemaCheckAndIsSubmitted() {
+        when(dao.findByRequestId(1L, 10L, "schema-card")).thenReturn(negotiated("schema-card", MULTI_SCHEMA));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        service.reply(1L, 10L, "schema-card", "accept",
+                "{\"q0\":\"a\",\"q1\":[\"x\"],\"q2\":\"opt\"}");
+
+        verify(delivery).submit(1L, 10L, "schema-card", "accept",
+                "{\"q0\":\"a\",\"q1\":[\"x\"],\"q2\":\"opt\"}");
+    }
+
+    @Test
+    void unknownAnswerFieldIsRejected() {
+        when(dao.findByRequestId(1L, 10L, "schema-card")).thenReturn(negotiated("schema-card", MULTI_SCHEMA));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        BizException error = assertThrows(BizException.class, () -> service.reply(1L, 10L,
+                "schema-card", "accept", "{\"q0\":\"a\",\"q1\":[\"x\"],\"nope\":\"x\"}"));
+
+        assertEquals("conversation.elicitation_unknown_answer_field", error.getMessageKey());
+        assertEquals("nope", error.getMessageArgs()[0]);
+        verify(delivery, never()).submit(anyLong(), anyLong(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void wrongAnswerTypeIsRejected() {
+        when(dao.findByRequestId(1L, 10L, "schema-card"))
+                .thenReturn(negotiated("schema-card", "{\"type\":\"object\",\"properties\":"
+                        + "{\"q0\":{\"type\":\"string\"},\"flag\":{\"type\":\"boolean\"}},\"required\":[\"q0\"]}"));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        BizException error = assertThrows(BizException.class, () -> service.reply(1L, 10L,
+                "schema-card", "accept", "{\"q0\":\"a\",\"flag\":\"yes\"}"));
+
+        assertEquals("conversation.elicitation_answer_type_invalid", error.getMessageKey());
+        assertEquals("flag", error.getMessageArgs()[0]);
+        verify(delivery, never()).submit(anyLong(), anyLong(), anyString(), anyString(), any());
+    }
+
+    /** 历史卡片没有 properties：只保留「是 JSON 对象」这一层校验，不能因缺 schema 拒答。 */
+    @Test
+    void schemaWithoutPropertiesKeepsObjectOnlyCheck() {
+        when(dao.findByRequestId(1L, 10L, "legacy-card"))
+                .thenReturn(negotiated("legacy-card", "{\"type\":\"object\"}"));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        service.reply(1L, 10L, "legacy-card", "accept", "{\"anything\":1}");
+
+        verify(delivery).submit(1L, 10L, "legacy-card", "accept", "{\"anything\":1}");
+    }
+
+    /** 前端把无法表达的字段降级成 JSON 文本框展开回传，不能按未知字段拒收。 */
+    @Test
+    void degradedJsonFieldKeepsObjectOnlyCheck() {
+        when(dao.findByRequestId(1L, 10L, "degraded-card")).thenReturn(negotiated("degraded-card",
+                "{\"type\":\"object\",\"properties\":{\"nested\":{\"type\":\"object\"}},\"required\":[\"nested\"]}"));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        service.reply(1L, 10L, "degraded-card", "accept", "{\"inner\":\"v\"}");
+
+        verify(delivery).submit(1L, 10L, "degraded-card", "accept", "{\"inner\":\"v\"}");
+    }
+
+    /** 落库的 schema 不是合法 JSON 时没有可依据的约束，不能因此拒答。 */
+    @Test
+    void unparsableSchemaKeepsObjectOnlyCheck() {
+        when(dao.findByRequestId(1L, 10L, "broken-card")).thenReturn(negotiated("broken-card", "not-json"));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        service.reply(1L, 10L, "broken-card", "accept", "{\"a\":1}");
+
+        verify(delivery).submit(1L, 10L, "broken-card", "accept", "{\"a\":1}");
+    }
+
+    /** 没有可枚举选项的数组会降级成 JSON 文本框，回传内容与声明字段不再一一对应。 */
+    @Test
+    void arrayWithoutOptionsKeepsObjectOnlyCheck() {
+        when(dao.findByRequestId(1L, 10L, "free-array"))
+                .thenReturn(negotiated("free-array", "{\"type\":\"object\",\"properties\":"
+                        + "{\"tags\":{\"type\":\"array\"}},\"required\":[\"tags\"]}"));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        service.reply(1L, 10L, "free-array", "accept", "{\"x\":1}");
+
+        verify(delivery).submit(1L, 10L, "free-array", "accept", "{\"x\":1}");
+    }
+
+    @Test
+    void integerAndArrayElementTypesAreEnforced() {
+        String schema = "{\"type\":\"object\",\"properties\":{\"age\":{\"type\":\"integer\"},"
+                + "\"tags\":{\"type\":\"array\",\"items\":{\"enum\":[\"a\"]}}}}";
+        when(dao.findByRequestId(1L, 10L, "typed-card")).thenReturn(negotiated("typed-card", schema));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        BizException nonInteger = assertThrows(BizException.class, () ->
+                service.reply(1L, 10L, "typed-card", "accept", "{\"age\":1.5}"));
+        assertEquals("conversation.elicitation_answer_type_invalid", nonInteger.getMessageKey());
+        BizException nonStringItem = assertThrows(BizException.class, () ->
+                service.reply(1L, 10L, "typed-card", "accept", "{\"tags\":[1]}"));
+        assertEquals("conversation.elicitation_answer_type_invalid", nonStringItem.getMessageKey());
+        service.reply(1L, 10L, "typed-card", "accept", "{\"age\":2,\"tags\":[\"a\"]}");
+        verify(delivery).submit(1L, 10L, "typed-card", "accept", "{\"age\":2,\"tags\":[\"a\"]}");
+        verify(delivery, never()).submit(eq(1L), eq(10L), eq("typed-card"), eq("accept"), eq("{\"age\":1.5}"));
+    }
+
+    @Test
+    void blankNullAndEmptyListRequiredValuesAreRejected() {
+        when(dao.findByRequestId(1L, 10L, "blank-card")).thenReturn(negotiated("blank-card", MULTI_SCHEMA));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        for (String answer : new String[]{
+                "{\"q0\":\"  \",\"q1\":[\"x\"]}",
+                "{\"q0\":null,\"q1\":[\"x\"]}",
+                "{\"q0\":\"a\",\"q1\":[]}"}) {
+            BizException error = assertThrows(BizException.class, () ->
+                    service.reply(1L, 10L, "blank-card", "accept", answer));
+            assertEquals("conversation.elicitation_required_answers_missing", error.getMessageKey());
+        }
+        verify(delivery, never()).submit(anyLong(), anyLong(), anyString(), anyString(), any());
+    }
+
+    /** 空白 schema 与空 properties 都落在「没有可依据约束」的分支上。 */
+    @Test
+    void blankSchemaAndEmptyPropertiesKeepObjectOnlyCheck() {
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+        when(dao.findByRequestId(1L, 10L, "blank-schema")).thenReturn(negotiated("blank-schema", " "));
+        when(dao.findByRequestId(1L, 10L, "empty-props"))
+                .thenReturn(negotiated("empty-props", "{\"type\":\"object\",\"properties\":{}}"));
+
+        service.reply(1L, 10L, "blank-schema", "accept", "{\"x\":1}");
+        service.reply(1L, 10L, "empty-props", "accept", "{\"x\":1}");
+
+        verify(delivery).submit(1L, 10L, "blank-schema", "accept", "{\"x\":1}");
+        verify(delivery).submit(1L, 10L, "empty-props", "accept", "{\"x\":1}");
+    }
+
+    /** 声明项不是 JSON Schema 对象时同样无法严格校验（回传内容与声明字段无法对应）。 */
+    @Test
+    void nonObjectPropertyDeclarationKeepsObjectOnlyCheck() {
+        when(dao.findByRequestId(1L, 10L, "odd-card"))
+                .thenReturn(negotiated("odd-card", "{\"type\":\"object\",\"properties\":{\"q0\":\"oops\"}}"));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        service.reply(1L, 10L, "odd-card", "accept", "{\"x\":1}");
+
+        verify(delivery).submit(1L, 10L, "odd-card", "accept", "{\"x\":1}");
+    }
+
+    /** 多选题把选项放在 items.oneOf 的历史载荷同样要参与严格校验。 */
+    @Test
+    void arrayWithOneOfOptionsIsValidated() {
+        when(dao.findByRequestId(1L, 10L, "oneof-card")).thenReturn(negotiated("oneof-card",
+                "{\"type\":\"object\",\"properties\":{\"tags\":{\"type\":\"array\","
+                        + "\"items\":{\"oneOf\":[{\"const\":\"a\"}]}}},\"required\":[\"tags\"]}"));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        BizException error = assertThrows(BizException.class, () ->
+                service.reply(1L, 10L, "oneof-card", "accept", "{\"tags\":\"a\"}"));
+        assertEquals("conversation.elicitation_answer_type_invalid", error.getMessageKey());
+        service.reply(1L, 10L, "oneof-card", "accept", "{\"tags\":[\"a\"]}");
+        verify(delivery).submit(1L, 10L, "oneof-card", "accept", "{\"tags\":[\"a\"]}");
+    }
+
+    @Test
+    void numberTypeIsEnforced() {
+        when(dao.findByRequestId(1L, 10L, "number-card")).thenReturn(negotiated("number-card",
+                "{\"type\":\"object\",\"properties\":{\"amount\":{\"type\":\"number\"}}}"));
+        var delivery = mock(ConversationAnswerDeliveryService.class);
+        service.setAnswerDeliveryService(delivery);
+
+        BizException error = assertThrows(BizException.class, () ->
+                service.reply(1L, 10L, "number-card", "accept", "{\"amount\":\"1\"}"));
+        assertEquals("conversation.elicitation_answer_type_invalid", error.getMessageKey());
+        service.reply(1L, 10L, "number-card", "accept", "{\"amount\":1.5}");
+        verify(delivery).submit(1L, 10L, "number-card", "accept", "{\"amount\":1.5}");
+    }
+
+    @Test
+    void legacyPathRejectsPartialAnswerBeforeSettling() {
+        var record = pending("schema-legacy", 100L);
+        record.setSchemaJson(MULTI_SCHEMA);
+        when(dao.findByRequestId(1L, 10L, "schema-legacy")).thenReturn(record);
+
+        BizException error = assertThrows(BizException.class, () ->
+                service.reply(1L, 10L, "schema-legacy", "accept", "{\"q0\":\"a\"}"));
+
+        assertEquals("conversation.elicitation_required_answers_missing", error.getMessageKey());
+        verify(dao, never()).settleIfPending(anyLong(), anyLong(), anyString(), anyString(), any());
+        verifyNoFrameSent();
+    }
+
+    private static final String MULTI_SCHEMA = "{\"type\":\"object\",\"properties\":{"
+            + "\"q0\":{\"type\":\"string\"},\"q1\":{\"type\":\"array\",\"items\":{\"anyOf\":[{\"const\":\"x\"}]}},"
+            + "\"q2\":{\"type\":\"string\"}},\"required\":[\"q0\",\"q1\"]}";
+
+    private AgentConversationElicitationDO negotiated(String requestId, String schemaJson) {
+        var record = pending(requestId, 100L);
+        record.setAnswerProtocolVersion(1);
+        record.setSchemaJson(schemaJson);
+        return record;
+    }
+
     @BeforeEach
     void setUp() {
         dao = mock(AgentConversationElicitationDao.class);

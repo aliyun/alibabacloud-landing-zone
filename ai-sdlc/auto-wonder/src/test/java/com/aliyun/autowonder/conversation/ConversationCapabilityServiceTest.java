@@ -41,6 +41,29 @@ import static org.mockito.Mockito.when;
  */
 class ConversationCapabilityServiceTest {
 
+    @Test
+    void prdBrowserSelectionComesFromPersistedTurnAndIsAddedBeforePackaging() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER);
+        var conversation = conversation("WORKITEM_PRD", OWNER);
+        var turns = mock(AgentConversationTurnDao.class);
+        var turn = new AgentConversationTurnDO(); turn.setSubmittedUserId(OWNER);
+        turn.setSourceContext("{\"browser\":{\"skillId\":9,\"url\":\"https://example.com\",\"codeOnly\":false}}");
+        when(turns.findByConversationTurn(TENANT, CONVERSATION_ID, TURN_ID)).thenReturn(turn);
+        var browsers = mock(com.aliyun.autowonder.prd.PrdBrowserService.class);
+        var selected = new com.aliyun.autowonder.prd.PrdBrowserService.Selection(9L, "https://example.com", false);
+        org.mockito.Mockito.doAnswer(call -> {
+            List<Map<String, Object>> capabilities = call.getArgument(0);
+            capabilities.add(Map.of("id", 9L, "type", "MCP", "name", "browser")); return null;
+        }).when(browsers).addCapability(anyList(), eq(TENANT), eq(selected));
+        service = new ConversationCapabilityService(bindingDao, skillDao, agentDao, contextAssembler,
+                packager, tokenService, secretCrypto, turns);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "prdBrowsers", browsers);
+        service.prepare(conversation, TURN_ID);
+        verify(packager).buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID), eq(AGENT_ID),
+                eq(AGENT_VERSION_ID), org.mockito.ArgumentMatchers.argThat(items -> items.stream().anyMatch(c -> Long.valueOf(9).equals(c.get("id")))), any(), any());
+        verify(tokenService).issueForTurn(conversation, TURN_ID);
+    }
+
     private static final long TENANT = 10002L;
     private static final long CONVERSATION_ID = 22L;
     private static final long TURN_ID = 300L;
@@ -136,12 +159,35 @@ class ConversationCapabilityServiceTest {
         assertEquals(1, snapshot.conversationActorProtocolVersion());
         assertEquals("current-actor-token", snapshot.mcpToken());
         assertEquals(resolver.resolve(List.of()).systemPrompt(), snapshot.officialSystemPrompt());
+        org.junit.jupiter.api.Assertions.assertFalse(snapshot.officialSystemPrompt().contains(
+                "空间初始化入口"));
+        org.junit.jupiter.api.Assertions.assertFalse(snapshot.officialSystemPrompt().contains("QODER_CLI"));
+        org.junit.jupiter.api.Assertions.assertTrue(snapshot.officialSystemPrompt().contains(
+                "任务匹配已提供的 Skill 时"));
+
         org.mockito.ArgumentCaptor<List<Map<String, Object>>> capabilities =
                 org.mockito.ArgumentCaptor.forClass(List.class);
         verify(packager).buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
                 eq(AGENT_ID), eq(AGENT_VERSION_ID), capabilities.capture(), any(), any());
         org.junit.jupiter.api.Assertions.assertTrue(capabilities.getValue().stream().anyMatch(
                 item -> "official:autowonder-workitem-operator".equals(item.get("id"))));
+        var onboarding = capabilities.getValue().stream().filter(item ->
+                "official:initialize-autowonder-workspace".equals(item.get("id"))).findFirst().orElseThrow();
+        String instructions = ((Map<?, ?>) onboarding.get("config")).get("instructions").toString();
+        org.junit.jupiter.api.Assertions.assertTrue(instructions.contains(
+                "不得根据工具 schema、variables 占位符或历史问卷另拟客户问题"));
+        org.junit.jupiter.api.Assertions.assertTrue(instructions.contains(
+                "客户端选择必须使用内置提问工具弹出单选卡"));
+        org.junit.jupiter.api.Assertions.assertTrue(instructions.contains(
+                "本 Skill 的提问和执行约束仅适用于空间初始化"));
+        String customerTemplate = instructions.substring(instructions.indexOf("### 客户填写模板"),
+                instructions.indexOf("### Chief 内部处理规则"));
+        for (String section : List.of("1. 代码仓库", "2. 构建与测试", "3. 数据库脚本", "4. 数据库配置", "5. 部署")) {
+            org.junit.jupiter.api.Assertions.assertTrue(customerTemplate.contains(section));
+        }
+        org.junit.jupiter.api.Assertions.assertTrue(customerTemplate.contains("```text"));
+        org.junit.jupiter.api.Assertions.assertTrue(customerTemplate.contains("npm ci && npm run build"));
+        org.junit.jupiter.api.Assertions.assertTrue(customerTemplate.contains("sql/migrations/"));
         verify(tokenService, never()).issue(any(), anyLong());
     }
 
@@ -163,6 +209,19 @@ class ConversationCapabilityServiceTest {
         org.junit.jupiter.api.Assertions.assertNull(snapshot.officialSystemPrompt());
         verify(packager).buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
                 eq(AGENT_ID), eq(AGENT_VERSION_ID), eq(List.of()), eq(List.of()), isNull());
+    }
+
+    @Test
+    void backgroundInternalCallsGetNoCapabilitiesOrRepos() {
+        agent(CHIEF_CREATOR, CHIEF_MODIFIER).setKind(PlatformAgentSeeder.PLATFORM_KIND);
+
+        var snapshot = service.prepare(conversation(PlatformIntelligenceChannelSink.CHANNEL, null), TURN_ID);
+
+        // 一次性检测不受信标题进入提示词，因此只给它纯文本判断能力：无技能、无仓库、无平台身份。
+        org.junit.jupiter.api.Assertions.assertNull(snapshot.officialSystemPrompt());
+        verify(packager).buildConversationCapabilities(eq(TENANT), eq(CONVERSATION_ID), eq(TURN_ID),
+                eq(AGENT_ID), eq(AGENT_VERSION_ID), eq(List.of()), eq(List.of()), isNull());
+        verify(tokenService).issue(any(), eq(CHIEF_CREATOR));
     }
 
     private AgentConversationDO conversation(String channel, Long ownerUserId) {

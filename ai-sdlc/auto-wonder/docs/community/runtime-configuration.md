@@ -9,7 +9,7 @@ the upgrade planner discovers YAML environment placeholders automatically.
 
 | Property | Environment variable | Default | Effect |
 | --- | --- | --- | --- |
-| `spring.redis-meta.poolMaxWaitMs` | `REDIS_POOL_MAX_WAIT_MS` | `2000` | Maximum wait for a Redis pool connection, milliseconds; nonpositive values fall back to 2000 in Java. Previously fixed at 10000. |
+| `spring.redis-meta.poolMaxWaitMs` | `AW_REDIS_POOL_WAIT_MS`, then legacy `REDIS_POOL_MAX_WAIT_MS` | `1000` | Maximum Redis connection wait in milliseconds. Nonpositive values retain the Java safety fallback of 2000. |
 | `autowonder.im.notification.dlq-stream-key` | `AUTOWONDER_IM_NOTIFICATION_DLQ_STREAM_KEY` | `autowonder:im-notification:dlq` | Redis stream for notifications that exhaust retries. Keep identical across cluster nodes. |
 | `autowonder.im.notification.dlq-max-length` | `AUTOWONDER_IM_NOTIFICATION_DLQ_MAX_LENGTH` | `10000` | Dead-letter stream retention target; nonpositive values fall back to 10000. |
 | `autowonder.im.notification.max-backoff-ms` | `AUTOWONDER_IM_NOTIFICATION_MAX_BACKOFF_MS` | `30000` | Notification retry backoff cap; nonpositive values fall back to 30000. |
@@ -19,6 +19,28 @@ the upgrade planner discovers YAML environment placeholders automatically.
 | `autowonder.dispatch.recovery.retry-delay-ms` | `AUTOWONDER_DISPATCH_RECOVERY_RETRY_DELAY_MS` | `30000` | Delay before retrying recovery packaging. |
 | `feishu.inbox.poll-ms` | `FEISHU_INBOX_POLL_MS` | `3000` | Durable Feishu callback inbox polling interval. |
 | `feishu.inbox.initial-delay-ms` | `FEISHU_INBOX_INITIAL_DELAY_MS` | `15000` | Delay before the first Feishu inbox poll after startup. |
+
+## Shared capacity and new optional consumers
+
+These source defaults apply to every profile. Deployment/upgrade tooling reads
+their YAML placeholders; they do not require duplicate environment-example rows.
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `AW_DB_POOL_MAX` / `AW_DB_POOL_MIN_IDLE` / `AW_DB_POOL_WAIT_MS` | `50` / `5` / `3000` | JDBC maximum/idle connections and acquisition timeout in ms. |
+| `AW_REDIS_POOL_MAX` / `AW_REDIS_POOL_MAX_IDLE` / `AW_REDIS_POOL_MIN_IDLE` | `200` / `100` / `8` | Redis pool bounds. The maximum retains legacy `REDIS_POOL_MAX_TOTAL` fallback. |
+| `AW_HTTP_THREADS_MIN` / `AW_HTTP_THREADS_MAX` | `10` / `400` | Tomcat worker bounds. |
+| `AW_HTTP_ACCEPT_COUNT` / `AW_HTTP_MAX_CONNECTIONS` | `1000` / `8192` | Accept backlog and maximum connections. |
+| `AW_HTTP_CONNECTION_TIMEOUT` / `AW_HTTP_KEEP_ALIVE_TIMEOUT` / `AW_HTTP_MAX_KEEP_ALIVE_REQUESTS` | `20s` / `30s` / `1000` | Connection and persistent-connection limits. |
+| `AUTOWONDER_FRONTEND_PROJECT_PROBE_FIXED_DELAY_MS` / `AUTOWONDER_FRONTEND_PROJECT_PROBE_SWEEP_DELAY_MS` | `5000` / `60000` | Historical frontend project probe scheduling/recovery intervals. |
+| `AUTOWONDER_WORKITEM_DUPLICATE_INTENT_SCAN_MS` / `AUTOWONDER_WORKITEM_DUPLICATE_INTENT_EXPIRE_MS` | `5000` / `5000` | Duplicate-check scheduling and expiration intervals. |
+| `AUTOWONDER_WORKITEM_DUPLICATE_INTENT_CLEANUP_MS` / `AUTOWONDER_WORKITEM_DUPLICATE_INTENT_MAX_PROMPT_BYTES` | `3600000` / `65536` | Retention cleanup scheduling and bounded model input. |
+
+The duplicate-intent feature remains governed by its existing global switch;
+scheduling configuration does not enable it. Account review/workspace creation
+permissions and default SSO/registration settings are persisted platform settings,
+not secret environment values. Runtime 0.3.43 is selected from the source
+recommendation; the published runtime package is `@alicloud/autowonder`.
 
 Use positive numbers for scheduling intervals and retry limits; the Java
 fallbacks listed above apply only to the indicated Redis/notification settings.
@@ -128,3 +150,27 @@ operational reason. Normal installs need no overrides.
 The telemetry switch additionally suppresses metric/business export while keeping
 local logging and metrics available; it does not independently disable the system
 log appender. Set the main SLS switch false when no SLS traffic is desired.
+
+## Connection capacity and frontend deployment
+
+The optional `AW_HTTP_*`, `AW_REDIS_POOL_*` and `AW_DB_POOL_*` settings are
+documented in [the capacity baseline](../server-capacity-baseline.md). Their
+defaults are resource budgets, not measured throughput guarantees. Check host
+file-descriptor and listen-backlog limits, shared database/Redis connection
+budgets and the busiest instance before increasing them.
+
+Production frontend builds emit one external JavaScript entry and one stylesheet
+(`inlineDynamicImports: true`, `cssCodeSplit: false`). A page loaded from that
+build can navigate without requesting retired route chunks after a release.
+The tradeoff is a larger initial download and more initial execution. This does
+not repair pages already running older entries, initial-resource network failures
+or inconsistent assets across application instances. Restoring split chunks
+requires a deployment contract that preserves every supported page version's
+complete resource graph across instances, release rollback and asset retirement;
+keeping only the immediately previous build is insufficient for older open tabs.
+
+Maven's `npm-build` sets a 3072 MiB Node old-generation heap budget for its build
+subprocess. Override it with `-Dfrontend.node.heap.mb=...` when the build host
+requires a different budget. Reserve memory for native allocations and Maven as
+well; the heap budget is not the build's total memory requirement. This setting
+does not alter the running application or dependency-install process.

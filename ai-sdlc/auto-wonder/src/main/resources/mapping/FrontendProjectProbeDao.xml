@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.frontendproject.FrontendProjectProbeDao">
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.frontendproject.FrontendProjectProbeDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO frontend_project_probe
+            (workspace_id, repo_id, status, detector_version, branch, version, creator_id)
+        VALUES
+            (#{workspaceId}, #{repoId}, #{status}, #{detectorVersion}, #{branch}, 0, #{creatorId})
+    </insert>
+
+    <select id="findById" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProbeDO">
+        SELECT * FROM frontend_project_probe
+        WHERE id = #{id} AND workspace_id = #{workspaceId}
+    </select>
+
+    <select id="findByIdForExecution" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProbeDO">
+        SELECT * FROM frontend_project_probe
+        WHERE id = #{id}
+    </select>
+
+    <select id="findLatestByRepo" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProbeDO">
+        SELECT * FROM frontend_project_probe
+        WHERE workspace_id = #{workspaceId} AND repo_id = #{repoId}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <select id="listByRepo" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProbeDO">
+        SELECT * FROM frontend_project_probe
+        WHERE workspace_id = #{workspaceId} AND repo_id = #{repoId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listByStatus" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProbeDO">
+        SELECT * FROM frontend_project_probe
+        WHERE status = #{status}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="updateStatus">
+        UPDATE frontend_project_probe
+        SET status = #{status},
+            version = version + 1
+            <if test="modifierId != null">, modifier_id = #{modifierId}</if>
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+    <update id="updateRunning">
+        UPDATE frontend_project_probe
+        SET status = 'RUNNING',
+            node_id = #{nodeId},
+            started_at = NOW(3),
+            version = version + 1
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+          AND status = 'QUEUED'
+    </update>
+
+    <update id="updateSucceeded">
+        UPDATE frontend_project_probe
+        SET status = 'SUCCEEDED',
+            branch = #{branch},
+            commit_sha = #{commitSha},
+            candidate_count = #{candidateCount},
+            error = NULL,
+            finished_at = NOW(3),
+            version = version + 1
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+    <update id="updateFailed">
+        UPDATE frontend_project_probe
+        SET status = 'FAILED',
+            error = #{error},
+            finished_at = NOW(3),
+            version = version + 1
+        WHERE id = #{id} AND workspace_id = #{workspaceId} AND version = #{expectedVersion}
+    </update>
+
+    <select id="listStuck" resultType="com.aliyun.autowonder.frontendproject.FrontendProjectProbeDO">
+        SELECT * FROM frontend_project_probe
+        WHERE status IN
+        <foreach item="s" collection="statuses" open="(" separator="," close=")">#{s}</foreach>
+          AND gmt_modified &lt; DATE_SUB(NOW(3), INTERVAL #{beforeMs} / 1000 SECOND)
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

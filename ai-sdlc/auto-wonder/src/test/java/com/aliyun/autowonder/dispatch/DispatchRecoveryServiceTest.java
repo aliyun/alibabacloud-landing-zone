@@ -36,7 +36,7 @@ class DispatchRecoveryServiceTest {
     @BeforeEach void setup() throws Exception {
         var ds = new DriverManagerDataSource("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1", "sa", "");
         jdbc = new JdbcTemplate(ds);
-        jdbc.execute("CREATE TABLE dispatch (id BIGINT PRIMARY KEY, tenant_id BIGINT, workitem_id BIGINT, executor_id BIGINT, status VARCHAR(32),source_type VARCHAR(32),resume_mode VARCHAR(32),error VARCHAR(512),version INT DEFAULT 0,gmt_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+        jdbc.execute("CREATE TABLE dispatch (id BIGINT PRIMARY KEY, tenant_id BIGINT, workitem_id BIGINT, executor_id BIGINT, status VARCHAR(32),source_type VARCHAR(32),resume_mode VARCHAR(32),resume_from_dispatch_id BIGINT,error VARCHAR(512),version INT DEFAULT 0,gmt_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
         jdbc.execute("CREATE TABLE workitem_comment_delivery (id BIGINT AUTO_INCREMENT PRIMARY KEY,tenant_id BIGINT,workitem_id BIGINT,comment_id BIGINT,target_agent_id BIGINT,dispatch_id BIGINT,executor_id BIGINT,status VARCHAR(16),error VARCHAR(1024),reply_comment_id BIGINT,delivered_at TIMESTAMP,applied_at TIMESTAMP,gmt_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,retry_dispatch_id BIGINT DEFAULT 0)");
         String schema = Files.readString(Path.of("docs/migration/V059__dispatch_recovery.sql")).split("ALTER TABLE")[0].replaceAll("(?m)^--.*$", "");
         for (String sql : schema.split(";")) if (!sql.isBlank()) jdbc.execute(sql);
@@ -51,6 +51,8 @@ class DispatchRecoveryServiceTest {
             d.setWorkitemId(rs.getLong("workitem_id")); d.setSourceType(rs.getString("source_type")); d.setStatus(rs.getString("status")); d.setVersion(rs.getInt("version"));
             d.setExecutorId((Long) rs.getObject("executor_id")); d.setError(rs.getString("error")); d.setAgentId(20L); d.setAttempt(1); d.setSdlcStepId(77L);
             d.setResumeMode(rs.getString("resume_mode"));
+            d.setResumeFromDispatchId((Long) rs.getObject("resume_from_dispatch_id"));
+            d.setGmtModified(rs.getTimestamp("gmt_modified"));
             return d;
         }, (Object) i.getArgument(0)).stream().findFirst().orElse(null));
         when(dao.listByWorkitem(1L,10L)).thenAnswer(i -> jdbc.queryForList("SELECT id FROM dispatch WHERE tenant_id=1 AND workitem_id=10", Long.class).stream().map(dao::findById).toList());
@@ -65,6 +67,133 @@ class DispatchRecoveryServiceTest {
     String guidanceStatus() { return jdbc.queryForObject("SELECT status FROM workitem_comment_delivery WHERE id=1",String.class); }
     boolean stopPending() { return !jdbc.queryForList(
             "SELECT 1 FROM dispatch_recovery WHERE dispatch_id=100 AND stop_pending=1").isEmpty(); }
+
+    @Test
+    void acquiringTheSubjectLockPreservesAnExistingClosedDelivery() {
+        DispatchDO subject = new DispatchDO();
+        subject.setTenantId(1L); subject.setWorkitemId(10L); subject.setSourceType("WORKITEM");
+        service.lockWorkitemControl(subject);
+        Timestamp modified = Timestamp.valueOf("2020-01-02 03:04:05");
+        jdbc.update("UPDATE workitem_execution_control SET closed=1,modifier_id=7,gmt_modified=? "
+                + "WHERE tenant_id=1 AND workitem_id=10", modified);
+
+        var tx = new org.springframework.transaction.support.TransactionTemplate(
+                new DataSourceTransactionManager(jdbc.getDataSource()));
+        tx.executeWithoutResult(status -> {
+            service.lockWorkitemControl(subject);
+            service.lockWorkitemControl(subject);
+        });
+
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM workitem_execution_control", Integer.class));
+        var row = jdbc.queryForMap("SELECT closed,modifier_id,gmt_modified FROM workitem_execution_control");
+        assertEquals(1, ((Number) row.get("closed")).intValue());
+        assertEquals(7L, ((Number) row.get("modifier_id")).longValue());
+        assertEquals(modified, row.get("gmt_modified"));
+    }
+
+    @Test
+    void restorePausedAfterRejectedAdmissionRestoresTheResumeCancelledSource() {
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,source_type,error,version) "
+                + "VALUES (100,1,10,'CANCELED','WORKITEM',?,0)", DispatchFailureReason.MANUAL_CONTINUE + ": manual resume");
+        DispatchDO rejected = resumeRow(101L, 100L);
+
+        assertTrue(service.restorePausedAfterRejectedAdmission(rejected));
+
+        Map<String, Object> source = jdbc.queryForMap(
+                "SELECT status,version,error FROM dispatch WHERE id=100");
+        assertEquals(DispatchStatus.PAUSED, source.get("status"));
+        assertEquals(1, ((Number) source.get("version")).intValue());
+        assertEquals("", source.get("error"));
+    }
+
+    @Test
+    void restorePausedAfterRejectedAdmissionKeepsTheSourceWhenAnApprovedSuccessorExists() {
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,source_type,error,version) "
+                + "VALUES (100,1,10,'CANCELED','WORKITEM',?,0)", DispatchFailureReason.MANUAL_CONTINUE + ": manual resume");
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,source_type,resume_from_dispatch_id,version) "
+                + "VALUES (102,1,10,'PENDING','WORKITEM',100,0)");
+
+        assertFalse(service.restorePausedAfterRejectedAdmission(resumeRow(101L, 100L)));
+
+        assertEquals(DispatchStatus.CANCELED, jdbc.queryForObject(
+                "SELECT status FROM dispatch WHERE id=100", String.class));
+    }
+
+    @Test
+    void restorePausedAfterRejectedAdmissionIgnoresRetrySources() {
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,source_type,error,version) "
+                + "VALUES (100,1,10,'FAILED','WORKITEM','BUSINESS_FAILED',0)");
+
+        assertFalse(service.restorePausedAfterRejectedAdmission(resumeRow(101L, 100L)));
+
+        assertEquals(DispatchStatus.FAILED, jdbc.queryForObject(
+                "SELECT status FROM dispatch WHERE id=100", String.class));
+    }
+
+    @Test
+    void restorePausedAfterRejectedAdmissionRestoresWhenTheNeighborQueryReturnsNull() {
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,source_type,error,version) "
+                + "VALUES (100,1,10,'CANCELED','WORKITEM',?,0)", DispatchFailureReason.MANUAL_CONTINUE + ": manual resume");
+        doReturn(null).when(dao).listByWorkitem(1L, 10L);
+
+        assertTrue(service.restorePausedAfterRejectedAdmission(resumeRow(101L, 100L)));
+
+        assertEquals(DispatchStatus.PAUSED, jdbc.queryForObject(
+                "SELECT status FROM dispatch WHERE id=100", String.class));
+    }
+
+    @Test
+    void restorePausedAfterRejectedAdmissionIgnoresNonBlockingNeighbors() {
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status,source_type,error,version) "
+                + "VALUES (100,1,10,'CANCELED','WORKITEM',?,0)", DispatchFailureReason.MANUAL_CONTINUE + ": manual resume");
+        DispatchDO noId = new DispatchDO();
+        DispatchDO older = neighbor(99L, 100L, DispatchStatus.PENDING);
+        DispatchDO sameAsRejected = neighbor(101L, 100L, DispatchStatus.PENDING);
+        DispatchDO otherLineage = neighbor(102L, 999L, DispatchStatus.PENDING);
+        DispatchDO terminal = neighbor(103L, 100L, DispatchStatus.FAILED);
+        DispatchDO canceled = neighbor(104L, 100L, DispatchStatus.CANCELED);
+        DispatchDO paused = neighbor(105L, 100L, DispatchStatus.PAUSED);
+        doReturn(java.util.Arrays.asList(null, noId, older, sameAsRejected,
+                otherLineage, terminal, canceled, paused)).when(dao).listByWorkitem(1L, 10L);
+
+        assertTrue(service.restorePausedAfterRejectedAdmission(resumeRow(101L, 100L)));
+
+        assertEquals(DispatchStatus.PAUSED, jdbc.queryForObject(
+                "SELECT status FROM dispatch WHERE id=100", String.class));
+    }
+
+    @Test
+    void restorePausedAfterRejectedAdmissionRejectsOtherSources() {
+        DispatchDO scheduled = resumeRow(101L, 100L);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        DispatchDO noLineage = resumeRow(101L, 100L);
+        noLineage.setResumeFromDispatchId(null);
+
+        assertFalse(service.restorePausedAfterRejectedAdmission(scheduled));
+        assertFalse(service.restorePausedAfterRejectedAdmission(noLineage));
+        assertFalse(service.restorePausedAfterRejectedAdmission(null));
+    }
+
+    private static DispatchDO neighbor(long id, Long sourceId, String status) {
+        DispatchDO row = new DispatchDO();
+        row.setId(id);
+        row.setTenantId(1L);
+        row.setWorkitemId(10L);
+        row.setStatus(status);
+        row.setResumeFromDispatchId(sourceId);
+        return row;
+    }
+
+    private static DispatchDO resumeRow(long id, long sourceId) {
+        DispatchDO rejected = new DispatchDO();
+        rejected.setId(id);
+        rejected.setTenantId(1L);
+        rejected.setWorkitemId(10L);
+        rejected.setSourceType(ExecutionSourceType.WORKITEM.name());
+        rejected.setResumeFromDispatchId(sourceId);
+        rejected.setResumeMode("RECOVERY");
+        return rejected;
+    }
 
     @Test void missingRunningExecutionCreatesFencedRecoveryAtSameStep() {
         orphanInventory("RUNNING", true, java.util.Set.of());
@@ -233,6 +362,521 @@ class DispatchRecoveryServiceTest {
         return checkpoint;
     }
 
+    void terminalCheckpointEvidence() {
+        terminalCheckpointEvidenceAt(System.currentTimeMillis() - 20 * 60_000L);
+    }
+
+    void terminalCheckpointEvidenceAt(long epochMillis) {
+        var terminal = new DispatchRuntimeEventDO(); terminal.setSeq(27L);
+        terminal.setDetailJson("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"sha256:abc\"}");
+        terminal.setGmtCreate(new java.util.Date(epochMillis));
+        when(runtimeEvents.findLatestByDispatchAndType(1L, 100L, "runtime.checkpoint_saved")).thenReturn(terminal);
+        var checkpoint = new DispatchCheckpointDO(); checkpoint.setExecutorId(50L);
+        checkpoint.setSha256("abc"); checkpoint.setOssRef("bucket/terminal-checkpoint");
+        checkpoint.setGmtCreate(new java.util.Date(epochMillis));
+        when(checkpoints.findByDispatchAndSeq(1L, 100L, 70L)).thenReturn(checkpoint);
+    }
+
+    /** A runtime event frame whose seq was rounded by the float64 payload decode. */
+    void roundedTerminalEvent(long epochMillis) {
+        var terminal = new DispatchRuntimeEventDO(); terminal.setSeq(27L);
+        terminal.setDetailJson("{\"reason\":\"terminal\",\"checkpointSeq\":1793278329984153900,\"sha256\":\"sha256:abc\"}");
+        terminal.setGmtCreate(new java.util.Date(epochMillis));
+        when(runtimeEvents.findLatestByDispatchAndType(1L, 100L, "runtime.checkpoint_saved")).thenReturn(terminal);
+    }
+
+    DispatchCheckpointDO terminalCheckpointRow(String sha) {
+        var checkpoint = new DispatchCheckpointDO(); checkpoint.setExecutorId(50L);
+        checkpoint.setSha256(sha); checkpoint.setOssRef("bucket/terminal-checkpoint");
+        return checkpoint;
+    }
+
+    /** Stubs the latest terminal checkpoint event with a specific receipt payload. */
+    void terminalEvent(String detailJson) {
+        var terminal = new DispatchRuntimeEventDO(); terminal.setSeq(27L);
+        terminal.setDetailJson(detailJson);
+        when(runtimeEvents.findLatestByDispatchAndType(1L, 100L, "runtime.checkpoint_saved")).thenReturn(terminal);
+    }
+
+    /** Stubs the stored checkpoint the receipt's seq points at. */
+    void storedCheckpoint(DispatchCheckpointDO checkpoint) {
+        when(checkpoints.findByDispatchAndSeq(1L, 100L, 70L)).thenReturn(checkpoint);
+    }
+
+    void inventorySnapshot(boolean authoritative, boolean ready, String error) {
+        var registry = snapshotRegistry(new ExecutorDispatchSnapshot(
+                "session", 10, authoritative, ready, java.util.Set.of(), java.util.Set.of(100L),
+                java.util.Set.of(), java.util.Set.of(), error, System.currentTimeMillis()));
+        when(registry.isOnline(50L)).thenReturn(true);
+        service.setExecutorRegistry(registry);
+    }
+
+    /** An owned execution is no longer running, but the receipt cannot prove it ended. */
+    void assertReceiptIsNotEvidence(String detailJson) {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        terminalEvent(detailJson);
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    void inventory(boolean running, boolean owned) {
+        var registry = snapshotRegistry(new ExecutorDispatchSnapshot(
+                "session", 10, true, true,
+                running ? java.util.Set.of(100L) : java.util.Set.of(),
+                owned ? java.util.Set.of(100L) : java.util.Set.of(),
+                java.util.Set.of(), java.util.Set.of(), null, System.currentTimeMillis()));
+        when(registry.isOnline(50L)).thenReturn(true);
+        service.setExecutorRegistry(registry);
+    }
+
+    void ageDispatch(long millis) {
+        jdbc.update("UPDATE dispatch SET gmt_modified=? WHERE id=100",
+                new Timestamp(System.currentTimeMillis() - millis));
+    }
+
+    @Test void stopSelfHealsWhenRuntimeOnlyRetainsAnUndeliveredResult() {
+        dispatch("RUNNING", 50L);
+        service.cancel(1, 10, 100, 7, false);
+        assertTrue(stopPending());
+        jdbc.update("UPDATE dispatch_recovery SET requested_at=?,last_sent_at=?",
+                new Timestamp(System.currentTimeMillis() - 180_000), new Timestamp(System.currentTimeMillis() - 60_000));
+        reset(transport);
+        terminalCheckpointEvidence();
+        inventory(false, true);
+
+        service.reconcile();
+
+        assertFalse(stopPending());
+        assertEquals("CANCELED", dao.findById(100L).getStatus());
+        verifyNoInteractions(transport);
+    }
+
+    @Test void ownedNotRunningWithoutTerminalEvidenceDoesNotProveStop() {
+        dispatch("RUNNING", 50L);
+        service.cancel(1, 10, 100, 7, false);
+        jdbc.update("UPDATE dispatch_recovery SET requested_at=?,last_sent_at=?",
+                new Timestamp(System.currentTimeMillis() - 180_000), new Timestamp(System.currentTimeMillis() - 60_000));
+        reset(transport);
+        inventory(false, true);
+
+        service.reconcile();
+
+        assertTrue(stopPending());
+        assertEquals("PAUSING", dao.findById(100L).getStatus());
+        verify(transport).stop(any());
+    }
+
+    @Test void stopKeepsRetryingWhileTheRuntimeStillRunsTheDispatch() {
+        dispatch("RUNNING", 50L);
+        service.cancel(1, 10, 100, 7, false);
+        jdbc.update("UPDATE dispatch_recovery SET requested_at=?,last_sent_at=?",
+                new Timestamp(System.currentTimeMillis() - 180_000), new Timestamp(System.currentTimeMillis() - 60_000));
+        reset(transport);
+        inventory(true, true);
+
+        service.reconcile();
+
+        assertTrue(stopPending());
+        verify(transport).stop(any());
+    }
+
+    @Test void undeliveredTerminalExecutionLeavesTheRunningDeadZoneWithoutASuccessor() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        ageDispatch(20 * 60_000L);
+        inventory(false, true);
+
+        assertTrue(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+
+        var held = dao.findById(100L);
+        assertEquals("PAUSED", held.getStatus());
+        assertEquals("COMPLETION_DELIVERY_UNCONFIRMED", held.getError());
+        verify(dao, never()).insert(any());
+    }
+
+    @Test void undeliveredExecutionWithoutTerminalCheckpointStaysRunning() {
+        dispatch("RUNNING", 50L);
+        ageDispatch(20 * 60_000L);
+        inventory(false, true);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void executionStillReportedRunningIsNotReleased() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        ageDispatch(20 * 60_000L);
+        inventory(true, true);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void recentTerminalCheckpointKeepsTheResultDeliveryRetryWindow() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidenceAt(System.currentTimeMillis());
+        inventory(false, true);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void oldExecutionWithFreshCheckpointIsNotReleasedDuringDeliveryRetry() {
+        dispatch("RUNNING", 50L);
+        ageDispatch(20 * 60_000L);
+        terminalCheckpointEvidenceAt(System.currentTimeMillis());
+        inventory(false, true);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void roundedCheckpointSeqStillResolvesTheStoredTerminalRowByDigest() {
+        dispatch("RUNNING", 50L);
+        service.cancel(1, 10, 100, 7, false);
+        assertTrue(stopPending());
+        jdbc.update("UPDATE dispatch_recovery SET requested_at=?,last_sent_at=?",
+                new Timestamp(System.currentTimeMillis() - 180_000), new Timestamp(System.currentTimeMillis() - 60_000));
+        reset(transport);
+        long storedAt = System.currentTimeMillis() - 20 * 60_000L;
+        roundedTerminalEvent(storedAt);
+        var stored = terminalCheckpointRow("abc");
+        stored.setGmtCreate(new java.util.Date(storedAt));
+        when(checkpoints.listLatestByDispatch(1L, 100L, DispatchRecoveryService.CHECKPOINT_EVIDENCE_SCAN))
+                .thenReturn(List.of(stored));
+        inventory(false, true);
+
+        service.reconcile();
+
+        assertFalse(stopPending());
+        assertEquals("CANCELED", dao.findById(100L).getStatus());
+        verifyNoInteractions(transport);
+    }
+
+    @Test void undeliveredExecutionWithRoundedCheckpointSeqIsReleasedByDigest() {
+        dispatch("RUNNING", 50L);
+        roundedTerminalEvent(System.currentTimeMillis() - 20 * 60_000L);
+        when(checkpoints.listLatestByDispatch(1L, 100L, DispatchRecoveryService.CHECKPOINT_EVIDENCE_SCAN))
+                .thenReturn(List.of(terminalCheckpointRow("abc")));
+        ageDispatch(20 * 60_000L);
+        inventory(false, true);
+
+        assertTrue(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+
+        var held = dao.findById(100L);
+        assertEquals("PAUSED", held.getStatus());
+        assertEquals("COMPLETION_DELIVERY_UNCONFIRMED", held.getError());
+        verify(dao, never()).insert(any());
+    }
+
+    @Test void roundedCheckpointSeqWithoutMatchingDigestStillLacksTerminalEvidence() {
+        dispatch("RUNNING", 50L);
+        service.cancel(1, 10, 100, 7, false);
+        jdbc.update("UPDATE dispatch_recovery SET requested_at=?,last_sent_at=?",
+                new Timestamp(System.currentTimeMillis() - 180_000), new Timestamp(System.currentTimeMillis() - 60_000));
+        reset(transport);
+        roundedTerminalEvent(System.currentTimeMillis() - 20 * 60_000L);
+        when(checkpoints.listLatestByDispatch(1L, 100L, DispatchRecoveryService.CHECKPOINT_EVIDENCE_SCAN))
+                .thenReturn(List.of(terminalCheckpointRow(null), terminalCheckpointRow("other")));
+        inventory(false, true);
+
+        service.reconcile();
+
+        assertTrue(stopPending());
+        assertEquals("PAUSING", dao.findById(100L).getStatus());
+        verify(transport).stop(any());
+    }
+
+    @Test void terminalEvidenceRequiresTheTerminalReceiptReason() {
+        assertReceiptIsNotEvidence("{\"reason\":\"progress\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+    }
+
+    @Test void terminalEvidenceRejectsAMissingReceipt() {
+        assertReceiptIsNotEvidence("null");
+    }
+
+    @Test void terminalEvidenceRejectsAMissingCheckpointSeq() {
+        assertReceiptIsNotEvidence("{\"reason\":\"terminal\",\"sha256\":\"abc\"}");
+    }
+
+    @Test void terminalEvidenceRejectsANonPositiveCheckpointSeq() {
+        assertReceiptIsNotEvidence("{\"reason\":\"terminal\",\"checkpointSeq\":0,\"sha256\":\"abc\"}");
+    }
+
+    @Test void terminalEvidenceRejectsAMissingDigest() {
+        assertReceiptIsNotEvidence("{\"reason\":\"terminal\",\"checkpointSeq\":70}");
+    }
+
+    @Test void terminalEvidenceRejectsADigestThatIsBlankAfterItsPrefix() {
+        assertReceiptIsNotEvidence("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"sha256:\"}");
+    }
+
+    @Test void terminalEvidenceRejectsALegacyEventWithoutSeq() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        var terminal = new DispatchRuntimeEventDO();
+        terminal.setDetailJson("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        when(runtimeEvents.findLatestByDispatchAndType(1L, 100L, "runtime.checkpoint_saved")).thenReturn(terminal);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceRequiresAStoredCheckpoint() {
+        assertReceiptIsNotEvidence("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+    }
+
+    @Test void terminalEvidenceRejectsACheckpointPendingGarbageCollection() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        terminalEvent("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        var checkpoint = terminalCheckpointRow("abc");
+        checkpoint.setGcPending(true);
+        storedCheckpoint(checkpoint);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceRejectsACheckpointOwnedByAnotherExecutor() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        terminalEvent("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        var checkpoint = terminalCheckpointRow("abc");
+        checkpoint.setExecutorId(999L);
+        storedCheckpoint(checkpoint);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceRejectsACheckpointWithoutAnOssReference() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        terminalEvent("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        var checkpoint = terminalCheckpointRow("abc");
+        checkpoint.setOssRef(null);
+        storedCheckpoint(checkpoint);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceRejectsACheckpointWithABlankOssReference() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        terminalEvent("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        var checkpoint = terminalCheckpointRow("abc");
+        checkpoint.setOssRef("  ");
+        storedCheckpoint(checkpoint);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceRejectsACheckpointWithAnEmptyDigest() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        terminalEvent("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        storedCheckpoint(terminalCheckpointRow(null));
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceRejectsACheckpointWithADifferentDigest() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        terminalEvent("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        storedCheckpoint(terminalCheckpointRow("other"));
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceRequiresInjectedCompletionDaos() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        service.setCompletionEvidence(null, null);
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        service.setCompletionEvidence(runtimeEvents, null);
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceUsesTheEventTimeWhenNoCreateTimeIsStored() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        var terminal = new DispatchRuntimeEventDO(); terminal.setSeq(27L);
+        terminal.setDetailJson("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        terminal.setEventTime(new java.util.Date(System.currentTimeMillis() - 20 * 60_000L));
+        when(runtimeEvents.findLatestByDispatchAndType(1L, 100L, "runtime.checkpoint_saved")).thenReturn(terminal);
+        storedCheckpoint(terminalCheckpointRow("abc"));
+
+        assertTrue(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+    }
+
+    @Test void terminalEvidenceFallsBackToTheStoredCheckpointTime() {
+        dispatch("RUNNING", 50L);
+        inventory(false, true);
+        terminalEvent("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"abc\"}");
+        var checkpoint = terminalCheckpointRow("abc");
+        checkpoint.setGmtCreate(new java.util.Date(System.currentTimeMillis() - 20 * 60_000L));
+        storedCheckpoint(checkpoint);
+
+        assertTrue(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+    }
+
+    @Test void holdRejectsAMissingCandidate() {
+        inventory(false, true);
+        assertFalse(service.holdUndeliveredCompletion(null, "session"));
+    }
+
+    @Test void holdRejectsACandidateWithoutAnExecutor() {
+        inventory(false, true);
+        var candidate = new DispatchDO(); candidate.setId(100L); candidate.setTenantId(1L);
+        assertFalse(service.holdUndeliveredCompletion(candidate, "session"));
+    }
+
+    @Test void holdRejectsANonWorkitemExecution() {
+        inventory(false, true);
+        var candidate = new DispatchDO(); candidate.setId(100L); candidate.setTenantId(1L); candidate.setExecutorId(50L);
+        candidate.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        assertFalse(service.holdUndeliveredCompletion(candidate, "session"));
+    }
+
+    @Test void holdRejectsWhenNoExecutorRegistryIsConfigured() {
+        dispatch("RUNNING", 50L);
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void holdRejectsAMissingExecution() {
+        inventory(false, true);
+        var candidate = new DispatchDO(); candidate.setId(999L); candidate.setTenantId(1L);
+        candidate.setWorkitemId(10L); candidate.setExecutorId(50L);
+        assertFalse(service.holdUndeliveredCompletion(candidate, "session"));
+    }
+
+    @Test void holdRejectsExecutionOutsideAckedOrRunning() {
+        dispatch("PAUSED", 50L);
+        terminalCheckpointEvidence();
+        inventory(false, true);
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+    }
+
+    @Test void holdRejectsExecutionMovedToAnotherExecutor() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        var candidate = dao.findById(100L); candidate.setExecutorId(51L);
+        inventory(false, true);
+        assertFalse(service.holdUndeliveredCompletion(candidate, "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void holdRejectsFencedExecution() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        jdbc.update("INSERT INTO dispatch_recovery (tenant_id,dispatch_id,cancel_requested) VALUES (1,100,1)");
+        inventory(false, true);
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void holdRejectsNonAuthoritativeInventory() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        inventorySnapshot(false, true, null);
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void holdRejectsInventoryThatIsNotReady() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        inventorySnapshot(true, false, null);
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void holdRejectsInventoryWithAnError() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        inventorySnapshot(true, true, "inventory unavailable");
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void holdSurvivesAStatusCasLossWithoutReleasing() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        inventory(false, true);
+        doReturn(0).when(dao).updateStatus(anyLong(), anyLong(), anyString(), any(), any(), any(), any(), any(), anyInt(), anyLong());
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void digestFallbackSkipsUnrelatedRowsBeforeTheMatchingCheckpoint() {
+        dispatch("RUNNING", 50L);
+        roundedTerminalEvent(System.currentTimeMillis() - 20 * 60_000L);
+        when(checkpoints.listLatestByDispatch(1L, 100L, DispatchRecoveryService.CHECKPOINT_EVIDENCE_SCAN))
+                .thenReturn(List.of(terminalCheckpointRow("other"), terminalCheckpointRow("abc")));
+        ageDispatch(20 * 60_000L);
+        inventory(false, true);
+
+        assertTrue(service.holdUndeliveredCompletion(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+    }
+
+    @Test void completedTelemetryWithoutAStateIsNotDeliveryEvidence() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        workitems.findById(10L).setAssigneeType("HUMAN");
+        terminalEvidenceForAbandonedRecovery();
+        completedEvent("null");
+
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+        verify(dao, never()).insert(any());
+    }
+
+    @Test void completedTelemetryThatDidNotCompleteIsNotDeliveryEvidence() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        workitems.findById(10L).setAssigneeType("HUMAN");
+        terminalEvidenceForAbandonedRecovery();
+        completedEvent("{\"state\":\"running\"}");
+
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+        verify(dao, never()).insert(any());
+    }
+
+    void terminalEvidenceForAbandonedRecovery() {
+        terminalEvent("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"sha256:abc\"}");
+        storedCheckpoint(terminalCheckpointRow("abc"));
+    }
+
+    void completedEvent(String detailJson) {
+        var completed = new DispatchRuntimeEventDO(); completed.setSeq(30L);
+        completed.setDetailJson(detailJson);
+        when(runtimeEvents.findLatestByDispatchAndType(1L, 100L, "dispatch.completed")).thenReturn(completed);
+    }
+
+    @Test void staleInventorySessionCannotReleaseAnUndeliveredExecution() {
+        dispatch("RUNNING", 50L);
+        terminalCheckpointEvidence();
+        ageDispatch(20 * 60_000L);
+        inventory(false, true);
+
+        assertFalse(service.holdUndeliveredCompletion(dao.findById(100L), "previous-session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
     @Test void releasedHumanWaitAllowsQueuedWorkToSelectExecutorWithProductionCapacityQuery() throws Exception {
         orphanInventory("RUNNING", true, java.util.Set.of());
         workitems.findById(10L).setAssigneeType("HUMAN");
@@ -368,15 +1012,15 @@ class DispatchRecoveryServiceTest {
     @Test void scheduledForceCancelPersistsStopAndRetriesOfflineExecutor() {
         dispatch("RUNNING", 50L);
         jdbc.update("UPDATE dispatch SET source_type='SCHEDULED_TASK_RUN' WHERE id=100");
-        doThrow(new IllegalStateException("offline")).when(transport).pause(any());
+        doThrow(new IllegalStateException("offline")).when(transport).stop(any());
         service.forceCancelScheduledRun(1, 10, 100, 7);
         assertEquals("CANCELED", dao.findById(100L).getStatus());
         assertTrue(service.cancelRequested(1, 100));
         assertTrue(stopPending());
-        verify(transport).pause(any());
+        verify(transport).stop(any());
         jdbc.update("UPDATE dispatch_recovery SET last_sent_at=NULL WHERE dispatch_id=100");
         service.reconcile();
-        verify(transport, times(2)).pause(any());
+        verify(transport, times(2)).stop(any());
         assertFalse(service.onStopped(1, 51, 100));
         assertTrue(service.onStopped(1, 50, 100));
         assertFalse(stopPending());
@@ -424,7 +1068,7 @@ class DispatchRecoveryServiceTest {
     }
     @Test void forcedCancellationKeepsStopPendingUntilAuthenticatedStopAndCannotBeRevived() {
         dispatch("RUNNING",50L); guidance("DELIVERED"); var stale=dao.findById(100L);
-        service.cancel(1,10,100,7,false); verify(transport).pause(any());
+        service.cancel(1,10,100,7,false); verify(transport).stop(any());
         assertEquals("PAUSING",dao.findById(100L).getStatus());
         service.cancel(1,10,100,7,true);
         assertEquals("CANCELED",dao.findById(100L).getStatus()); assertTrue(stopPending());
@@ -462,10 +1106,10 @@ class DispatchRecoveryServiceTest {
     @Test void reconcileRepairsHistoryAndRetriesDurableStopIntent() {
         dispatch("FAILED",null); guidance("QUEUED"); service.reconcile(); assertEquals("FAILED",guidanceStatus());
         jdbc.update("UPDATE dispatch SET status='RUNNING',executor_id=50");
-        doThrow(new IllegalStateException("offline")).when(transport).pause(any());
+        doThrow(new IllegalStateException("offline")).when(transport).stop(any());
         service.cancel(1,10,100,7,false);
         jdbc.update("UPDATE dispatch_recovery SET last_sent_at=?",new Timestamp(System.currentTimeMillis()-60_000));
-        reset(transport); service.reconcile();verify(transport).pause(any());
+        reset(transport); service.reconcile();verify(transport).stop(any());
         assertTrue(stopPending());
     }
     @Test void reconcileSelfHealsStopIntentTheLiveRuntimeRunningSetDisproves() {
@@ -485,7 +1129,7 @@ class DispatchRecoveryServiceTest {
                 new Timestamp(System.currentTimeMillis()-180_000),new Timestamp(System.currentTimeMillis()-60_000));
         service.setExecutorRegistry(registry(false,false));
         service.reconcile();
-        assertTrue(stopPending()); verify(transport).pause(any());
+        assertTrue(stopPending()); verify(transport).stop(any());
     }
     @Test void periodicStopReconciliationSupportsMysqlDatetimeMapping() {
         verifyMysqlDatetimeStopRetry(false);
@@ -522,7 +1166,7 @@ class DispatchRecoveryServiceTest {
         mysqlService.setExecutorRegistry(registry(true, true));
         if (heartbeat) mysqlService.reconcileExecutor(50L);
         else mysqlService.reconcile();
-        verify(transport).pause(argThat(dispatch -> dispatch.getId() == 100L));
+        verify(transport).stop(argThat(dispatch -> dispatch.getId() == 100L));
         assertTrue(stopPending());
         assertTrue(jdbc.queryForObject("SELECT last_sent_at FROM dispatch_recovery", Timestamp.class)
                 .getTime() > System.currentTimeMillis() - 30_000);
@@ -534,7 +1178,7 @@ class DispatchRecoveryServiceTest {
                 new Timestamp(System.currentTimeMillis()-10_000),new Timestamp(System.currentTimeMillis()-60_000));
         service.setExecutorRegistry(registry(true,false));
         service.reconcile();
-        assertTrue(stopPending()); verify(transport).pause(any());
+        assertTrue(stopPending()); verify(transport).stop(any());
     }
 
     @Test void reconcileHealsOldStopsWhenJdbcMapDatesAreLocalDateTime() {
@@ -563,7 +1207,7 @@ class DispatchRecoveryServiceTest {
         assertDoesNotThrow(() -> service.reconcileExecutor(50L));
 
         assertTrue(stopPending());
-        verify(transport).pause(any());
+        verify(transport).stop(any());
     }
 
     private void useLocalDateTimeMapResults() {

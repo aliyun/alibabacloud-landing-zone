@@ -25,7 +25,10 @@ class UserServiceTest {
         jwtProperties.setAccessTtlSeconds(3600);
         return new UserService(userDao, jwtService, sessionService, jwtProperties,
                 mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
-                new SessionIssuanceService(jwtService, sessionService, jwtProperties));
+                new SessionIssuanceService(jwtService, sessionService, jwtProperties),
+                mock(com.aliyun.autowonder.feature.PlatformFeatureSwitchService.class),
+                mock(WorkspaceCreationPermissionService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class));
     }
 
     @Test
@@ -37,9 +40,17 @@ class UserServiceTest {
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         props.setAccessTtlSeconds(3600);
         JwtService jwt = new JwtService(props);
-        UserService svc = new UserService(mock(UserDao.class), jwt, session, props,
+        UserDao userDao = mock(UserDao.class);
+        UserDO active = new UserDO();
+        active.setId(42L);
+        active.setStatus(0);
+        when(userDao.findById(42L)).thenReturn(active);
+        UserService svc = new UserService(userDao, jwt, session, props,
                 mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
-                new SessionIssuanceService(jwt, session, props));
+                new SessionIssuanceService(jwt, session, props),
+                mock(com.aliyun.autowonder.feature.PlatformFeatureSwitchService.class),
+                mock(WorkspaceCreationPermissionService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class));
 
         when(session.getUserIdByRefresh("valid-rt")).thenReturn(42L);
 
@@ -61,7 +72,10 @@ class UserServiceTest {
         JwtService jwt = new JwtService(props);
         UserService svc = new UserService(mock(UserDao.class), jwt, session, props,
                 mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
-                new SessionIssuanceService(jwt, session, props));
+                new SessionIssuanceService(jwt, session, props),
+                mock(com.aliyun.autowonder.feature.PlatformFeatureSwitchService.class),
+                mock(WorkspaceCreationPermissionService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class));
 
         BizException ex = assertThrows(BizException.class, () -> svc.refreshAccessToken(null, null));
         assertEquals("10001", ex.getCode());
@@ -77,7 +91,10 @@ class UserServiceTest {
         JwtService jwt = new JwtService(props);
         UserService svc = new UserService(mock(UserDao.class), jwt, session, props,
                 mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
-                new SessionIssuanceService(jwt, session, props));
+                new SessionIssuanceService(jwt, session, props),
+                mock(com.aliyun.autowonder.feature.PlatformFeatureSwitchService.class),
+                mock(WorkspaceCreationPermissionService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class));
 
         BizException ex = assertThrows(BizException.class, () -> svc.refreshAccessToken("  ", null));
         assertEquals("10001", ex.getCode());
@@ -93,7 +110,10 @@ class UserServiceTest {
         JwtService jwt = new JwtService(props);
         UserService svc = new UserService(mock(UserDao.class), jwt, session, props,
                 mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
-                new SessionIssuanceService(jwt, session, props));
+                new SessionIssuanceService(jwt, session, props),
+                mock(com.aliyun.autowonder.feature.PlatformFeatureSwitchService.class),
+                mock(WorkspaceCreationPermissionService.class),
+                mock(org.springframework.context.ApplicationEventPublisher.class));
 
         when(session.getUserIdByRefresh("expired-rt")).thenReturn(null);
 

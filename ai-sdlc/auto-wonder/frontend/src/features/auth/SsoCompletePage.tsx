@@ -7,6 +7,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { i18n } from '@/shared/i18n';
 import { useAuthStore } from '@/shared/auth/store';
+import { isAuthEntryPath, sanitizeReturnPath } from '@/shared/auth/returnPath';
+import { resolvePostLoginNavigation } from './postLoginNavigation';
 import { claimFederatedIdentity } from '@/features/profile/federatedApi';
 import { AuthEntryShell } from './AuthEntryShell';
 import { bindSsoIdentity, exchangeSsoTicket } from './ssoApi';
@@ -37,6 +39,14 @@ function getApiMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+/** 完成页只接受服务端已校验、且再次通过前端站内校验的回跳目标。 */
+function nextLocation(raw: string | null): { pathname: string; search: string; hash: string } | undefined {
+  const safe = sanitizeReturnPath(raw);
+  if (!safe || isAuthEntryPath(safe)) return undefined;
+  const url = new URL(safe, 'https://autowonder.invalid');
+  return { pathname: url.pathname, search: url.search, hash: url.hash };
+}
+
 type ExchangeState = { status: 'idle' } | { status: 'pending' } | { status: 'failed'; message: string };
 
 export function SsoCompletePage() {
@@ -50,6 +60,7 @@ export function SsoCompletePage() {
   const bindTicket = searchParams.get('bind');
   const bound = searchParams.get('bound');
   const errorCode = searchParams.get('error');
+  const returnTarget = nextLocation(searchParams.get('next'));
 
   const accessToken = useAuthStore((s) => s.accessToken);
   const setTokens = useAuthStore((s) => s.setTokens);
@@ -66,23 +77,23 @@ export function SsoCompletePage() {
     exchangeStartedRef.current = true;
     setExchange({ status: 'pending' });
     exchangeSsoTicket(ticket)
-      .then((resp) => {
+      .then(async (resp) => {
         setTokens(resp.accessToken, resp.refreshToken);
         setUser(resp.user);
-        navigate('/workspaces', { replace: true });
+        navigate(await resolvePostLoginNavigation(returnTarget), { replace: true });
       })
       .catch((error: unknown) => {
         setExchange({ status: 'failed', message: getApiMessage(error, i18n.t('auth:sso.error.ticketInvalid')) });
       });
-  }, [ticket, navigate, setTokens, setUser]);
+  }, [ticket, returnTarget?.pathname, returnTarget?.search, returnTarget?.hash, navigate, setTokens, setUser]);
 
   const bindMutation = useMutation({
     mutationFn: (values: { username: string; password: string }) =>
       bindSsoIdentity({ ticket: bindTicket ?? '', username: values.username.trim(), password: values.password }),
-    onSuccess: (resp) => {
+    onSuccess: async (resp) => {
       setTokens(resp.accessToken, resp.refreshToken);
       setUser(resp.user);
-      navigate('/workspaces', { replace: true });
+      navigate(await resolvePostLoginNavigation(returnTarget), { replace: true });
     },
   });
 
@@ -92,7 +103,8 @@ export function SsoCompletePage() {
     onError: (error) => setClaimError(getApiMessage(error, i18n.t('auth:sso.error.generic'))),
   });
 
-  const backToLogin = () => navigate('/login', { replace: true });
+  // 失败或放弃认证时回到本地登录入口，避免默认连接再次自动发起形成循环。
+  const backToLogin = () => navigate('/login?local=1', { replace: true });
 
   const errorView = (message: string): ReactNode => (
     <div style={{ display: 'grid', gap: 16 }} data-testid="sso-error">
@@ -136,7 +148,7 @@ export function SsoCompletePage() {
         {t('sso.claimSubmit')}
       </Button>
       <Alert type="warning" showIcon message={t('sso.noWorkspaceNotice')} />
-      <Link to="/login">{t('sso.switchLogin')}</Link>
+      <Link to="/login?local=1">{t('sso.switchLogin')}</Link>
     </div>
   );
 
@@ -157,7 +169,7 @@ export function SsoCompletePage() {
         <Button type="primary" htmlType="submit" block loading={bindMutation.isPending}>{t('sso.bindSubmit')}</Button>
       </Form>
       <Alert type="warning" showIcon message={t('sso.noWorkspaceNotice')} />
-      <Link to="/login">{t('sso.switchLogin')}</Link>
+      <Link to="/login?local=1">{t('sso.switchLogin')}</Link>
     </div>
   );
 

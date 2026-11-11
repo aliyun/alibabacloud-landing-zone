@@ -17,6 +17,10 @@ public class NotificationDO extends BaseDO {
     private Long refId;
     private String status;
     private String channelsJson;
+    /** WORKSPACE（缺省）或 PLATFORM；平台级通知不绑定业务工作空间。 */
+    private String scope;
+    /** Optional immutable snapshot of related work item links; NULL for legacy and unrelated rows. */
+    private String relatedLinksJson;
     /** Delivery-only snapshot of the locale used to render this new notification. */
     @com.fasterxml.jackson.annotation.JsonIgnore
     private String recipientLocale;

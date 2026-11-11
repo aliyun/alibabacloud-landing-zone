@@ -43,6 +43,8 @@ class FederationLoginServiceTest {
     private SessionIssuanceService sessionIssuanceService;
     private PlatformBrandingService brandingService;
     private FederationProtocolAdapter adapter;
+    private SsoAccountProvisioningService provisioningService;
+    private SsoIdentityAttributeSyncService attributeSyncService;
     private FederationLoginService service;
 
     @BeforeEach
@@ -54,10 +56,13 @@ class FederationLoginServiceTest {
         sessionIssuanceService = mock(SessionIssuanceService.class);
         brandingService = mock(PlatformBrandingService.class);
         adapter = mock(FederationProtocolAdapter.class);
+        provisioningService = mock(SsoAccountProvisioningService.class);
+        attributeSyncService = mock(SsoIdentityAttributeSyncService.class);
         when(brandingService.effectivePublicBaseUrl()).thenReturn(BASE_URL);
         when(registryService.adapterFor(any())).thenReturn(adapter);
         service = new FederationLoginService(registryService, identityService, stateStore, userDao,
-                sessionIssuanceService, brandingService, new FederationProperties());
+                sessionIssuanceService, brandingService, new FederationProperties(),
+                provisioningService, attributeSyncService);
     }
 
     @Test
@@ -151,7 +156,8 @@ class FederationLoginServiceTest {
         state.setPurpose(FederationLoginState.Purpose.BINDING);
         state.setBindUserId(USER);
         when(stateStore.consumeLoginState("state-1")).thenReturn(state, null);
-        FederationAuthController controller = new FederationAuthController(registryService, service, identityService);
+        FederationAuthController controller = new FederationAuthController(registryService, service,
+                identityService, mock(PlatformAuthConfigService.class));
         Map<String, String> form = Map.of("RelayState", "state-1", "SAMLResponse", "payload", "state", "untrusted");
 
         assertEquals("/sso/complete?bound=1",
@@ -166,7 +172,8 @@ class FederationLoginServiceTest {
     @Test
     void samlAcsRejectsMissingUnknownAndWrongProviderRelayState() {
         callbackFixture(FederationLoginState.Purpose.BINDING);
-        FederationAuthController controller = new FederationAuthController(registryService, service, identityService);
+        FederationAuthController controller = new FederationAuthController(registryService, service,
+                identityService, mock(PlatformAuthConfigService.class));
         for (Map<String, String> form : java.util.List.of(
                 Map.of("state", "state-1", "SAMLResponse", "payload"),
                 Map.of("RelayState", "unknown", "SAMLResponse", "payload"))) {
@@ -183,7 +190,8 @@ class FederationLoginServiceTest {
     @Test
     void oidcCallbackKeepsStateAndDoesNotAcceptRelayStateAsASubstitute() {
         callbackFixture(FederationLoginState.Purpose.BINDING);
-        FederationAuthController controller = new FederationAuthController(registryService, service, identityService);
+        FederationAuthController controller = new FederationAuthController(registryService, service,
+                identityService, mock(PlatformAuthConfigService.class));
         assertEquals("/sso/complete?bound=1",
                 controller.oidcCallback(PROVIDER_ID, Map.of("state", "state-1", "RelayState", "unknown"))
                         .getHeaders().getLocation().toString());
@@ -221,6 +229,7 @@ class FederationLoginServiceTest {
         binding.setId(5L);
         binding.setUserId(USER);
         when(identityService.findBinding(any())).thenReturn(binding);
+        when(userDao.findById(USER)).thenReturn(user(USER, 0));
         when(registryService.requireConnection(PROVIDER_ID))
                 .thenReturn(connection(PROVIDER_ID, "AD FS 生产", "SAML2"));
 
@@ -235,6 +244,131 @@ class FederationLoginServiceTest {
     }
 
     @Test
+    void callbackRejectsDeletedAccountBeforeAnyLoginSideEffect() {
+        callbackFixture(FederationLoginState.Purpose.LOGIN);
+        when(identityService.findBinding(any())).thenReturn(binding(USER));
+        // 逻辑删除后 findById 返回 null，但绑定记录仍残留。
+        when(userDao.findById(USER)).thenReturn(null);
+
+        assertBizCode("36007", () -> service.handleCallback(PROVIDER_ID, Map.of("state", "state-1")));
+
+        verify(identityService, never()).touchLogin(any(), any());
+        verify(attributeSyncService, never()).syncFeishu(any(), any(), any());
+        verify(stateStore, never()).saveTicket(anyString(), any(), anyInt());
+    }
+
+    @Test
+    void callbackRejectsDisabledAccountBeforeAnyLoginSideEffect() {
+        callbackFixture(FederationLoginState.Purpose.LOGIN);
+        when(identityService.findBinding(any())).thenReturn(binding(USER));
+        when(userDao.findById(USER)).thenReturn(user(USER, 1));
+
+        assertBizCode("36007", () -> service.handleCallback(PROVIDER_ID, Map.of("state", "state-1")));
+
+        verify(identityService, never()).touchLogin(any(), any());
+        verify(attributeSyncService, never()).syncFeishu(any(), any(), any());
+        verify(stateStore, never()).saveTicket(anyString(), any(), anyInt());
+    }
+
+    @Test
+    void startLoginOnlyCarriesASanitizedInSiteReturnPath() {
+        when(registryService.requireEnabledConnection(PROVIDER_ID))
+                .thenReturn(connection(PROVIDER_ID, "AD FS 生产", "SAML2"));
+        when(adapter.buildAuthorizationRedirect(any(), any(), any()))
+                .thenReturn(new AuthorizationRedirect("https://idp.example.com/authorize",
+                        Map.of("requestId", "_request-1")));
+
+        service.startLogin(PROVIDER_ID, "/workitems/42?tab=discussion");
+
+        ArgumentCaptor<FederationLoginState> data = ArgumentCaptor.forClass(FederationLoginState.class);
+        verify(stateStore).saveLoginState(anyString(), data.capture(), anyInt());
+        assertEquals("/workitems/42?tab=discussion", data.getValue().getReturnPath());
+    }
+
+    @Test
+    void startLoginDropsExternalAndAuthPageReturnTargets() {
+        when(registryService.requireEnabledConnection(PROVIDER_ID))
+                .thenReturn(connection(PROVIDER_ID, "AD FS 生产", "SAML2"));
+        when(adapter.buildAuthorizationRedirect(any(), any(), any()))
+                .thenReturn(new AuthorizationRedirect("https://idp.example.com/authorize",
+                        Map.of("requestId", "_request-1")));
+
+        service.startLogin(PROVIDER_ID, "https://evil.example.com/steal");
+
+        ArgumentCaptor<FederationLoginState> data = ArgumentCaptor.forClass(FederationLoginState.class);
+        verify(stateStore).saveLoginState(anyString(), data.capture(), anyInt());
+        assertNull(data.getValue().getReturnPath());
+    }
+
+    @Test
+    void callbackAppendsTheValidatedReturnPathToTheCompletionRedirect() {
+        callbackFixture(FederationLoginState.Purpose.LOGIN);
+        FederationLoginState state = loginState(PROVIDER_ID, SAML_CALLBACK);
+        state.setReturnPath("/workitems/42?tab=discussion");
+        when(stateStore.consumeLoginState("state-1")).thenReturn(state);
+        FederatedIdentityDO binding = new FederatedIdentityDO();
+        binding.setId(5L);
+        binding.setUserId(USER);
+        when(identityService.findBinding(any())).thenReturn(binding);
+        when(userDao.findById(USER)).thenReturn(user(USER, 0));
+        when(registryService.requireConnection(PROVIDER_ID))
+                .thenReturn(connection(PROVIDER_ID, "AD FS 生产", "SAML2"));
+
+        String path = service.handleCallback(PROVIDER_ID, Map.of("state", "state-1"));
+
+        assertTrue(path.startsWith("/sso/complete?ticket="));
+        assertTrue(path.endsWith("&next=%2Fworkitems%2F42%3Ftab%3Ddiscussion"));
+        ArgumentCaptor<FederationTicket> ticket = ArgumentCaptor.forClass(FederationTicket.class);
+        verify(stateStore).saveTicket(anyString(), ticket.capture(), eq(300));
+        assertEquals("/workitems/42?tab=discussion", ticket.getValue().getReturnPath());
+    }
+
+    @Test
+    void callbackWithAutoProvisionCreatesTheAccountAndIssuesALoginTicket() {
+        callbackFixture(FederationLoginState.Purpose.LOGIN);
+        when(registryService.requireEnabledConnection(PROVIDER_ID))
+                .thenReturn(autoProvisionConnection(PROVIDER_ID, "统一认证", "SAML2"));
+        when(identityService.findBinding(any())).thenReturn(null);
+        FederatedIdentityDO provisioned = new FederatedIdentityDO();
+        provisioned.setId(9L);
+        provisioned.setUserId(555L);
+        when(provisioningService.provision(any())).thenReturn(provisioned);
+
+        String path = service.handleCallback(PROVIDER_ID, Map.of("state", "state-1"));
+
+        assertTrue(path.startsWith("/sso/complete?ticket="));
+        verify(provisioningService).provision(any());
+        ArgumentCaptor<FederationTicket> ticket = ArgumentCaptor.forClass(FederationTicket.class);
+        verify(stateStore).saveTicket(anyString(), ticket.capture(), eq(300));
+        assertEquals(FederationTicket.Purpose.LOGIN, ticket.getValue().getPurpose());
+        assertEquals(555L, ticket.getValue().getUserId());
+        verify(identityService, never()).touchLogin(any(), any());
+        verify(attributeSyncService).syncFeishu(eq(555L), any(), any());
+    }
+
+    @Test
+    void callbackUsesTheRacedBindingWhenConcurrentProvisioningWins() {
+        callbackFixture(FederationLoginState.Purpose.LOGIN);
+        when(registryService.requireEnabledConnection(PROVIDER_ID))
+                .thenReturn(autoProvisionConnection(PROVIDER_ID, "统一认证", "SAML2"));
+        FederatedIdentityDO raced = new FederatedIdentityDO();
+        raced.setId(10L);
+        raced.setUserId(USER);
+        when(identityService.findBinding(any())).thenReturn(null, raced);
+        when(provisioningService.provision(any()))
+                .thenThrow(new SsoAccountProvisioningService.ProvisionRaceException(new IllegalStateException()));
+        when(registryService.requireConnection(PROVIDER_ID))
+                .thenReturn(autoProvisionConnection(PROVIDER_ID, "统一认证", "SAML2"));
+
+        String path = service.handleCallback(PROVIDER_ID, Map.of("state", "state-1"));
+
+        assertTrue(path.startsWith("/sso/complete?ticket="));
+        ArgumentCaptor<FederationTicket> ticket = ArgumentCaptor.forClass(FederationTicket.class);
+        verify(stateStore).saveTicket(anyString(), ticket.capture(), eq(300));
+        assertEquals(USER, ticket.getValue().getUserId());
+    }
+
+    @Test
     void callbackInBindingModeCompletesTheBindingWithoutSessionIssue() {
         callbackFixture(FederationLoginState.Purpose.BINDING);
 
@@ -244,6 +378,7 @@ class FederationLoginServiceTest {
         verify(identityService).createBinding(any(), eq(USER));
         verify(stateStore, never()).saveTicket(anyString(), any(), anyInt());
         verify(identityService, never()).touchLogin(any(), any());
+        verify(attributeSyncService).syncFeishu(eq(USER), any(), any());
     }
 
     @Test
@@ -327,7 +462,8 @@ class FederationLoginServiceTest {
     void callbackUrlIsBuiltPerConnectionAndProtocol() {
         FederationProperties properties = new FederationProperties();
         FederationLoginService samlService = new FederationLoginService(registryService, identityService,
-                stateStore, userDao, sessionIssuanceService, brandingService, properties);
+                stateStore, userDao, sessionIssuanceService, brandingService, properties,
+                provisioningService, attributeSyncService);
 
         assertEquals(SAML_CALLBACK, samlService.callbackUrl(connection(PROVIDER_ID, "AD FS 生产", "SAML2")));
         assertEquals(OIDC_CALLBACK, samlService.callbackUrl(connection(PROVIDER_ID, "Entra", "OIDC")));
@@ -375,6 +511,26 @@ class FederationLoginServiceTest {
         connection.setId(id);
         connection.setName(name);
         connection.setProtocol(protocol);
+        return connection;
+    }
+
+    private static FederatedIdentityDO binding(Long userId) {
+        FederatedIdentityDO binding = new FederatedIdentityDO();
+        binding.setId(5L);
+        binding.setUserId(userId);
+        return binding;
+    }
+
+    private static UserDO user(Long id, int status) {
+        UserDO user = new UserDO();
+        user.setId(id);
+        user.setStatus(status);
+        return user;
+    }
+
+    private static FederationConnectionDO autoProvisionConnection(Long id, String name, String protocol) {
+        FederationConnectionDO connection = connection(id, name, protocol);
+        connection.setAutoProvision(1);
         return connection;
     }
 

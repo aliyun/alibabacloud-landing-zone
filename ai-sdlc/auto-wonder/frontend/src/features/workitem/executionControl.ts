@@ -34,6 +34,7 @@ export function resolveExecutionActions(attempt: DispatchAttempt): ResolvedExecu
   const overflow: ExecutionActionKind[] = [];
   if (control.end.allowed && primary !== 'end') overflow.push('end');
   if (control.forceEnd.allowed && primary !== 'forceEnd') overflow.push('forceEnd');
+  if (control.restartLatest?.allowed) overflow.push('restartLatest');
   const disabled: DisabledExecutionAction[] = [];
   const status = attempt.status ?? '';
   const pauseRelevant = !['SUCCEEDED', 'CANCELED', 'FAILED', 'TIMEOUT'].includes(status);
@@ -57,6 +58,7 @@ export function executionActionLabel(
   }
   if (action === 'end') return t('delivery.endExecution');
   if (action === 'forceEnd') return t('delivery.forceEnd');
+  if (action === 'restartLatest') return t('delivery.restartLatest');
   const capability = attempt.control?.resume;
   const target = capability?.targetDispatchId;
   if (target != null && target !== attempt.dispatchId) {

@@ -16,6 +16,7 @@ import java.security.KeyPair;
 import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -205,6 +206,44 @@ class OidcFederationAdapterTest {
 
         assertEquals("Nina", identity.displayName());
         assertEquals("nina@corp.example.com", identity.email());
+    }
+
+    @Test
+    void feishuUserIdIsMappedOnlyWhenTheConnectionDeclaresTheClaim() throws Exception {
+        String token = claims("feishu_user_id", "f8c21d6a").compact();
+        assertNull(identify(token).feishuUserId());
+
+        connection.setFeishuUserIdClaim("feishu_user_id");
+        assertEquals("f8c21d6a", identify(token).feishuUserId());
+    }
+
+    @Test
+    void nonStringFeishuClaimIsSkippedWithoutFailingTheLogin() throws Exception {
+        connection.setFeishuUserIdClaim("feishu_user_id");
+
+        ExternalIdentity identity = identify(claims()
+                .claim("feishu_user_id", List.of("f-1", "f-2"))
+                .compact());
+
+        // 可选声明类型不受支持时只跳过属性同步，其余已通过的登录校验不受影响。
+        assertNull(identity.feishuUserId());
+        assertEquals("subject-1", identity.subject());
+    }
+
+    @Test
+    void blankConfiguredOrClaimedFeishuValueIsTreatedAsAbsent() throws Exception {
+        connection.setFeishuUserIdClaim("  ");
+        assertNull(identify(claims("feishu_user_id", "f8c21d6a").compact()).feishuUserId());
+
+        connection.setFeishuUserIdClaim("feishu_user_id");
+        assertNull(identify(claims("feishu_user_id", "   ").compact()).feishuUserId());
+    }
+
+    @Test
+    void missingFeishuClaimIsTreatedAsAbsent() throws Exception {
+        connection.setFeishuUserIdClaim("feishu_user_id");
+
+        assertNull(identify(validToken()).feishuUserId());
     }
 
     @Test

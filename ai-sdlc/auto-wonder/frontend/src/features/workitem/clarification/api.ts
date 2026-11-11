@@ -35,6 +35,14 @@ export async function listClarificationConversations(
   return resp.data;
 }
 
+/** 工单维度最近一次澄清会话（跨数字人）。服务端没有会话时返回 data=null。 */
+export async function getLatestClarificationConversation(
+  workitemId: number | string,
+): Promise<ClarificationConversation | null> {
+  const resp = await apiClient.get<ClarificationConversation | null>(`${base(workitemId)}/latest`);
+  return resp.data ?? null;
+}
+
 export async function getOrCreateClarificationConversation(
   workitemId: number | string,
   agentId: number,

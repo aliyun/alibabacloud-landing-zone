@@ -70,6 +70,7 @@ class CheckpointClosureAuditTest {
         verify(storage, times(3)).delete("bucket/old");
         verify(storage).delete("bucket/old.repo-state.json");
         verify(storage).delete(LegacyCheckpointNormalizer.compatibilityRef("bucket/old"));
+        verify(storage).delete(LegacyCheckpointNormalizer.legacyCompatibilityRef("bucket/old"));
         verify(dao).deleteById(100L, 55L, 1L);
     }
 

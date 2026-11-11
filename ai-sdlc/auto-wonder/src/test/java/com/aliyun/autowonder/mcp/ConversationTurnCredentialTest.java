@@ -4,7 +4,12 @@ import com.aliyun.autowonder.auth.jwt.*;
 import com.aliyun.autowonder.conversation.*;
 import com.aliyun.autowonder.user.*;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import org.junit.jupiter.api.*;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -14,6 +19,7 @@ class ConversationTurnCredentialTest {
     UserDao users = mock(UserDao.class);
     AgentConversationDO conversation = new AgentConversationDO();
     AgentConversationTurnDO turn = new AgentConversationTurnDO();
+    UserDO user = new UserDO();
     ConversationMcpTokenService service;
     JwtService jwt;
     @BeforeEach void setup() {
@@ -29,7 +35,7 @@ class ConversationTurnCredentialTest {
         when(conversations.findById(20L,10L)).thenReturn(conversation);
         when(turns.findByConversationTurn(20L,10L,60L)).thenReturn(turn);
         when(turns.findProcessingInbound(20L,10L)).thenReturn(turn);
-        UserDO user = new UserDO(); user.setId(70L); user.setStatus(0);
+        user.setId(70L); user.setStatus(0);
         when(users.findById(70L)).thenReturn(user);
         when(users.findById(71L)).thenReturn(user);
     }
@@ -100,5 +106,105 @@ class ConversationTurnCredentialTest {
         var principal=service.authenticate(service.issueForTurn(conversation,60L));
         assertEquals(com.aliyun.autowonder.access.WorkspaceAccessLevel.READ_ONLY,principal.accessLevel());
         turn.setSubmittedUserId(71L); assertThrows(RuntimeException.class,()->service.issueForTurn(conversation,60L));
+    }
+
+    /**
+     * 缺陷回归：同一个未过期 token，正常可用；数据库瞬时异常不能被报成“未登录或登录已失效”；
+     * 依赖恢复后原 token 立即可用，不需要续期或换 token。
+     */
+    @Test void transientConversationReadFailureIsNotReportedAsCredentialExpiry() {
+        String token=service.issueForTurn(conversation,60L);
+        assertEquals(70L,service.authenticate(token).userId());
+        doThrow(new TransientDataAccessResourceException("injected transient database failure"))
+                .when(conversations).findById(20L,10L);
+        BizException failure=assertThrows(BizException.class,()->service.authenticate(token));
+        assertEquals(ErrorCode.SYSTEM_ERROR.getCode(),failure.getCode());
+        assertNotEquals(ErrorCode.UNAUTHORIZED.getCode(),failure.getCode());
+        assertTrue(failure.getCause() instanceof DataAccessException);
+        assertSafeDependencyDiagnostic(failure,"injected transient database failure",token);
+        doReturn(conversation).when(conversations).findById(20L,10L);
+        assertEquals(70L,service.authenticate(token).userId());
+        assertEquals(60L,service.authenticate(token).executionScope().turnId());
+    }
+
+    @Test void turnAndActorReadFailuresStayDependencyErrorsAndRecover() {
+        String token=service.issueForTurn(conversation,60L);
+        doThrow(new QueryTimeoutException("injected turn read timeout"))
+                .when(turns).findByConversationTurn(20L,10L,60L);
+        BizException turnFailure=assertThrows(BizException.class,()->service.authenticate(token));
+        assertEquals(ErrorCode.SYSTEM_ERROR.getCode(),turnFailure.getCode());
+        assertSafeDependencyDiagnostic(turnFailure,"injected turn read timeout",token);
+        doReturn(turn).when(turns).findByConversationTurn(20L,10L,60L);
+        assertEquals(70L,service.authenticate(token).userId());
+
+        doThrow(new CannotGetJdbcConnectionException("injected connection failure")).when(users).findById(70L);
+        BizException userFailure=assertThrows(BizException.class,()->service.authenticate(token));
+        assertEquals(ErrorCode.SYSTEM_ERROR.getCode(),userFailure.getCode());
+        assertSafeDependencyDiagnostic(userFailure,"injected connection failure",token);
+        doReturn(user).when(users).findById(70L);
+        assertEquals(70L,service.authenticate(token).userId());
+    }
+
+    /** 真正的凭据问题仍按既有规则拒绝：同一个 10401，且不带异常链。 */
+    @Test void genuineCredentialRejectionsKeepTheUnauthorizedClassification() {
+        String token=service.issueForTurn(conversation,60L);
+        turn.setStatus("SUCCESS");
+        BizException bindFailure=assertThrows(BizException.class,()->service.authenticate(token));
+        assertEquals(ErrorCode.UNAUTHORIZED.getCode(),bindFailure.getCode());
+        assertNull(bindFailure.getCause());
+        turn.setStatus("PROCESSING");
+        String expired=ConversationMcpTokenService.PREFIX+jwt.signConversationTurn(70,20,
+                ConversationMcpTokenService.TURN_PURPOSE,
+                jwt.parseConversationTurn(token.substring(ConversationMcpTokenService.PREFIX.length())).scope(),null,-1);
+        BizException expiredFailure=assertThrows(BizException.class,()->service.authenticate(expired));
+        assertEquals(ErrorCode.UNAUTHORIZED.getCode(),expiredFailure.getCode());
+        assertNull(expiredFailure.getCause());
+    }
+
+    /** 审计写入失败只能丢审计行，不能把依赖故障改写成别的分类，也不能反过来吞掉凭据拒绝。 */
+    @Test void auditFailureNeverMasksTheOriginalClassification() {
+        var audit=mock(com.aliyun.autowonder.audit.AuditLogService.class);
+        doThrow(new IllegalStateException("audit store down")).when(audit).record(any());
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"executionAudit",
+                new ConversationCredentialAuditService(audit));
+        String token=service.issueForTurn(conversation,60L);
+        doThrow(new TransientDataAccessResourceException("injected transient database failure"))
+                .when(conversations).findById(20L,10L);
+        assertEquals(ErrorCode.SYSTEM_ERROR.getCode(),
+                assertThrows(BizException.class,()->service.authenticate(token)).getCode());
+        doReturn(conversation).when(conversations).findById(20L,10L);
+        turn.setStatus("SUCCESS");
+        assertEquals(ErrorCode.UNAUTHORIZED.getCode(),
+                assertThrows(BizException.class,()->service.authenticate(token)).getCode());
+    }
+
+    /** 失败审计仍要留下凭据派生标识与异常类别，但不含 token 或异常正文。 */
+    @Test void dependencyFailureAuditKeepsTheCauseCategoryWithoutSecrets() {
+        var audit=mock(com.aliyun.autowonder.audit.AuditLogService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"executionAudit",
+                new ConversationCredentialAuditService(audit));
+        String token=service.issueForTurn(conversation,60L);
+        doThrow(new TransientDataAccessResourceException("injected transient database failure"))
+                .when(users).findById(70L);
+        assertThrows(BizException.class,()->service.authenticate(token));
+        var record=org.mockito.ArgumentCaptor.forClass(com.aliyun.autowonder.audit.AuditLogRecord.class);
+        verify(audit).record(record.capture());
+        assertEquals(70L,record.getValue().getActorId());
+        assertEquals(60L,record.getValue().getDetail().get("turnId"));
+        assertEquals(false,record.getValue().getDetail().get("success"));
+        assertEquals("TransientDataAccessResourceException",record.getValue().getDetail().get("error"));
+        String details=record.getValue().getDetail().toString();
+        assertFalse(details.contains("injected transient database failure"));
+        assertFalse(details.contains(token));
+    }
+
+    /** 对客户端可见的依赖错误文案不含注入的异常正文、SQL 片段或 token。 */
+    private static void assertSafeDependencyDiagnostic(BizException failure,String injected,String token) {
+        String message=failure.getMessage();
+        assertNotNull(message);
+        assertFalse(message.contains(injected));
+        assertFalse(message.contains(token));
+        assertFalse(message.contains("未登录"));
+        assertFalse(message.contains(ErrorCode.UNAUTHORIZED.getMessage()));
     }
 }

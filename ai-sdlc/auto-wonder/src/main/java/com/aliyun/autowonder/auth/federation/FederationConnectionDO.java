@@ -30,6 +30,10 @@ public class FederationConnectionDO {
     private String subjectClaim;
     private String nameClaim;
     private String emailClaim;
+    /** 认证结果中飞书 user_id 的属性名；为空表示不同步飞书身份。 */
+    private String feishuUserIdClaim;
+    /** 首次登录未绑定时是否自动创建内部普通账号（0 关闭 / 1 开启）。 */
+    private Integer autoProvision;
     /** 逗号分隔的允许租户（Entra tid）清单，为空表示不限制。 */
     private String allowedTenants;
     private Integer sortOrder;

@@ -7,7 +7,11 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.conversation.AgentConversationDO;
 import com.aliyun.autowonder.conversation.AgentConversationDao;
 import com.aliyun.autowonder.conversation.PlatformConversationChannel;
+import com.aliyun.autowonder.conversation.PlatformIntelligenceChannelSink;
 import com.aliyun.autowonder.squad.workflow.SquadWorkflowChannelSink;
+import io.jsonwebtoken.JwtException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.Objects;
@@ -19,8 +23,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
 public class ConversationMcpTokenService {
+    private static final Logger LOGGER = LoggerFactory.getLogger(ConversationMcpTokenService.class);
     static final String PREFIX = "awconversation_";
     public static final String TURN_PURPOSE = "conversation-turn-mcp";
+    /** 依赖或内部异常时的稳定文案键，绝不能复用“未登录或登录已失效”。 */
+    static final String CREDENTIAL_CHECK_UNAVAILABLE_KEY = "conversation.credential_check_unavailable";
     private static final String PURPOSE = "conversation-mcp";
     private static final long TTL_SECONDS = 24 * 60 * 60;
 
@@ -113,9 +120,30 @@ public class ConversationMcpTokenService {
                     claims.tenantId(), claims.userId(), claims.conversationId(),
                     ceilingFor(conversation),
                     McpAccessTokenService.CredentialType.CONVERSATION);
-        } catch (Exception e) {
-            if (executionAudit != null) executionAudit.record(signedIdentity, "MCP_AUTHENTICATE", null, e);
+        } catch (BizException e) {
+            // 执行绑定校验已经给出明确分类，不要覆盖成别的原因。
+            auditFailure(signedIdentity, e);
+            throw e;
+        } catch (JwtException | IllegalArgumentException e) {
+            // 签名、有效期、声明缺失、前缀/用途不符都属于凭据本身无效。
+            auditFailure(signedIdentity, e);
             throw new BizException(ErrorCode.UNAUTHORIZED);
+        } catch (RuntimeException e) {
+            // 数据库等鉴权依赖或内部异常不能伪装成凭据失效，否则会诱导调用方重新登录并掩盖真实故障。
+            auditFailure(signedIdentity, e);
+            LOGGER.warn("conversation MCP credential dependency failure", e);
+            throw BizException.keyed(ErrorCode.SYSTEM_ERROR, CREDENTIAL_CHECK_UNAVAILABLE_KEY, null,
+                    "conversation MCP credential check failed", e);
+        }
+    }
+
+    /** 审计写入失败只能丢失审计行，不能改变本次鉴权失败的原因分类。 */
+    private void auditFailure(McpAccessTokenService.Principal principal, Throwable failure) {
+        if (executionAudit == null) return;
+        try {
+            executionAudit.record(principal, "MCP_AUTHENTICATE", null, failure);
+        } catch (RuntimeException ignored) {
+            LOGGER.warn("conversation MCP credential audit write failed: {}", failure.getClass().getSimpleName());
         }
     }
 
@@ -173,9 +201,13 @@ public class ConversationMcpTokenService {
     /**
      * 平台管家会话的令牌只有只读上限：通用写工具在权限闸门处就走不通，写操作只能经
      * Owner 显式确认的行动计划通路，令牌级别再高也抬不动。
+     * 后台一次性调用（PLATFORM_INTERNAL）只判断文本，同样封顶只读，且不要求 Owner。
      * 遗留澄清渠道要能上传确认稿并推进工单状态，读写上限保持不变。
      */
     private static WorkspaceAccessLevel ceilingFor(AgentConversationDO conversation) {
+        if (PlatformIntelligenceChannelSink.CHANNEL.equals(conversation.getChannel())) {
+            return WorkspaceAccessLevel.READ_ONLY;
+        }
         return isOwnerBound(conversation)
                 ? WorkspaceAccessLevel.READ_ONLY
                 : WorkspaceAccessLevel.READ_WRITE;

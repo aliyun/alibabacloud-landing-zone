@@ -4,9 +4,11 @@ import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.auth.session.SessionIssuanceService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.i18n.SystemMessages;
+import com.aliyun.autowonder.feature.PlatformFeatureSwitchService;
 import com.aliyun.autowonder.user.dto.RegisterRequest;
-import com.aliyun.autowonder.user.dto.UserVO;
+import com.aliyun.autowonder.user.dto.RegisterResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 
@@ -17,9 +19,13 @@ import static org.mockito.Mockito.*;
 
 class UserServiceRegisterTest {
 
+    private final PlatformFeatureSwitchService switches = mock(PlatformFeatureSwitchService.class);
+    private final WorkspaceCreationPermissionService permissions = mock(WorkspaceCreationPermissionService.class);
+    private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+
     private UserService newService(UserDao dao) {
         return new UserService(dao, null, null, null, null, mock(SystemAdminService.class),
-                new SessionIssuanceService(null, null, null));
+                new SessionIssuanceService(null, null, null), switches, permissions, events);
     }
 
     @Test
@@ -35,14 +41,40 @@ class UserServiceRegisterTest {
         req.setPassword("pw123456");
         req.setNickname("Alice");
 
-        UserVO vo = svc.register(req);
+        RegisterResponse vo = svc.register(req);
 
         assertEquals(1L, vo.getId());
         assertEquals("alice", vo.getUsername());
+        assertFalse(vo.isReviewRequired());
         verify(dao).insert(argThat(u ->
                 "alice".equals(u.getUsername())
                         && u.getPasswordHash() != null
-                        && !"pw123456".equals(u.getPasswordHash())));
+                        && !"pw123456".equals(u.getPasswordHash())
+                        && Integer.valueOf(UserAccountStates.STATUS_NORMAL).equals(u.getStatus())));
+    }
+
+    @Test
+    void reviewSwitchRegistersPendingAccountAndPublishesReviewEvent() {
+        UserDao dao = mock(UserDao.class);
+        when(switches.registrationReviewEnabled()).thenReturn(true);
+        when(dao.findByUsername("carol")).thenReturn(null);
+        doAnswer(inv -> { ((UserDO) inv.getArgument(0)).setId(7L); return null; })
+                .when(dao).insert(any());
+        UserService svc = newService(dao);
+
+        RegisterRequest req = new RegisterRequest();
+        req.setUsername("carol");
+        req.setPassword("pw123456");
+        req.setNickname("Carol");
+
+        RegisterResponse vo = svc.register(req);
+
+        assertTrue(vo.isReviewRequired());
+        verify(dao).insert(argThat(u ->
+                Integer.valueOf(UserAccountStates.STATUS_PENDING_REVIEW).equals(u.getStatus())));
+        verify(events).publishEvent(any(com.aliyun.autowonder.user.event.UserRegistrationReviewRequestedEvent.class));
+        // 待审注册不触发首个管理员初始化。
+        verify(dao, never()).markSystemAdmin(any());
     }
 
     @Test

@@ -21,6 +21,12 @@ public class UpdateConnectionRequest {
     private String subjectClaim;
     private String nameClaim;
     private String emailClaim;
+    /** null 保持现状；空串清除映射。 */
+    private String feishuUserIdClaim;
+    /** null 保持现状；0/1 覆盖。 */
+    private Integer autoProvision;
+    /** null 保持现状；true 设为唯一默认连接，false 清除本连接的默认标记。 */
+    private Boolean defaultLogin;
     private String allowedTenants;
     private Integer sortOrder;
 }

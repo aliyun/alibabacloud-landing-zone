@@ -45,6 +45,13 @@ public class RuntimeTraceController {
     }
 
     /** Persisted event log, independent of the compact completed-trace outline. */
+    @GetMapping("/{id}/runtime-trace/events/window")
+    public Result<RuntimeTraceVO> eventWindow(@PathVariable("id") long id,
+                                        @RequestParam(value = "afterSeq", required = false) Long afterSeq,
+                                        @RequestParam(value = "beforeId", required = false) Long beforeId) {
+        return Result.ok(traceService.getLogWindow(currentWorkspaceId(), id, afterSeq, beforeId));
+    }
+
     @GetMapping("/{id}/runtime-trace/events")
     public Result<RuntimeTraceVO> events(@PathVariable("id") long id,
                                         @RequestParam(value = "afterSeq", required = false) Long afterSeq) {

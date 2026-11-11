@@ -19,10 +19,12 @@ import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.environment.EnvironmentSnapshotResolutionException;
 import com.aliyun.autowonder.util.MojibakeDetector;
 import com.aliyun.autowonder.redis.RedisManager;
+import com.aliyun.autowonder.configuration.ThreadPoolManager;
 import com.aliyun.autowonder.storage.ObjectStorageException;
 import com.aliyun.autowonder.taskpackage.PackageContext;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
+import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.AssignmentActor;
 import com.aliyun.autowonder.workitem.WorkitemControlEventWriter.ExecutionControlEvent;
@@ -34,6 +36,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.stereotype.Service;
 
@@ -89,6 +93,20 @@ public class DispatchService {
     private DispatchRecoveryService recoveryService;
     @Autowired
     public void setRecoveryService(DispatchRecoveryService service) { this.recoveryService = service; }
+    private ExecutionAvailabilityService availabilityService;
+    private DispatchAdmissionService admissionService;
+    @Autowired(required = false)
+    private DispatchWorkflowSnapshotStore workflowSnapshots;
+
+    @Autowired(required = false)
+    public void setExecutionAvailabilityService(ExecutionAvailabilityService service) {
+        this.availabilityService = service;
+    }
+
+    @Autowired(required = false)
+    public void setDispatchAdmissionService(DispatchAdmissionService service) {
+        this.admissionService = service;
+    }
 
     private void insertDispatch(DispatchDO d) {
         if (recoveryService != null) recoveryService.insert(d); else dispatchDao.insert(d);
@@ -749,6 +767,20 @@ public class DispatchService {
     /** Release one fenced comment rework. External dispatch starts only after its caller commits. */
     public boolean releaseInteractionRework(long workspaceId, long dispatchId) {
         DispatchDO candidate = dispatchDao.findById(dispatchId);
+        if (candidate != null && candidate.getTenantId() == workspaceId && workflowSnapshots != null
+                && candidate.executionSourceType() == ExecutionSourceType.WORKITEM
+                && DispatchStatus.WAITING_FOR_PAUSE.equals(candidate.getStatus())) {
+            WorkitemDO workitem = workitemDao.findById(candidate.getWorkitemId());
+            if (workitem == null || workitem.getTenantId() != workspaceId) return false;
+            Long priorStep = candidate.getSdlcStepId();
+            candidate.setSdlcStepId(workitem.getCurrentStepId());
+            candidate.setStatus(DispatchStatus.PENDING);
+            var snapshot = workflowSnapshots.prepare(candidate);
+            if (!Objects.equals(priorStep, candidate.getSdlcStepId())) candidate.setResumeFromDispatchId(null);
+            if (dispatchDao.activateInteractionRework(candidate) != 1) return false;
+            workflowSnapshots.insert(candidate, snapshot);
+            return true;
+        }
         return candidate != null && candidate.getTenantId() == workspaceId
                 && candidate.executionSourceType() == ExecutionSourceType.WORKITEM
                 && DispatchStatus.WAITING_FOR_PAUSE.equals(candidate.getStatus())
@@ -868,6 +900,7 @@ public class DispatchService {
             throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
         }
         if (recoveryService != null) recoveryService.requireOpen(source);
+        if (workflowSnapshots != null && workflowSnapshots.fenced(source)) throw DispatchWorkflowSnapshotStore.superseded();
         DispatchDO alreadyRetried = dispatchDao.findByIdempotencyKey(workspaceId, "continue:" + sourceDispatchId);
         if (alreadyRetried != null) return new ContinueResult(alreadyRetried, false);
         List<DispatchDO> workitemDispatches = dispatchDao.listByWorkitem(workspaceId, workitemId);
@@ -878,6 +911,10 @@ public class DispatchService {
                     resolution.diagnostic());
         }
         DispatchDO target = resolution.target();
+        if (workflowSnapshots != null) {
+            if (workflowSnapshots.fenced(target)) throw DispatchWorkflowSnapshotStore.superseded();
+            workflowSnapshots.require(target);
+        }
         String idem = "continue:" + target.getId();
         DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
         if (existing != null) return new ContinueResult(existing, false);
@@ -886,6 +923,11 @@ public class DispatchService {
         }
         if (!canContinue(target, System.currentTimeMillis())) {
             throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.online", new Object[0], "当前执行仍在线或已成功，不能继续");
+        }
+        // Entry rejection happens before the source is cancelled, so a PAUSED source keeps
+        // its checkpoint and remains explicitly resumable after the state is restored.
+        if (availabilityService != null) {
+            availabilityService.requireStartable(workspaceId, target.getAgentId(), executionSdlcId(target));
         }
         String resumeMode = DispatchStatus.PAUSED.equals(target.getStatus()) ? "RESUME" : "RETRY";
         if (!DispatchStatus.isTerminal(target.getStatus())
@@ -1083,6 +1125,7 @@ public class DispatchService {
         DispatchDO dispatch = loadInboundRow(workspaceId, executorId, dispatchId);
         return dispatch != null && DispatchStatus.SUCCEEDED.equals(dispatch.getStatus())
                 && (recoveryService == null || !recoveryService.fenced(dispatch))
+                && (workflowSnapshots == null || !workflowSnapshots.fenced(dispatch))
                 && !isInteractionDispatch(dispatch);
     }
 
@@ -1095,6 +1138,46 @@ public class DispatchService {
                         && !DispatchStatus.CANCELED.equals(row.getStatus())
                         && !DispatchStatus.FAILED.equals(row.getStatus())
                         && !DispatchStatus.TIMEOUT.equals(row.getStatus()));
+    }
+
+    /**
+     * Packaging and sending must start only after the caller's transaction commits. Callers
+     * that create a dispatch inside their own transaction use this instead of {@link #runPending}:
+     * an outer rollback then sends nothing, and the admission transaction (including its row
+     * locks and the network send) runs separately from the caller's still-uncommitted state.
+     */
+    public void runPendingAfterCommit(long dispatchId) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            runPending(dispatchId);
+            return;
+        }
+        if (DispatchAfterCommitContext.active()) {
+            // Already inside an afterCommit callback: registering another synchronization
+            // would never run. The business transaction is committed, so schedule the send now.
+            runPendingAsync(dispatchId);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                DispatchAfterCommitContext.enter();
+                try {
+                    runPendingAsync(dispatchId);
+                } finally {
+                    DispatchAfterCommitContext.exit();
+                }
+            }
+        });
+    }
+
+    /**
+     * Runs packaging and sending on a worker thread after the business transaction committed.
+     * The worker has no caller transaction bound, so its transitions and admission use fresh
+     * transactions and the caller never blocks on packaging or on the executor.
+     */
+    public void runPendingAsync(long dispatchId) {
+        ThreadPoolManager.asyncTaskThreadPool.execute(() -> runPending(dispatchId));
     }
 
     /** Package and dispatch a PENDING row. Returns true once capacity was reserved. */
@@ -1113,6 +1196,7 @@ public class DispatchService {
                 return false;
             }
             long workspaceId = d.getTenantId();
+            if (workflowSnapshots != null && workflowSnapshots.fenced(d)) return false;
             if (recoveryService != null) {
                 if (recoveryService.fenced(d)) return false;
                 if (!recoveryService.ready(d)) return false;
@@ -1150,6 +1234,25 @@ public class DispatchService {
                             + "frozen agent version is invalid");
                 } else {
                     failAndDrive(d, DispatchWaitingReason.AGENT_VERSION_NOT_FOUND.error());
+                }
+                return false;
+            }
+
+            // Reject before packaging when the management state already forbids a new execution.
+            // The final admission repeats this check under row locks to cover the packaging window.
+            // Resolve the flow only when an admission dependency needs it: assemblies without
+            // a workitem DAO (scheduled-only) must keep working.
+            Long executionSdlcId;
+            try {
+                executionSdlcId = availabilityService == null && admissionService == null ? null : executionSdlcId(d);
+                if (availabilityService != null) {
+                    availabilityService.requireStartable(workspaceId, d.getAgentId(), executionSdlcId);
+                }
+            } catch (BizException unavailable) {
+                if (ErrorCode.SDLC_STEP_NOT_FOUND.getCode().equals(unavailable.getCode())) {
+                    failAndDrive(d, ErrorCode.SDLC_STEP_NOT_FOUND.name() + ": " + unavailable.getMessage());
+                } else {
+                    failForUnavailable(d, unavailable);
                 }
                 return false;
             }
@@ -1261,7 +1364,19 @@ public class DispatchService {
                 throw packagingFailure;
             }
 
-            if (!transition(d, DispatchStatus.DISPATCHED, null, executorId, pkg.getOssRef(), null, null)) {
+            if (admissionService != null) {
+                // The admit transaction is the authorization to send: it re-checks the
+                // management state under row locks and commits PACKAGING -> DISPATCHED.
+                DispatchAdmissionService.Result admission =
+                        admissionService.admit(d, executionSdlcId, executorId, pkg.getOssRef());
+                if (admission.outcome() == DispatchAdmissionService.Outcome.REJECTED) {
+                    failForUnavailable(d, admission.failureReason());
+                    return false;
+                }
+                if (admission.outcome() == DispatchAdmissionService.Outcome.LOST) {
+                    return true; // another writer owns the row; never send a loser
+                }
+            } else if (!transition(d, DispatchStatus.DISPATCHED, null, executorId, pkg.getOssRef(), null, null)) {
                 return true;
             }
             // 派发开始执行：工单仍处于 INIT 类别时自动推进到模板首个 IN_PROGRESS 节点（规格 3.3）。
@@ -1447,6 +1562,68 @@ public class DispatchService {
         }
     }
 
+    /** Scheduled runs use the ledger; a workitem interaction carries its own target worker's step. */
+    private Long executionSdlcId(DispatchDO d) {
+        if (d == null || d.getTenantId() == null || d.getWorkitemId() == null) {
+            return null;
+        }
+        if (d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            return scheduledTaskRunService == null ? null
+                    : scheduledTaskRunService.sdlcId(d.getTenantId(), d.getWorkitemId());
+        }
+        if (workflowSnapshots != null) return workflowSnapshots.require(d).sdlcId();
+        if (isInteractionDispatch(d)) {
+            var step = assembler.workitemStep(d);
+            return step == null ? null : step.getSdlcId();
+        }
+        WorkitemDO workitem = workitemDao == null ? null : workitemDao.findById(d.getWorkitemId());
+        return workitem == null ? null : workitem.getSdlcId();
+    }
+
+    private void failForUnavailable(DispatchDO d, BizException unavailable) {
+        String reason = ExecutionAvailabilityService.failureReason(unavailable);
+        if (reason == null) {
+            log.warn("dispatch availability rejection without a stable reason dispatchId={}",
+                    d == null ? null : d.getId(), unavailable);
+            return;
+        }
+        failForUnavailable(d, reason);
+    }
+
+    /**
+     * Converges a management-state rejection. It deliberately does not enqueue a new attempt
+     * or hand the failure to the business retry chain; recovery needs an explicit restart.
+     */
+    private void failForUnavailable(DispatchDO d, String reason) {
+        String stableReason = DispatchFailureReason.SDLC_DISABLED.equals(reason)
+                ? DispatchFailureReason.SDLC_DISABLED : DispatchFailureReason.AGENT_OFFLINE;
+        String detail = stableReason + ": " + managementRejectionMessage(stableReason);
+        if (!transition(d, DispatchStatus.FAILED, null, null, null, null, detail)) {
+            return;
+        }
+        log.info("dispatch rejected by management state dispatchId={} agentId={} reason={}",
+                d.getId(), d.getAgentId(), stableReason);
+        if (isInteractionDispatch(d)) return;
+        if (d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            completeScheduledRun(d, false, null, detail);
+            return;
+        }
+        // A user resume rejected only at final admission restores its PAUSED source instead of
+        // driving the workitem to failure. Production resume rows are RECOVERY/CANONICAL_INTERACTION,
+        // so the resumeFrom lineage and the source's MANUAL_CONTINUE cancellation are authoritative.
+        if (d.getResumeFromDispatchId() != null && recoveryService != null
+                && recoveryService.restorePausedAfterRejectedAdmission(d)) {
+            return;
+        }
+        sdlcDriver.onFail(d.getTenantId(), d.getWorkitemId(), d.getSdlcStepId());
+    }
+
+    private static String managementRejectionMessage(String reason) {
+        return DispatchFailureReason.SDLC_DISABLED.equals(reason)
+                ? "SDLC 流程已禁用，无法启动新的执行"
+                : "数字员工已下线，无法启动新的执行";
+    }
+
     private void completeScheduledRun(DispatchDO dispatch, boolean success, String summary, String error) {
         if (scheduledTaskRunService != null) {
             scheduledTaskRunService.completeFromDispatch(dispatch, success, summary, error);
@@ -1468,6 +1645,7 @@ public class DispatchService {
         BizException businessFailure = findCause(failure, BizException.class);
         if (businessFailure != null
                 && (ErrorCode.SCHEDULED_TASK_INVALID_STATE.getCode().equals(businessFailure.getCode())
+                || ErrorCode.SDLC_STEP_NOT_FOUND.getCode().equals(businessFailure.getCode())
                 || isPermanentPackageInputKey(businessFailure))) {
             return true;
         }
@@ -1892,13 +2070,24 @@ public class DispatchService {
         if (telemetryEvidenceService == null) {
             return;
         }
-        try {
-            telemetryEvidenceService.ingestDispatch(d.getId(), success, resultSummary, error,
-                    d.getTenantId(), SYSTEM_USER_ID);
-        } catch (RuntimeException e) {
-            log.warn("evolution telemetry evidence ingestion failed dispatchId={} agentId={} reason={}",
-                    d.getId(), d.getAgentId(), e.getMessage());
-        }
+        long dispatchId = d.getId();
+        long workspaceId = d.getTenantId();
+        Long agentId = d.getAgentId();
+        Runnable ingest = () -> {
+            long started = System.nanoTime();
+            try {
+                telemetryEvidenceService.ingestDispatch(dispatchId, success, resultSummary, error,
+                        workspaceId, SYSTEM_USER_ID);
+            } catch (RuntimeException e) {
+                log.warn("evolution telemetry evidence ingestion failed dispatchId={} agentId={} reason={}",
+                        dispatchId, agentId, e.getMessage());
+            } finally {
+                log.info("dispatch result telemetry finished dispatchId={} elapsedMs={}", dispatchId,
+                        java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+            }
+        };
+        // Best-effort, idempotent statistics must not hold the result's dispatch/workitem locks.
+        if (!ResultCommitActions.deferAsync("telemetry:" + dispatchId, ingest)) ingest.run();
     }
 
     public static boolean isExecutorFailureCategory(String failureCategory) {
@@ -2098,6 +2287,7 @@ public class DispatchService {
                 || (executorId != null && !executorId.equals(d.getExecutorId()))) {
             return null;
         }
+        if (workflowSnapshots != null && workflowSnapshots.fenced(d)) return null;
         return d;
     }
 
@@ -2133,10 +2323,14 @@ public class DispatchService {
         return false;
     }
 
-    public void renewActiveLeases(long workspaceId, long executorId, java.util.List<Long> dispatchIds) {
+    public void recordRunningDispatches(long executorId, java.util.List<Long> dispatchIds) {
         if (executorRegistry != null) {
             executorRegistry.updateRunningDispatches(executorId, dispatchIds);
         }
+    }
+
+    /** Database renewal may wait on a result transaction; inventory publication must happen first. */
+    public void renewActiveLeases(long workspaceId, long executorId, java.util.List<Long> dispatchIds) {
         if (dispatchIds == null || dispatchIds.isEmpty()) {
             return;
         }
@@ -2156,6 +2350,19 @@ public class DispatchService {
             // budget exhausted -> human handoff via the fail branch (no retry action returned)
             sdlcDriver.onFail(failed.getTenantId(), failed.getWorkitemId(), failed.getSdlcStepId());
             return;
+        }
+        if (availabilityService != null) {
+            try {
+                availabilityService.requireStartable(failed.getTenantId(), failed.getAgentId(),
+                        executionSdlcId(failed));
+            } catch (BizException unavailable) {
+                // Management rejection is permanent for this attempt: never consume the retry
+                // budget with a new row and never loop automatically.
+                log.info("dispatch retry rejected by management state dispatchId={} agentId={} reason={}",
+                        failed.getId(), failed.getAgentId(),
+                        ExecutionAvailabilityService.failureReason(unavailable));
+                return;
+            }
         }
         DispatchDO retryRow = enqueue(failed.getTenantId(), failed.getWorkitemId(),
                 failed.getSdlcStepId(), failed.getAgentId(), nextAttempt, SYSTEM_USER_ID);

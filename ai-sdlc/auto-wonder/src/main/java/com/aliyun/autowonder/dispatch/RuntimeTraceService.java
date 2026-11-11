@@ -31,6 +31,27 @@ public class RuntimeTraceService {
         return get(tenantId, dispatchId, null);
     }
 
+    /** A bounded log window in arrival order; executor seq may restart after failover. */
+    public RuntimeTraceVO getLogWindow(long tenantId, long dispatchId, Long afterSeq, Long beforeId) {
+        DispatchDO dispatch = dispatchDao.findById(dispatchId);
+        if (dispatch == null || dispatch.getTenantId() == null || dispatch.getTenantId() != tenantId) {
+            throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
+        }
+        List<DispatchRuntimeEventDO> rows = eventDao.listWindow(tenantId, dispatchId, beforeId, 201);
+        RuntimeTraceVO trace = new RuntimeTraceVO();
+        trace.setDispatchId(dispatchId);
+        long latest = rows.isEmpty() ? 0L : rows.get(0).getId();
+        trace.setLastSeq(latest);
+        if (beforeId == null && afterSeq != null && latest <= afterSeq) {
+            trace.setChanged(false);
+            return trace;
+        }
+        int size = Math.min(200, rows.size());
+        if (rows.size() > size) trace.setNextBeforeId(rows.get(size - 1).getId());
+        for (int i = size - 1; i >= 0; i--) trace.getEvents().add(toEvent(rows.get(i)));
+        return trace;
+    }
+
     public RuntimeTraceVO get(long tenantId, long dispatchId, Long afterSeq) {
         DispatchDO dispatch = dispatchDao.findById(dispatchId);
         if (dispatch == null || dispatch.getTenantId() == null || dispatch.getTenantId() != tenantId) {

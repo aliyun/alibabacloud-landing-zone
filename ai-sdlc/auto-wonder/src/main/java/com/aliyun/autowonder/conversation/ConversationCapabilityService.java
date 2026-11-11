@@ -29,6 +29,8 @@ public class ConversationCapabilityService {
     private final SecretCrypto secretCrypto;
     private final AgentConversationTurnDao turnDao;
     private final ChiefEffectiveConfigResolver chiefConfig;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.aliyun.autowonder.prd.PrdBrowserService prdBrowsers;
 
     public ConversationCapabilityService(AgentSkillDao bindingDao, SkillDao skillDao,
             AgentDao agentDao, PackageContextAssembler contextAssembler,
@@ -77,19 +79,22 @@ public class ConversationCapabilityService {
             throw new IllegalStateException("conversation agent is unavailable");
         }
         boolean web = PlatformConversationChannel.CHANNEL.equals(conversation.getChannel())
-                || "WORKITEM_CLARIFICATION".equals(conversation.getChannel());
+                || "WORKITEM_CLARIFICATION".equals(conversation.getChannel())
+                || "WORKITEM_PRD".equals(conversation.getChannel());
         AgentConversationTurnDO turn = web && turnDao != null
                 ? turnDao.findByConversationTurn(conversation.getTenantId(), conversation.getId(), turnId) : null;
         boolean actorScoped = web && turn != null && turn.getSubmittedUserId() != null;
-        if ("WORKITEM_CLARIFICATION".equals(conversation.getChannel()) && !actorScoped) {
+        if (("WORKITEM_CLARIFICATION".equals(conversation.getChannel())
+                || "WORKITEM_PRD".equals(conversation.getChannel())) && !actorScoped) {
             throw com.aliyun.autowonder.common.error.BizException.keyed(
                     com.aliyun.autowonder.common.error.ErrorCode.NO_PERMISSION,
                     "conversation.actor_unknown", null, "conversation turn sender is unavailable; send a new message");
         }
         long principalId = actorScoped ? turn.getSubmittedUserId() : resolvePrincipal(conversation, agent);
-        // 小队工作流只做一次只读配置分析与图谱提交：无仓库、无技能，避免 Chief 拿会话发起人的
-        // 全量能力包去调用无关写工具。
-        boolean restricted = SquadWorkflowChannelSink.CHANNEL.equals(conversation.getChannel());
+        // 小队工作流与后台一次性调用只做纯文本判断：不给仓库、不给技能，避免 Chief 用
+        // 全量能力包去调用与本次判断无关的工具。
+        boolean restricted = SquadWorkflowChannelSink.CHANNEL.equals(conversation.getChannel())
+                || PlatformIntelligenceChannelSink.CHANNEL.equals(conversation.getChannel());
         boolean officialChief = !restricted && PlatformAgentSeeder.PLATFORM_KIND.equals(agent.getKind());
         List<Map<String, Object>> capabilities = restricted ? List.of()
                 : PackageContextAssembler.buildCapabilities(bindingDao, skillDao,
@@ -98,6 +103,16 @@ public class ConversationCapabilityService {
                 officialChief ? chiefConfig.resolve(capabilities) : null;
         if (official != null) {
             capabilities = official.capabilities();
+        }
+        if ("WORKITEM_PRD".equals(conversation.getChannel()) && turn != null && turn.getSourceContext() != null) {
+            var source = com.aliyun.autowonder.json.JSON.parseObject(turn.getSourceContext());
+            if (source != null && source.get("browser") != null) {
+                var browser = com.aliyun.autowonder.json.JSON.parseObject(
+                        com.aliyun.autowonder.json.JSON.toJSONString(source.get("browser")),
+                        com.aliyun.autowonder.prd.PrdBrowserService.Selection.class);
+                capabilities = new java.util.ArrayList<>(capabilities);
+                prdBrowsers.addCapability(capabilities, conversation.getTenantId(), browser);
+            }
         }
         var repos = restricted ? List.<Map<String, Object>>of()
                 : contextAssembler.buildRepos(conversation.getTenantId(),

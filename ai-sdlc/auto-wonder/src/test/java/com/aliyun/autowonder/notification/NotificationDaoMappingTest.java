@@ -28,6 +28,7 @@ class NotificationDaoMappingTest {
     private static final String COUNT = NS + "countByRecipient";
     private static final String DELETE = NS + "delete";
     private static final String LIST = NS + "listByRecipient";
+    private static final String FIND = NS + "findByIdAndRecipient";
 
     private Configuration configuration;
 
@@ -42,14 +43,16 @@ class NotificationDaoMappingTest {
     }
 
     @Test
-    void countWithoutStatusCountsEveryNotificationOfTheRecipient() {
-        assertEquals("SELECT COUNT(*) FROM notification WHERE tenant_id = ? AND recipient_id = ?",
+    void countWithoutStatusCountsEveryVisibleNotificationOfTheRecipient() {
+        assertEquals("SELECT COUNT(*) FROM notification WHERE recipient_id = ? "
+                        + "AND ((scope = 'WORKSPACE' AND tenant_id = ?) OR scope = 'PLATFORM')",
                 sqlFor(COUNT, countParams(a -> { })));
     }
 
     @Test
     void countAppliesTheSameStatusPredicateAsTheListQuery() {
-        assertEquals("SELECT COUNT(*) FROM notification WHERE tenant_id = ? AND recipient_id = ? AND status = ?",
+        assertEquals("SELECT COUNT(*) FROM notification WHERE recipient_id = ? "
+                        + "AND ((scope = 'WORKSPACE' AND tenant_id = ?) OR scope = 'PLATFORM') AND status = ?",
                 sqlFor(COUNT, countParams(a -> a.put("status", "UNREAD"))));
         assertTrue(sqlFor(LIST, listParams(a -> a.put("status", "UNREAD"))).contains("AND status = ?"),
                 "列表与计数必须用同一个 status 条件，否则分页器总数与列表内容对不上");
@@ -68,21 +71,52 @@ class NotificationDaoMappingTest {
     }
 
     @Test
-    void deleteIsScopedToTenantAndRecipientNotOnlyId() {
-        assertEquals("DELETE FROM notification WHERE id = ? AND tenant_id = ? AND recipient_id = ?",
+    void deleteIsScopedToTheRecipientAndEitherTheCurrentWorkspaceOrPlatformScope() {
+        assertEquals("DELETE FROM notification WHERE id = ? AND recipient_id = ? "
+                        + "AND ((scope = 'WORKSPACE' AND tenant_id = ?) OR scope = 'PLATFORM')",
                 sqlFor(DELETE, deleteParams()));
+        assertTrue(sqlFor(DELETE, deleteParams()).contains("tenant_id = ?"),
+                "他租户的 WORKSPACE 通知必须不可删除");
     }
 
     @Test
     void deleteBindsOwnershipParametersAfterId() {
-        assertEquals(List.of("id", "tenantId", "recipientId"), parameterNames(DELETE, deleteParams()),
-                "tenant_id / recipient_id 必须作为绑定参数进入 WHERE，缺一个就能删到他人通知");
+        assertEquals(List.of("id", "recipientId", "tenantId"), parameterNames(DELETE, deleteParams()),
+                "recipient_id / tenant_id 必须作为绑定参数进入 WHERE，缺一个就能删到他人通知");
     }
 
     @Test
     void deleteIsPhysicalBecauseNotificationHasNoSoftDeleteColumn() {
         assertTrue(sqlFor(DELETE, deleteParams()).startsWith("DELETE FROM notification"),
                 "notification 表无 is_deleted 列，只能物理删除");
+    }
+
+    @Test
+    void findByIdAndRecipientIsScopedToTheCurrentRecipientAndEitherWorkspaceOrPlatform() {
+        assertEquals("SELECT * FROM notification WHERE id = ? AND recipient_id = ? "
+                        + "AND ((scope = 'WORKSPACE' AND tenant_id = ?) OR scope = 'PLATFORM')",
+                sqlFor(FIND, deleteParams()));
+        assertTrue(sqlFor(FIND, deleteParams()).contains("tenant_id = ?"),
+                "他租户的 WORKSPACE 通知详情必须不可读");
+    }
+
+    @Test
+    void findByIdAndRecipientBindsOwnershipParametersAfterId() {
+        assertEquals(List.of("id", "recipientId", "tenantId"), parameterNames(FIND, deleteParams()),
+                "详情查询缺 recipient_id / tenant_id 就能读到他人或其他空间的通知");
+    }
+
+    @Test
+    void withoutAWorkspaceOnlyPlatformScopeRowsAreVisible() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("recipientId", 10018L);
+        args.put("offset", 0);
+        args.put("limit", 10);
+
+        String sql = sqlFor(LIST, args);
+
+        assertTrue(sql.contains("AND scope = 'PLATFORM'"), "无空间时只能查平台级通知: " + sql);
+        assertFalse(sql.contains("tenant_id"), "无空间时不得回退为跨租户查询: " + sql);
     }
 
     private Map<String, Object> countParams(java.util.function.Consumer<Map<String, Object>> customizer) {

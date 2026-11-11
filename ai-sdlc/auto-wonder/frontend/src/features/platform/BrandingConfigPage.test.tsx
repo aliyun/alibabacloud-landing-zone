@@ -134,6 +134,26 @@ async function openUserManagementTab() {
 }
 
 describe('BrandingConfigPage', () => {
+  it('opens user management for a ?tab= deep link', async () => {
+    server.use(http.get('/api/platform/users', () => HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: { totalAll: 0, total: 0, pageNum: 1, pageSize: 20, list: [] },
+      traceId: null,
+    })));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/workspaces/branding?tab=user-management']}>
+          <BrandingConfigPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('全部用户 0 人')).toBeInTheDocument();
+  });
+
   beforeEach(() => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
@@ -529,7 +549,7 @@ describe('BrandingConfigPage', () => {
     renderPage();
 
     expect(await screen.findByRole('tab', { name: '品牌与主题' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '消息渠道' })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: '消息渠道' })).toBeInTheDocument();
     expect(await screen.findByRole('tab', { name: '企业 SSO' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '平台管理员' })).toBeInTheDocument();
 
@@ -899,16 +919,29 @@ it('keeps the persisted channel and reports selection save failures', async () =
   expect(screen.getByLabelText('AppKey')).toHaveValue('ding-app');
 });
 
-it('hides the shared group-chat panel from non-admin operators', async () => {
-  server.use(http.get('/api/platform/branding', () => HttpResponse.json({
-    ...brandingPayload(),
-    data: { ...brandingPayload().data, canManage: false },
-  })));
-  renderPage(); await openNotificationTab();
+it('hides message channel configuration and skips its requests for non-admin operators', async () => {
+  let configRequests = 0;
+  window.localStorage.setItem('autowonder.platform-config.tab', 'notification');
+  server.use(
+    http.get('/api/platform/branding', () => HttpResponse.json({
+      ...brandingPayload(),
+      data: { ...brandingPayload().data, canManage: false },
+    })),
+    http.get('/api/platform/im-channels', () => {
+      configRequests += 1;
+      return HttpResponse.json({ success: true, code: '0', data: [] });
+    }),
+    http.get('/api/platform/im-channels/selection', () => {
+      configRequests += 1;
+      return HttpResponse.json({ success: true, code: '0', data: { provider: 'DINGTALK' } });
+    }),
+  );
+  renderPage();
 
-  expect(await screen.findByRole('switch', { name: '启用钉钉机器人' })).toBeInTheDocument();
-  expect(screen.queryByText('群聊机器人')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: '保存群聊机器人' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText('平台名称')).toBeEnabled());
+  expect(await screen.findByRole('tab', { name: '品牌与主题' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.queryByRole('tab', { name: '消息渠道' })).not.toBeInTheDocument();
+  expect(configRequests).toBe(0);
 });
 
 it('warns about unsaved notification input before switching the platform channel', async () => {

@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workitem.duplicate.WorkitemDuplicateCheckDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.workitem.duplicate.WorkitemDuplicateCheckDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem_duplicate_check
+            (tenant_id, operator_id, workitem_id, form_request_id, title, title_fingerprint,
+             exclude_workitem_id, candidate_since, candidate_total, candidate_snapshot_json,
+             next_batch_index, request_id, status, cancel_pending, error, deadline_at, attempt,
+             gmt_create)
+        VALUES
+            (#{tenantId}, #{operatorId}, #{workitemId}, #{formRequestId}, #{title}, #{titleFingerprint},
+             #{excludeWorkitemId}, #{candidateSince}, COALESCE(#{candidateTotal}, 0),
+             #{candidateSnapshotJson}, COALESCE(#{nextBatchIndex}, 0), #{requestId}, #{status},
+             COALESCE(#{cancelPending}, 0), #{error}, #{deadlineAt}, 0, #{gmtCreate})
+    </insert>
+
+    <select id="findByIdGlobal" resultType="com.aliyun.autowonder.workitem.duplicate.WorkitemDuplicateCheckDO">
+        SELECT * FROM workitem_duplicate_check WHERE id = #{id} LIMIT 1
+    </select>
+
+    <select id="findById" resultType="com.aliyun.autowonder.workitem.duplicate.WorkitemDuplicateCheckDO">
+        SELECT * FROM workitem_duplicate_check
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="findLive" resultType="com.aliyun.autowonder.workitem.duplicate.WorkitemDuplicateCheckDO">
+        SELECT * FROM workitem_duplicate_check
+        WHERE tenant_id = #{tenantId} AND operator_id = #{operatorId}
+          AND form_request_id = #{formRequestId} AND title_fingerprint = #{titleFingerprint}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <select id="countActiveByTenant" resultType="java.lang.Long">
+        SELECT COUNT(*) FROM workitem_duplicate_check
+        WHERE tenant_id = #{tenantId} AND status IN ('PENDING', 'RUNNING')
+    </select>
+
+    <select id="countActiveGlobal" resultType="java.lang.Long">
+        SELECT COUNT(*) FROM workitem_duplicate_check WHERE status IN ('PENDING', 'RUNNING')
+    </select>
+
+    <!-- 准入互斥：同一时刻只有一个事务能通过开关行复核与配额检查。 -->
+    <select id="lockSwitchEnabled" resultType="java.lang.Integer">
+        SELECT enabled FROM platform_feature_switch
+        WHERE switch_key = #{switchKey}
+        FOR UPDATE
+    </select>
+
+    <select id="listDueIds" resultType="java.lang.Long">
+        SELECT id FROM workitem_duplicate_check
+        WHERE id &gt; #{afterId}
+          AND (status = 'PENDING'
+               OR (status = 'RUNNING' AND (lease_until IS NULL OR lease_until &lt;= #{now})))
+          AND (deadline_at IS NULL OR deadline_at &gt; #{now})
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listExpiredIds" resultType="java.lang.Long">
+        SELECT id FROM workitem_duplicate_check
+        WHERE status IN ('PENDING', 'RUNNING')
+          AND deadline_at IS NOT NULL AND deadline_at &lt;= #{now}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="claim">
+        UPDATE workitem_duplicate_check
+        SET status = 'RUNNING', lease_until = #{leaseUntil}, attempt = attempt + 1
+        WHERE id = #{id}
+          AND attempt = #{expectedAttempt}
+          AND (status = 'PENDING'
+               OR (status = 'RUNNING' AND (lease_until IS NULL OR lease_until &lt;= #{now})))
+    </update>
+
+    <update id="saveSnapshot">
+        UPDATE workitem_duplicate_check
+        SET candidate_snapshot_json = #{candidateSnapshotJson},
+            candidate_total = #{candidateTotal},
+            lease_until = NULL
+        WHERE id = #{id} AND attempt = #{expectedAttempt} AND status = 'RUNNING'
+          AND candidate_snapshot_json IS NULL
+    </update>
+
+    <update id="releaseLease">
+        UPDATE workitem_duplicate_check
+        SET lease_until = NULL
+        WHERE id = #{id} AND attempt = #{expectedAttempt} AND status = 'RUNNING'
+    </update>
+
+    <update id="finish">
+        UPDATE workitem_duplicate_check
+        SET status = #{status}, match_json = #{matchJson}, error = #{error},
+            lease_until = NULL, cancel_pending = 0
+        WHERE id = #{id} AND attempt = #{expectedAttempt} AND status IN ('PENDING', 'RUNNING')
+          AND (#{status} &lt;&gt; 'SUCCEEDED' OR deadline_at IS NULL OR deadline_at &gt; #{now})
+    </update>
+
+    <update id="expire">
+        UPDATE workitem_duplicate_check
+        SET status = 'FAILED', error = #{error}, lease_until = NULL,
+            cancel_pending = CASE WHEN request_id IS NULL THEN 0 ELSE 1 END
+        WHERE id = #{id} AND status IN ('PENDING', 'RUNNING')
+          AND deadline_at IS NOT NULL AND deadline_at &lt;= #{now}
+    </update>
+
+    <select id="listCancelPendingIds" resultType="java.lang.Long">
+        SELECT id FROM workitem_duplicate_check
+        WHERE cancel_pending = 1
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="claimCancelPending">
+        UPDATE workitem_duplicate_check
+        SET cancel_pending = 0
+        WHERE id = #{id} AND cancel_pending = 1
+    </update>
+
+    <update id="cancelActiveByWorkitem">
+        UPDATE workitem_duplicate_check
+        SET status = 'CANCELED', lease_until = NULL, cancel_pending = 0
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+          AND operator_id = #{operatorId} AND status IN ('PENDING', 'RUNNING')
+    </update>
+
+    <update id="cancelActiveByForm">
+        UPDATE workitem_duplicate_check
+        SET status = 'CANCELED', lease_until = NULL, cancel_pending = 0
+        WHERE tenant_id = #{tenantId} AND operator_id = #{operatorId}
+          AND form_request_id = #{formRequestId} AND id &lt;&gt; #{exceptId}
+          AND status IN ('PENDING', 'RUNNING')
+    </update>
+
+    <select id="listExpiredDraftIds" resultType="java.lang.Long">
+        SELECT id FROM workitem_duplicate_check
+        WHERE workitem_id IS NULL AND status IN ('SUCCEEDED', 'FAILED', 'CANCELED', 'SKIPPED')
+          AND gmt_create &lt; #{before}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <delete id="deleteByIds">
+        DELETE FROM workitem_duplicate_check WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </delete>
+
+    <!-- 只凭已认证 principal 的工作空间与会话 id 判定，不接受调用方传入的用途标记。 -->
+    <select id="countIntentConversations" resultType="java.lang.Long">
+        SELECT COUNT(1)
+        FROM agent_conversation c
+        WHERE c.id = #{conversationId}
+          AND c.tenant_id = #{tenantId}
+          AND c.channel = 'PLATFORM_INTERNAL'
+          AND EXISTS (
+              SELECT 1 FROM workitem_duplicate_check d
+              WHERE d.tenant_id = c.tenant_id
+                AND d.request_id = c.channel_conversation_id
+          )
+    </select>
+</mapper>

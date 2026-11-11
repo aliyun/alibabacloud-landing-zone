@@ -1,5 +1,8 @@
 # Community Verification
 
+For current sync acceptance, use [the sync quality contract](sync-quality-contract.md).
+The measurement history below is not evidence for a new candidate.
+
 Verification date: 2026-09-07, with a **2026-09-08 re-measurement generation**
 (release v0.8.0, candidate master baseline `b52cdeeea`)
 

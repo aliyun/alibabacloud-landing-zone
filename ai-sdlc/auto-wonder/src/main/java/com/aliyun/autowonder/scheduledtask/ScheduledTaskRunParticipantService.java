@@ -8,6 +8,7 @@ import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.scheduledtask.dto.ScheduledRunMentionCandidateVO;
+import com.aliyun.autowonder.squad.SquadNameResolver;
 import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
@@ -35,6 +36,9 @@ public class ScheduledTaskRunParticipantService {
     private final PresenceManager presenceManager;
     private final WorkspaceMemberDao workspaceMemberDao;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SquadNameResolver squadNameResolver;
+
     public ScheduledTaskRunParticipantService(DispatchDao dispatchDao, AgentDao agentDao,
                                              ExecutorDao executorDao, UserDao userDao,
                                              PresenceManager presenceManager,
@@ -45,6 +49,11 @@ public class ScheduledTaskRunParticipantService {
         this.userDao = userDao;
         this.presenceManager = presenceManager;
         this.workspaceMemberDao = workspaceMemberDao;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSquadNameResolver(SquadNameResolver squadNameResolver) {
+        this.squadNameResolver = squadNameResolver;
     }
 
     public List<ParticipantVO> getParticipants(long tenantId, ScheduledTaskRunDO run) {
@@ -84,6 +93,8 @@ public class ScheduledTaskRunParticipantService {
         }
 
         // 3. Resolve each agent
+        Map<Long, SquadNameResolver.SquadLabel> squadLabels =
+                resolveSquadLabels(tenantId, agentIds, run.getSquadId());
         for (Long agentId : agentIds) {
             AgentDO agent = agentDao.findById(agentId);
             if (agent == null) continue;
@@ -102,6 +113,7 @@ public class ScheduledTaskRunParticipantService {
             String executorStatus = resolveExecutorStatus(tenantId, agentId);
             p.setOnline(!"OFFLINE".equals(executorStatus));
             p.setExecutorStatus(executorStatus);
+            applySquadLabel(p, squadLabels.get(agentId));
             participants.add(p);
         }
 
@@ -118,6 +130,8 @@ public class ScheduledTaskRunParticipantService {
         int effectiveLimit = limit <= 0 ? 50 : Math.min(limit, 100);
         Map<String, ScheduledRunMentionCandidateVO> candidates = new LinkedHashMap<>();
         Set<Long> frozenAgentIds = ScheduledTaskRunFrozenSnapshot.frozenAgentIds(run);
+        Map<Long, SquadNameResolver.SquadLabel> frozenAgentLabels =
+                resolveSquadLabels(tenantId, frozenAgentIds, run.getSquadId());
 
         for (ParticipantVO participant : getParticipants(tenantId, run)) {
             if (participant == null || participant.getUserId() == null) continue;
@@ -130,6 +144,8 @@ public class ScheduledTaskRunParticipantService {
             candidate.setAgent(agent);
             candidate.setOnline(participant.isOnline());
             candidate.setExecutorStatus(participant.getExecutorStatus());
+            candidate.setSquadName(participant.getSquadName());
+            candidate.setCurrentSquad(participant.isCurrentSquad());
             if (agent) {
                 boolean frozen = frozenAgentIds.contains(participant.getUserId());
                 candidate.setMentionable(frozen);
@@ -140,7 +156,7 @@ public class ScheduledTaskRunParticipantService {
             } else {
                 candidate.setMentionable(true);
             }
-            addCandidate(candidates, candidate, query, effectiveLimit);
+            addCandidate(candidates, candidate, query);
         }
 
         // Frozen participants that received no dispatch yet are still valid targets.
@@ -156,7 +172,8 @@ public class ScheduledTaskRunParticipantService {
             candidate.setOnline(!"OFFLINE".equals(executorStatus));
             candidate.setExecutorStatus(executorStatus);
             candidate.setMentionable(true);
-            addCandidate(candidates, candidate, query, effectiveLimit);
+            applySquadLabel(candidate, frozenAgentLabels.get(agentId));
+            addCandidate(candidates, candidate, query);
         }
 
         if (workspaceMemberDao != null) {
@@ -176,21 +193,51 @@ public class ScheduledTaskRunParticipantService {
                 candidate.setAgent(false);
                 candidate.setOnline(true);
                 candidate.setMentionable(true);
-                addCandidate(candidates, candidate, query, effectiveLimit);
+                addCandidate(candidates, candidate, query);
             }
         }
 
-        return new ArrayList<>(candidates.values());
+        List<ScheduledRunMentionCandidateVO> result = new ArrayList<>(candidates.values());
+        // Current delivery squad first; the stable sort keeps the original order inside each group.
+        result.sort(java.util.Comparator.comparingInt(
+                candidate -> candidate.isCurrentSquad() ? 0 : 1));
+        if (result.size() > effectiveLimit) {
+            return new ArrayList<>(result.subList(0, effectiveLimit));
+        }
+        return result;
     }
 
     private void addCandidate(Map<String, ScheduledRunMentionCandidateVO> candidates,
-                              ScheduledRunMentionCandidateVO candidate, String query, int limit) {
-        if (candidate.getUserId() == null || candidate.getName() == null || candidate.getName().isBlank()
-                || candidates.size() >= limit) {
+                              ScheduledRunMentionCandidateVO candidate, String query) {
+        if (candidate.getUserId() == null || candidate.getName() == null || candidate.getName().isBlank()) {
             return;
         }
         if (!matchesQuery(candidate, query)) return;
         candidates.putIfAbsent(candidate.getTargetType() + ":" + candidate.getUserId(), candidate);
+    }
+
+    private Map<Long, SquadNameResolver.SquadLabel> resolveSquadLabels(long tenantId,
+            Set<Long> agentIds, Long currentSquadId) {
+        if (squadNameResolver == null) {
+            return Map.of();
+        }
+        return squadNameResolver.resolve(tenantId, agentIds, currentSquadId);
+    }
+
+    private void applySquadLabel(ParticipantVO participant, SquadNameResolver.SquadLabel label) {
+        if (participant == null || label == null) {
+            return;
+        }
+        participant.setSquadName(label.squadName());
+        participant.setCurrentSquad(label.currentSquad());
+    }
+
+    private void applySquadLabel(ScheduledRunMentionCandidateVO candidate, SquadNameResolver.SquadLabel label) {
+        if (candidate == null || label == null) {
+            return;
+        }
+        candidate.setSquadName(label.squadName());
+        candidate.setCurrentSquad(label.currentSquad());
     }
 
     private boolean matchesQuery(ScheduledRunMentionCandidateVO candidate, String query) {

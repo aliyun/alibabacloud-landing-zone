@@ -1,15 +1,26 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { apiClient } from './client';
 import { ApiError } from '@/shared/types/common';
 import { useAuthStore } from '@/shared/auth/store';
+import { markUserActivity, USER_ACTIVITY_WINDOW_MS } from '@/shared/auth/activity';
 import { i18n } from '@/shared/i18n';
+
+function setDocumentVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+}
 
 describe('apiClient', () => {
   beforeEach(() => {
+    markUserActivity(0);
     useAuthStore.getState().clear();
+    window.sessionStorage.clear();
     server.resetHandlers();
+  });
+
+  afterEach(() => {
+    delete (document as unknown as Record<string, unknown>).visibilityState;
   });
 
   it('unwraps successful response envelope to data', async () => {
@@ -691,6 +702,215 @@ describe('apiClient', () => {
 
     await expect(apiClient.get('/api/data')).rejects.toBeInstanceOf(ApiError);
     expect(useAuthStore.getState().accessToken).toBeNull();
+    useAuthStore.getState().clear();
+  });
+
+  it('marks a foreground 401 refresh as user activity so the session can roll', async () => {
+    let refreshBody: Record<string, unknown> | null = null;
+    markUserActivity();
+    useAuthStore.getState().setTokens('expired-access', 'valid-refresh');
+
+    server.use(
+      http.get('/api/data', ({ request }) => {
+        if (request.headers.get('Authorization') === 'Bearer new-token') {
+          return HttpResponse.json({
+            success: true, code: '0', message: '', data: { ok: true }, traceId: null,
+          });
+        }
+        return HttpResponse.json({
+          success: false, code: '10401', message: '', data: null, traceId: null,
+        }, { status: 401 });
+      }),
+      http.post('/api/auth/refresh', async ({ request }) => {
+        refreshBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', data: { accessToken: 'new-token' }, traceId: null,
+        });
+      }),
+    );
+
+    await apiClient.get('/api/data');
+
+    expect(refreshBody).toMatchObject({ userActivity: true });
+    useAuthStore.getState().clear();
+  });
+
+  it('treats a 401 from an idle page as a background refresh that does not roll the session', async () => {
+    let refreshBody: Record<string, unknown> | null = null;
+    useAuthStore.getState().setTokens('expired-access', 'valid-refresh');
+    markUserActivity(Date.now() - USER_ACTIVITY_WINDOW_MS - 1);
+
+    server.use(
+      http.get('/api/data', ({ request }) => request.headers.get('Authorization') === 'Bearer bg-token'
+        ? HttpResponse.json({ success: true, code: '0', message: '', data: { ok: true }, traceId: null })
+        : HttpResponse.json({ success: false, code: '10401', message: '', data: null, traceId: null }, { status: 401 })),
+      http.post('/api/auth/refresh', async ({ request }) => {
+        refreshBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', data: { accessToken: 'bg-token' }, traceId: null,
+        });
+      }),
+    );
+
+    await apiClient.get('/api/data');
+
+    expect(refreshBody).toMatchObject({ userActivity: false });
+    useAuthStore.getState().clear();
+  });
+
+  it('treats a 401 from a hidden tab as a background refresh even right after interaction', async () => {
+    let refreshBody: Record<string, unknown> | null = null;
+    markUserActivity();
+    setDocumentVisibility('hidden');
+    useAuthStore.getState().setTokens('expired-access', 'valid-refresh');
+
+    server.use(
+      http.get('/api/data', ({ request }) => request.headers.get('Authorization') === 'Bearer hidden-token'
+        ? HttpResponse.json({ success: true, code: '0', message: '', data: { ok: true }, traceId: null })
+        : HttpResponse.json({ success: false, code: '10401', message: '', data: null, traceId: null }, { status: 401 })),
+      http.post('/api/auth/refresh', async ({ request }) => {
+        refreshBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', data: { accessToken: 'hidden-token' }, traceId: null,
+        });
+      }),
+    );
+
+    await apiClient.get('/api/data');
+
+    expect(refreshBody).toMatchObject({ userActivity: false });
+    useAuthStore.getState().clear();
+  });
+
+  it('honours an explicit backgroundActivity request even while the user is active', async () => {
+    let refreshBody: Record<string, unknown> | null = null;
+    markUserActivity();
+    useAuthStore.getState().setTokens('expired-access', 'valid-refresh');
+
+    server.use(
+      http.get('/api/polled', ({ request }) => request.headers.get('Authorization') === 'Bearer poll-token'
+        ? HttpResponse.json({ success: true, code: '0', message: '', data: { ok: true }, traceId: null })
+        : HttpResponse.json({ success: false, code: '10401', message: '', data: null, traceId: null }, { status: 401 })),
+      http.post('/api/auth/refresh', async ({ request }) => {
+        refreshBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', data: { accessToken: 'poll-token' }, traceId: null,
+        });
+      }),
+    );
+
+    await apiClient.get('/api/polled', { backgroundActivity: true });
+
+    expect(refreshBody).toMatchObject({ userActivity: false });
+    useAuthStore.getState().clear();
+  });
+
+  it('keeps the session when the refresh service is temporarily throttled', async () => {
+    useAuthStore.getState().setTokens('expired-access', 'valid-refresh');
+
+    server.use(
+      http.get('/api/data', () => HttpResponse.json({
+        success: false, code: '10401', message: '', data: null, traceId: null,
+      }, { status: 401 })),
+      http.post('/api/auth/refresh', () => new HttpResponse(null, { status: 429 })),
+    );
+
+    await expect(apiClient.get('/api/data')).rejects.toMatchObject({ code: '10000' });
+    expect(useAuthStore.getState().accessToken).toBe('expired-access');
+    expect(useAuthStore.getState().refreshToken).toBe('valid-refresh');
+    useAuthStore.getState().clear();
+  });
+
+  it('treats a 200 envelope carrying the unauthorized code as an invalid session', async () => {
+    useAuthStore.getState().setTokens('expired-access', 'expired-refresh');
+
+    server.use(
+      http.get('/api/data', () => HttpResponse.json({
+        success: false, code: '10401', message: '', data: null, traceId: null,
+      }, { status: 401 })),
+      http.post('/api/auth/refresh', () => HttpResponse.json({
+        success: false, code: '10401', message: '刷新令牌无效或已过期', data: null, traceId: null,
+      })),
+    );
+
+    await expect(apiClient.get('/api/data')).rejects.toBeInstanceOf(ApiError);
+    expect(useAuthStore.getState().accessToken).toBeNull();
+    expect(useAuthStore.getState().refreshToken).toBeNull();
+    useAuthStore.getState().clear();
+  });
+
+  it('keeps the session when a 200 envelope reports a temporary refresh failure', async () => {
+    useAuthStore.getState().setTokens('expired-access', 'valid-refresh');
+
+    server.use(
+      http.get('/api/data', () => HttpResponse.json({
+        success: false, code: '10401', message: '', data: null, traceId: null,
+      }, { status: 401 })),
+      http.post('/api/auth/refresh', () => HttpResponse.json({
+        success: false, code: '10002', message: '服务暂时不可用', data: null, traceId: null,
+      })),
+    );
+
+    await expect(apiClient.get('/api/data')).rejects.toMatchObject({ code: '10000' });
+    expect(useAuthStore.getState().accessToken).toBe('expired-access');
+    expect(useAuthStore.getState().refreshToken).toBe('valid-refresh');
+    useAuthStore.getState().clear();
+  });
+
+  it('remembers the in-site page and the workspace before a session-invalid redirect', async () => {
+    useAuthStore.getState().setTokens('expired-access', 'expired-refresh');
+    useAuthStore.getState().setCurrentWorkspace(
+      { id: 10002, name: 'AutoWonder', description: '' },
+      'READ_WRITE',
+    );
+    window.history.replaceState({}, '', '/workitems/88?tab=detail');
+
+    server.use(
+      http.get('/api/data', () => HttpResponse.json({
+        success: false, code: '10401', message: '', data: null, traceId: null,
+      }, { status: 401 })),
+      http.post('/api/auth/refresh', () => HttpResponse.json({
+        success: false, code: '10401', message: '', data: null, traceId: null,
+      }, { status: 401 })),
+    );
+
+    await expect(apiClient.get('/api/data')).rejects.toBeInstanceOf(ApiError);
+    expect(window.sessionStorage.getItem('aw-auth-return-path')).toBe('/workitems/88?tab=detail');
+    // 令牌清空，但空间上下文保留，重新登录后才能回到原页面；空间失效再由服务端判定。
+    expect(useAuthStore.getState().accessToken).toBeNull();
+    expect(useAuthStore.getState().refreshToken).toBeNull();
+    expect(useAuthStore.getState().currentWorkspace?.id).toBe(10002);
+    window.history.replaceState({}, '', '/');
+    useAuthStore.getState().clear();
+  });
+
+  it('does not let a stale refresh response overwrite a newer login', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    useAuthStore.getState().setTokens('expired-access', 'old-refresh');
+
+    server.use(
+      http.get('/api/data', () => HttpResponse.json({
+        success: false, code: '10401', message: '', data: null, traceId: null,
+      }, { status: 401 })),
+      http.post('/api/auth/refresh', async () => {
+        entered();
+        await new Promise<void>((resolve) => { release = resolve; });
+        return HttpResponse.json({
+          success: true, code: '0', message: '', data: { accessToken: 'stale-refreshed' }, traceId: null,
+        });
+      }),
+    );
+
+    const pending = apiClient.get('/api/data').catch((error) => error);
+    await started;
+    useAuthStore.getState().setTokens('new-login-access', 'new-login-refresh');
+    release();
+
+    expect(await pending).toBeInstanceOf(ApiError);
+    expect(useAuthStore.getState().accessToken).toBe('new-login-access');
+    expect(useAuthStore.getState().refreshToken).toBe('new-login-refresh');
     useAuthStore.getState().clear();
   });
 

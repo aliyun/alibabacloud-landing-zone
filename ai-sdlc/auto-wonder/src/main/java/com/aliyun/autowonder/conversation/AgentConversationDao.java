@@ -41,6 +41,15 @@ public interface AgentConversationDao {
             @Param("bizRefId") Long bizRefId,
             @Param("agentId") Long agentId);
 
+    AgentConversationDO findLatestByWorkitemChannel(@Param("tenantId") Long tenantId,
+            @Param("channel") String channel, @Param("workitemId") Long workitemId);
+
+    AgentConversationDO findLatestByBizRefWithoutAgent(
+            @Param("tenantId") Long tenantId,
+            @Param("channel") String channel,
+            @Param("bizRefType") String bizRefType,
+            @Param("bizRefId") Long bizRefId);
+
     java.util.List<AgentConversationDO> listPlatformByOwner(
             @Param("tenantId") Long tenantId,
             @Param("ownerUserId") Long ownerUserId,

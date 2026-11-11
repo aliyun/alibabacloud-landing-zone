@@ -74,6 +74,7 @@ public class DeliveryRestartOrchestrator {
                     workitemId, idempotencyKey, existing.getId());
             return;
         }
+        if (!restartStore.mayStart(tenantId, workitemId, idempotencyKey)) return;
         List<DispatchDO> oldFormal = nonTerminalFormal(tenantId, workitemId);
         if (!oldFormal.isEmpty()) {
             progressStore.markStoppingOld(tenantId, workitemId, idempotencyKey, oldFormal.size());
@@ -128,6 +129,7 @@ public class DeliveryRestartOrchestrator {
 
     private void startRound(long tenantId, long workitemId, Long sdlcStepId, long agentId,
             long userId, String idempotencyKey) {
+        if (!restartStore.mayStart(tenantId, workitemId, idempotencyKey)) return;
         DispatchDO existing = dispatchService.findByIdempotencyKey(tenantId, idempotencyKey);
         if (existing != null) {
             // A concurrent trigger (stop confirmation + sweep) already started this round.

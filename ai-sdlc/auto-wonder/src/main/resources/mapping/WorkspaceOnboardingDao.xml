@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.harness.WorkspaceOnboardingDao">
+
+    <insert id="insertOnboarding" parameterType="com.aliyun.autowonder.harness.WorkspaceOnboardingDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workspace_onboarding (tenant_id, workspace_id, owner_user_id, template_key, template_version,
+            template_sha256, stage, paused, config_version, steps_total, steps_estimated, current_step_index,
+            request_key, draft_json, version, creator_id, modifier_id)
+        VALUES (#{tenantId}, #{workspaceId}, #{ownerUserId}, #{templateKey}, #{templateVersion},
+            #{templateSha256}, #{stage}, #{paused}, #{configVersion}, #{stepsTotal}, #{stepsEstimated},
+            #{currentStepIndex}, #{requestKey}, #{draftJson}, 0, #{creatorId}, #{creatorId})
+    </insert>
+
+    <select id="findOnboarding" resultType="com.aliyun.autowonder.harness.WorkspaceOnboardingDO">
+        SELECT * FROM workspace_onboarding WHERE id = #{id} AND tenant_id = #{tenantId} LIMIT 1
+    </select>
+
+    <select id="findOnboardingByRequestKey" resultType="com.aliyun.autowonder.harness.WorkspaceOnboardingDO">
+        SELECT * FROM workspace_onboarding
+        WHERE tenant_id = #{tenantId} AND owner_user_id = #{ownerUserId} AND request_key = #{requestKey}
+        LIMIT 1
+    </select>
+
+    <select id="listOnboardings" resultType="com.aliyun.autowonder.harness.WorkspaceOnboardingDO">
+        SELECT * FROM workspace_onboarding
+        WHERE tenant_id = #{tenantId} AND workspace_id = #{workspaceId} AND owner_user_id = #{ownerUserId}
+        ORDER BY id DESC LIMIT 50
+    </select>
+
+    <update id="updateOnboarding">
+        UPDATE workspace_onboarding
+        SET template_key = #{templateKey}, template_version = #{templateVersion},
+            template_sha256 = #{templateSha256}, stage = #{stage}, paused = #{paused},
+            config_version = #{configVersion}, steps_total = #{stepsTotal},
+            steps_estimated = #{stepsEstimated}, current_step_index = #{currentStepIndex},
+            draft_json = #{draftJson}, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{expectedVersion}
+    </update>
+
+    <insert id="insertStep" parameterType="com.aliyun.autowonder.harness.OnboardingStepDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workspace_onboarding_step (tenant_id, onboarding_id, step_key, name, kind, step_order,
+            status, reason, evidence, version)
+        VALUES (#{tenantId}, #{onboardingId}, #{stepKey}, #{name}, #{kind}, #{stepOrder},
+            #{status}, #{reason}, #{evidence}, 0)
+    </insert>
+
+    <select id="listSteps" resultType="com.aliyun.autowonder.harness.OnboardingStepDO">
+        SELECT * FROM workspace_onboarding_step
+        WHERE tenant_id = #{tenantId} AND onboarding_id = #{onboardingId}
+        ORDER BY step_order ASC, id ASC
+    </select>
+
+    <update id="updateStepStatus">
+        UPDATE workspace_onboarding_step
+        SET status = #{status}, reason = #{reason}, evidence = #{evidence}, version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+    </update>
+
+    <delete id="deleteStep">
+        DELETE FROM workspace_onboarding_step
+        WHERE tenant_id = #{tenantId} AND onboarding_id = #{onboardingId} AND step_key = #{stepKey}
+    </delete>
+
+    <insert id="insertSnapshot" parameterType="com.aliyun.autowonder.harness.HarnessSnapshotDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO harness_snapshot (tenant_id, workspace_id, onboarding_id, snapshot_type, onboarding_version,
+            template_key, template_version, template_sha256, content_json, content_sha256, expires_at, creator_id)
+        VALUES (#{tenantId}, #{workspaceId}, #{onboardingId}, #{snapshotType}, #{onboardingVersion},
+            #{templateKey}, #{templateVersion}, #{templateSha256}, #{contentJson}, #{contentSha256},
+            #{expiresAt}, #{creatorId})
+    </insert>
+
+    <select id="findSnapshot" resultType="com.aliyun.autowonder.harness.HarnessSnapshotDO">
+        SELECT * FROM harness_snapshot WHERE id = #{id} AND tenant_id = #{tenantId} LIMIT 1
+    </select>
+
+    <select id="findLatestSnapshot" resultType="com.aliyun.autowonder.harness.HarnessSnapshotDO">
+        SELECT * FROM harness_snapshot
+        WHERE tenant_id = #{tenantId} AND onboarding_id = #{onboardingId} AND snapshot_type = #{snapshotType}
+        ORDER BY id DESC LIMIT 1
+    </select>
+
+    <update id="consumeSnapshot">
+        UPDATE harness_snapshot SET consumed_at = CURRENT_TIMESTAMP
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND content_sha256 = #{contentSha256}
+          AND consumed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+    </update>
+
+    <insert id="insertRun" parameterType="com.aliyun.autowonder.harness.HarnessRunDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO harness_run (tenant_id, workspace_id, onboarding_id, snapshot_id, run_type, status,
+            result_json, failure_json, version, creator_id)
+        VALUES (#{tenantId}, #{workspaceId}, #{onboardingId}, #{snapshotId}, #{runType}, #{status},
+            #{resultJson}, #{failureJson}, 0, #{creatorId})
+    </insert>
+
+    <select id="findRun" resultType="com.aliyun.autowonder.harness.HarnessRunDO">
+        SELECT * FROM harness_run WHERE id = #{id} AND tenant_id = #{tenantId} LIMIT 1
+    </select>
+
+    <select id="findRunBySnapshot" resultType="com.aliyun.autowonder.harness.HarnessRunDO">
+        SELECT * FROM harness_run WHERE tenant_id = #{tenantId} AND snapshot_id = #{snapshotId} LIMIT 1
+    </select>
+
+    <select id="listRuns" resultType="com.aliyun.autowonder.harness.HarnessRunDO">
+        SELECT * FROM harness_run
+        WHERE tenant_id = #{tenantId} AND onboarding_id = #{onboardingId} AND run_type = #{runType}
+        ORDER BY id DESC LIMIT #{limit}
+    </select>
+
+    <update id="updateRun">
+        UPDATE harness_run
+        SET status = #{status}, result_json = #{resultJson}, failure_json = #{failureJson}, version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+    </update>
+
+    <insert id="insertRunStep" parameterType="com.aliyun.autowonder.harness.HarnessRunStepDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO harness_run_step (tenant_id, run_id, step_no, object_key, object_type, status,
+            object_id, error_message)
+        VALUES (#{tenantId}, #{runId}, #{stepNo}, #{objectKey}, #{objectType}, #{status},
+            #{objectId}, #{errorMessage})
+    </insert>
+
+    <select id="findRunStep" resultType="com.aliyun.autowonder.harness.HarnessRunStepDO">
+        SELECT * FROM harness_run_step
+        WHERE tenant_id = #{tenantId} AND run_id = #{runId} AND object_key = #{objectKey} LIMIT 1
+    </select>
+
+    <select id="listRunSteps" resultType="com.aliyun.autowonder.harness.HarnessRunStepDO">
+        SELECT * FROM harness_run_step WHERE tenant_id = #{tenantId} AND run_id = #{runId} ORDER BY step_no ASC, id ASC
+    </select>
+
+    <select id="findReusableRunStep" resultType="com.aliyun.autowonder.harness.HarnessRunStepDO">
+        SELECT s.* FROM harness_run_step s
+        JOIN harness_run r ON r.id = s.run_id AND r.tenant_id = s.tenant_id
+        WHERE s.tenant_id = #{tenantId} AND r.onboarding_id = #{onboardingId} AND r.run_type = #{runType}
+          AND r.snapshot_id = #{snapshotId}
+          AND s.object_key = #{objectKey} AND s.status = 'SUCCEEDED'
+        ORDER BY s.id DESC LIMIT 1
+    </select>
+
+    <update id="updateRunStep">
+        UPDATE harness_run_step
+        SET status = #{status}, object_id = #{objectId}, error_message = #{errorMessage}
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+    </update>
+
+    <insert id="insertCheck" parameterType="com.aliyun.autowonder.harness.WorkspaceReadinessCheckDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workspace_readiness_check (tenant_id, workspace_id, onboarding_id, config_version, status,
+            evidence_json, checked_at, creator_id)
+        VALUES (#{tenantId}, #{workspaceId}, #{onboardingId}, #{configVersion}, #{status},
+            #{evidenceJson}, CURRENT_TIMESTAMP, #{creatorId})
+    </insert>
+</mapper>

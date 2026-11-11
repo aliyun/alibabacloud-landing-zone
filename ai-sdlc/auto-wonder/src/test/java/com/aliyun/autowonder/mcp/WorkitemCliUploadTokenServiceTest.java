@@ -61,7 +61,7 @@ class WorkitemCliUploadTokenServiceTest {
                 McpAccessTokenService.CredentialType.LONG_LIVED, USER_ID, WORKITEM_ID);
 
         for (String command : new String[]{vo.getCommand(), vo.getPowershellCommand()}) {
-            assertTrue(command.contains("autowonder@0.9.9-rc.1"), command);
+            assertTrue(command.contains("@alicloud/autowonder@0.9.9-rc.1"), command);
             assertTrue(command.contains("http://autowonder.internal.example.com:8080"), command);
             assertTrue(command.contains("--workitem-id " + WORKITEM_ID), command);
             assertTrue(command.contains("--file <filepath-1>"), command);
@@ -74,7 +74,7 @@ class WorkitemCliUploadTokenServiceTest {
         assertTrue(vo.getCommand().startsWith("export AUTOWONDER_UPLOAD_TOKEN='awupload_"));
         assertTrue(vo.getPowershellCommand().startsWith("$env:AUTOWONDER_UPLOAD_TOKEN='awupload_"));
         assertEquals(
-                "npx -y autowonder@0.9.9-rc.1 workitem upload"
+                "npx -y @alicloud/autowonder@0.9.9-rc.1 workitem upload"
                         + " --server-url http://autowonder.internal.example.com:8080"
                         + " --workitem-id <workitem-id>"
                         + " --file <filepath-1> --file <filepath-2> --file <images-1> --json",

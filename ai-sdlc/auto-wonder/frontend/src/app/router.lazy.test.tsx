@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter, Link, RouterProvider, useLocation, useParams } from 'react-router-dom';
+import { createMemoryRouter, Link, Outlet, RouterProvider, useLocation, useParams } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { createAppRoutes } from './router';
 
@@ -42,3 +42,20 @@ describe('workitem entry route loading', () => {
     router.dispose();
   });
 });
+
+ it('isolates route render failures while preserving the parent shell and navigation', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  function Broken() { throw new Error('private technical stack'); return null; }
+  const route = createAppRoutes().flatMap(r => r.children ?? []).find(r => r.path === '/workitems/:id')!;
+  const router = createMemoryRouter([{ element: <><Link to="/healthy">healthy navigation</Link><Outlet /></>, children: [
+    { ...route, element: <Broken /> }, { path: '/healthy', element: <div>healthy page</div> },
+  ] }], { initialEntries: ['/workitems/42'] });
+  render(<RouterProvider router={router} />);
+  expect(await screen.findByRole('link', { name: 'healthy navigation' })).toBeVisible();
+  expect(screen.queryByText('Unexpected Application Error!')).not.toBeInTheDocument();
+  expect(screen.queryByText('private technical stack')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('link', { name: 'healthy navigation' }));
+  expect(await screen.findByText('healthy page')).toBeVisible();
+  router.dispose();
+  vi.restoreAllMocks();
+ });

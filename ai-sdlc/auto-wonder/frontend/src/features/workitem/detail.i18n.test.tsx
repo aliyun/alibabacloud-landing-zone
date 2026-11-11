@@ -30,7 +30,7 @@ beforeEach(async () => {
   useAuthStore.setState({ accessLevel: 'READ_WRITE' }); await i18n.changeLanguage('zh-CN');
   server.use(
     http.get('/api/workitems/42', () => ok(item)),
-    http.get('/api/workitems/42/unified-timeline', () => ok([{ id: 1, type: 'comment', authorId: 7, authorName: name, authorType: 'HUMAN', isAgent: false, content: '评论原文', gmtCreate: new Date().toISOString(), interactions: [{ guidanceId: 9, targetAgentId: 8, targetAgentName: name, status: 'APPLIED', replyContent: 'AI 回复原文' }] }])),
+    http.get('/api/workitems/42/unified-timeline/window', () => ok([{ id: 1, type: 'comment', authorId: 7, authorName: name, authorType: 'HUMAN', isAgent: false, content: '评论原文', gmtCreate: new Date().toISOString(), interactions: [{ guidanceId: 9, targetAgentId: 8, targetAgentName: name, status: 'APPLIED', replyContent: 'AI 回复原文' }] }])),
     http.get('/api/workitems/42/participants', () => ok([human])),
     http.get('/api/workitems/42/mention-candidates', () => ok([human])),
     http.get('/api/workitems/42/delivery-progress', () => ok({ steps: [], agents: [] })),
@@ -233,7 +233,7 @@ it('uploads a comment attachment before submitting and resolves the saved timeli
     http.post('/api/workitems/42/comments', async ({ request }) => {
       expect(uploaded).toBe(true); comment = (await request.json() as { contentMd: string }).contentMd; return ok({ id: 100 });
     }),
-    http.get('/api/workitems/42/unified-timeline', () => ok(comment ? [{ id: 100, type: 'comment', authorId: 7, authorType: 'HUMAN', isAgent: false, content: comment, gmtCreate: '2026-10-14T00:00:00Z' }] : [])),
+    http.get('/api/workitems/42/unified-timeline/window', () => ok(comment ? [{ id: 100, type: 'comment', authorId: 7, authorType: 'HUMAN', isAgent: false, content: comment, gmtCreate: '2026-10-14T00:00:00Z' }] : [])),
     http.get('/api/artifacts/99/download', () => ok('https://example.test/comment.txt')),
   );
   mount(<WorkitemDetailPage />); await screen.findByRole('heading', { name });
