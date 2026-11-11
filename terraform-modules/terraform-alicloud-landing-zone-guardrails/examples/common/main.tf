@@ -2,10 +2,11 @@ provider "alicloud" {
   region = "cn-shanghai"
 }
 
-module "detective_guardrails" {
+module "guardrails" {
   source = "../../"
   
   detective_guardrails = var.detective_guardrails
+  preventive_guardrails = var.preventive_guardrails
   config_aggreator_name = var.config_aggreator_name
   config_aggreator_description = var.config_aggreator_description
   config_compliance_pack_name = var.config_compliance_pack_name

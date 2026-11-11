@@ -2,6 +2,32 @@
 data "alicloud_account" "current" {
 }
 
+#########################################################
+# Preventive Controls
+#########################################################
+data "alicloud_resource_manager_resource_directories" "default" {}
+
+locals {
+  resource_directory_root_folder_id = "${data.alicloud_resource_manager_resource_directories.default.directories.0.root_folder_id}"
+}
+
+module "control_policies" {
+  source = "./modules/control_policies"
+
+  for_each = {
+    for rule in var.preventive_guardrails: rule.rule_name => rule
+  }
+
+  name = each.value.rule_name
+  description = can(each.value.rule_description) ? each.value.rule_description : ""
+  policy_document = each.value.policy_document
+  target_id = can(each.value.target_id) ? each.value.target_id : local.resource_directory_root_folder_id
+}
+
+#########################################################
+# Detective Controls
+#########################################################
+
 # Retrieve all the accounts in resource directory
 data "alicloud_resource_manager_accounts" "accounts" {
 }
