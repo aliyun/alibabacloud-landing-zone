@@ -1,5 +1,14 @@
-terraform {
-  experiments = [module_variable_optional_attrs]
+# terraform {
+#   experiments = [module_variable_optional_attrs]
+# }
+variable "preventive_guardrails" {
+  type = list(object({
+    rule_name = string
+    rule_description = optional(string)
+    policy_document = string
+    target = optional(string)
+  }))
+  description = "preventive guardrails, each item in list should have rule_name and policy_document. If target is not specified, it will be set to root_folder_id"
 }
 variable "detective_guardrails" {
   type = list(object({
