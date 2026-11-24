@@ -2,6 +2,8 @@
 
 中文｜[English](./README_en.md)
 
+> **AutoWonder** 已迁移至独立的官方仓库 [aliyun/alibabacloud-autowonder](https://github.com/aliyun/alibabacloud-autowonder)。后续版本、文档和问题反馈请前往新仓库。
+
 ![](image/landing-zone-module.png)
 
 
