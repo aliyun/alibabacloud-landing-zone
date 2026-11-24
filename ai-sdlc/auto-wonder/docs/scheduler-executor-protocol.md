@@ -267,9 +267,13 @@ sequenceDiagram
 
 ### 5.6 上行：`HEARTBEAT`（执行器→服务端）
 ```json
-{ "type": "HEARTBEAT", "protocolFeatures": ["TASK_PACKAGE_SIGNATURE_V1", "DEBUG_LOG_V1"] }
+{ "type": "HEARTBEAT", "protocolFeatures": ["TASK_PACKAGE_SIGNATURE_V1", "DEBUG_LOG_V1", "dispatch_inventory_v1"],
+  "maxConcurrentDispatches": 3, "dispatchInventoryReady": true,
+  "runningDispatchIds": [300001], "ownedDispatchIds": [300001, 300002], "runningConversationTurnIds": [] }
 ```
 - **服务端动作**：`PresenceManager.heartbeat` 刷新 `exec:online`/`exec:route` TTL(90s)。`protocolFeatures` 中的能力位（含 `DEBUG_LOG_V1`）由 `PresenceManager` 记录（`exec:protocol-features:{executorId}`，TTL 90s、随心跳刷新），作为 TASK_DISPATCH 是否下发 `debugLog` 段的协商依据。
+- **库存心跳（`dispatch_inventory_v1`）**：声明该能力位后 HEARTBEAT 携带权威库存，经 `InboundFrameRouter.dispatchSnapshot` 落 `ExecutorDispatchSnapshot`：`maxConcurrentDispatches` 必填且 1..50（否则 `INVALID_MAX_CONCURRENT_DISPATCHES`）；`dispatchInventoryReady` 必填布尔（缺失 `DISPATCH_INVENTORY_READY_MISSING`）；`runningDispatchIds`(≤50) 必须 ⊆ `ownedDispatchIds`(≤1000)，违者 `RUNNING_DISPATCH_NOT_OWNED` 断连；`runningConversationTurnIds`(≤50)；`dispatchInventoryError` 仅允许空或 `OWNED_DISPATCH_LIMIT_EXCEEDED`（溢出申报时须 ready=false 且 owned==running，否则 `INVALID_DISPATCH_INVENTORY_OVERFLOW`）。库存是容量计算与崩溃对账的事实源：服务端只对上报的 running id 续租，ACKED/RUNNING 但未上报的派发在自愈宽限后走替代派发恢复。
+- **容量预留语义**：`ExecutorSelector.capacityLimit` 对非交互（正式 SDLC）派发在声明容量 >1 时取 `maxConcurrentDispatches − 1`，为交互/恢复工作预留一槽（交互派发或声明容量为 1 时取原值）。即执行器声明 2 只能串行承接正式派发，需双路并行须声明 3。
 
 ### 5.7 上行：`ARTIFACT_UPLOADED`（执行器→服务端）—— Phase 2 沉淀通道
 ```json
@@ -306,6 +310,9 @@ sequenceDiagram
 | `TASK_RESULT` | 上行 | 执行结束 | `onResult`+`SdlcDriver`+debugLog 段落库（可选） | →SUCCEEDED/FAILED + 排下一棒 |
 | `TASK_HANDOFF` | 上行 | 结束后有 handoff 产物 | `HandoffService` | 真人→停/数字人→记录 |
 | `HEARTBEAT` | 上行 | 周期(≈30s) | `PresenceManager` | 刷新在线 TTL |
+| `TASK_PAUSE` | 下行 | 暂停请求（MCP `pause_dispatch` / REST continue 族入口） | `DispatchPauseService.requestPause` → `WsDispatchControlTransport.pause` | ACKED/RUNNING→PAUSING |
+| `TASK_PAUSED` | 上行 | 执行器已停引擎并钉住检查点 | `DispatchPauseService.onPaused`（校验 checkpointSeq/checkpointSha256） | PAUSING→PAUSED |
+| `TASK_PAUSE_FAILED` | 上行 | 执行器无法满足暂停 | `DispatchPauseService.onPauseFailed` | PAUSING→PAUSE_FAILED |
 | `ARTIFACT_UPLOADED` | 上行 | 产物上传后(Phase 2) | `ArtifactService` | 落 ArtifactDO |
 
 ---
